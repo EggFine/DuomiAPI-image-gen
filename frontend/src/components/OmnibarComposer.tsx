@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   BookMarked,
@@ -138,6 +138,7 @@ interface OmnibarComposerProps {
   isSubmitting: boolean
   onSubmitGenerate: () => void
   onOpenDevPreview: () => void
+  onCollapseOverlay?: () => void
 }
 
 export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
@@ -199,6 +200,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   isSubmitting,
   onSubmitGenerate,
   onOpenDevPreview,
+  onCollapseOverlay,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -208,6 +210,14 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   const [modelPopoverOpen, setModelPopoverOpen] = useState(false)
   const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false)
   const [historyPopoverOpen, setHistoryPopoverOpen] = useState(false)
+
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = "auto"
+    const nextH = Math.min(200, Math.max(54, el.scrollHeight))
+    el.style.height = `${nextH}px`
+  }, [prompt])
 
   const activeModelObj = useMemo(
     () => models.find((m) => m.id === selectedModel),
@@ -627,14 +637,27 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               <TooltipContent>将当前提示词保存为自定义配方模板</TooltipContent>
             </Tooltip>
           )}
+
+          {onCollapseOverlay && (
+            <button
+              type="button"
+              onClick={onCollapseOverlay}
+              className="inline-flex h-7 items-center gap-1 rounded-lg border border-border bg-secondary/70 px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+              title="收起悬浮创作舱 (快捷键 Esc)"
+            >
+              <X className="h-3 w-3" />
+              <span>收起</span>
+            </button>
+          )}
         </div>
       </div>
 
       {/* Main Smart Prompt Textarea */}
       <div className="relative">
         <textarea
-          id="omnibar-prompt-input"
+          id={onCollapseOverlay ? "omnibar-overlay-prompt-input" : "omnibar-prompt-input"}
           ref={textareaRef}
+          autoFocus={Boolean(onCollapseOverlay)}
           value={prompt}
           onChange={(e) => onChangePrompt(e.target.value)}
           onKeyDown={(e) => {
@@ -643,16 +666,19 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               if (!isSubmitting && !anyUploadingRef) {
                 onSubmitGenerate()
               }
+            } else if (e.key === "Escape" && onCollapseOverlay) {
+              e.preventDefault()
+              onCollapseOverlay()
             }
           }}
-          rows={Math.min(9, Math.max(2, prompt.split("\n").length))}
+          rows={2}
           maxLength={5000}
           placeholder={
             referenceImages.length > 0
               ? "描述画面内容，可点击上方 @图1 直接指代参考人物/主体（例如：保持图1左一与左二人物五官服装不变，生成自然抓拍...）"
               : "你想创作什么画面？输入主体、构图、光影与质感描述（支持直接拖拽或 Ctrl+V 粘贴参考图，Ctrl+Enter 立即生成）"
           }
-          className="w-full resize-y bg-transparent px-1 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/70 focus:outline-none min-h-[58px] max-h-[280px]"
+          className="w-full resize-none bg-transparent px-1 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/70 focus:outline-none min-h-[54px] max-h-[200px] overflow-y-auto studio-scroll"
         />
 
         {/* Inline Multi-Photo Hint Banner */}

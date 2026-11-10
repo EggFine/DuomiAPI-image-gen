@@ -181,12 +181,60 @@ export function App() {
   const [lightboxInitialCompare, setLightboxInitialCompare] =
     useState<boolean>(false)
 
-  // Global Keyboard Shortcuts: Ctrl/Cmd+K (Command Palette) & Alt+1..4 (Tabs)
+  // Unified Imagine Scroll & On-Demand Quick Composer Overlay State
+  const imagineScrollRef = useRef<HTMLDivElement | null>(null)
+  const [isScrolledPastComposer, setIsScrolledPastComposer] =
+    useState<boolean>(false)
+  const [quickComposerOpen, setQuickComposerOpen] = useState<boolean>(false)
+
+  const scrollToImagineTop = useCallback(() => {
+    setQuickComposerOpen(false)
+    imagineScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
+  }, [])
+
+  useEffect(() => {
+    if (activeTab !== "imagine" || layoutMode !== "omnibar") {
+      setQuickComposerOpen(false)
+    }
+  }, [activeTab, layoutMode])
+
+  // Global Keyboard Shortcuts: Ctrl/Cmd+K (Command Palette), Ctrl/Cmd+J (Quick Composer), Esc & Alt+1..4 (Tabs)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault()
         setCommandPaletteOpen((prev) => !prev)
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "j") {
+        e.preventDefault()
+        if (activeTab !== "imagine") {
+          setActiveTab("imagine")
+          requestAnimationFrame(() => {
+            document.getElementById("omnibar-prompt-input")?.focus()
+          })
+          return
+        }
+        if (layoutMode === "omnibar" && isScrolledPastComposer) {
+          setQuickComposerOpen((prev) => !prev)
+        } else {
+          scrollToImagineTop()
+          requestAnimationFrame(() => {
+            document.getElementById("omnibar-prompt-input")?.focus()
+          })
+        }
+        return
+      }
+      if (
+        e.key === "Escape" &&
+        quickComposerOpen &&
+        !zenWorkbenchOpen &&
+        !annotatingEntryId &&
+        !lightboxRecordId &&
+        !settingsOpen &&
+        !commandPaletteOpen
+      ) {
+        setQuickComposerOpen(false)
         return
       }
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
@@ -207,7 +255,18 @@ export function App() {
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
-  }, [])
+  }, [
+    activeTab,
+    layoutMode,
+    isScrolledPastComposer,
+    quickComposerOpen,
+    zenWorkbenchOpen,
+    annotatingEntryId,
+    lightboxRecordId,
+    settingsOpen,
+    commandPaletteOpen,
+    scrollToImagineTop,
+  ])
 
   // Keep latest ref options in a ref for async callbacks
   const refOptsRef = useRef({
@@ -587,13 +646,16 @@ export function App() {
       if (imageFiles.length > 0) {
         e.preventDefault()
         setActiveTab("imagine")
+        if (layoutMode === "omnibar" && isScrolledPastComposer) {
+          setQuickComposerOpen(true)
+        }
         handleFilesSelected(imageFiles)
         showToast(`已从剪贴板粘贴 ${imageFiles.length} 张参考图`, "info")
       }
     }
     window.addEventListener("paste", onPaste)
     return () => window.removeEventListener("paste", onPaste)
-  }, [handleFilesSelected, showToast])
+  }, [handleFilesSelected, showToast, layoutMode, isScrolledPastComposer])
 
   const handlePasteFromClipboardButton = async () => {
     if (!navigator.clipboard?.read) {
@@ -794,6 +856,7 @@ export function App() {
   const handleUseGeneratedAsRef = async (img: SavedImage, _rec: TaskRecord) => {
     setActiveTab("imagine")
     setSplitMobilePane("studio")
+    scrollToImagineTop()
 
     if (img.local_file) {
       const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -1117,6 +1180,7 @@ export function App() {
       }
       setActiveTab("imagine")
       setSplitMobilePane("gallery")
+      scrollToImagineTop()
       if (!sseConnected) {
         await refreshRecords()
       }
@@ -1148,6 +1212,7 @@ export function App() {
     }
     setActiveTab("imagine")
     setSplitMobilePane("studio")
+    scrollToImagineTop()
 
     if (includeRefs && rec.ref_items && rec.ref_items.length > 0) {
       const restored: ReferenceImageEntry[] = []
@@ -1423,6 +1488,7 @@ export function App() {
     }
     setActiveTab("imagine")
     setSplitMobilePane("studio")
+    scrollToImagineTop()
     showToast(`已装填灵感配方「${tpl.title}」`, "success")
   }
 
@@ -1498,6 +1564,112 @@ export function App() {
     [config?.prompt_templates, builtInTemplates]
   )
 
+  const renderOmnibarComposer = (onCollapseOverlay?: () => void) => (
+    <OmnibarComposer
+      models={models}
+      selectedModel={selectedModel}
+      onSelectModel={setSelectedModel}
+      customModel={customModel}
+      onChangeCustomModel={setCustomModel}
+      prompt={prompt}
+      onChangePrompt={setPrompt}
+      promptHistory={promptHistory}
+      onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
+      onOpenRecipes={() => setActiveTab("recipes")}
+      onSaveAsTemplate={() => setTemplatesOpen(true)}
+      refMode={refMode}
+      onChangeRefMode={handleChangeRefMode}
+      imageHosts={imageHosts}
+      imageHostProvider={imageHostProvider}
+      onChangeImageHostProvider={(p) => {
+        setImageHostProvider(p)
+        if (refMode === "upload") {
+          reconvertLocalRefs("upload", p, litterboxExpiry)
+        }
+      }}
+      litterboxExpiry={litterboxExpiry}
+      onChangeLitterboxExpiry={(exp) => {
+        setLitterboxExpiry(exp)
+        if (refMode === "upload") {
+          reconvertLocalRefs("upload", imageHostProvider, exp)
+        }
+      }}
+      compressMaxDim={compressMaxDim}
+      onChangeCompressMaxDim={(dim) => {
+        setCompressMaxDim(dim)
+        if (refMode === "compress_base64") {
+          reconvertLocalRefs(
+            "compress_base64",
+            imageHostProvider,
+            litterboxExpiry,
+            dim,
+            compressQuality
+          )
+        }
+      }}
+      compressQuality={compressQuality}
+      onChangeCompressQuality={(q) => {
+        setCompressQuality(q)
+        if (refMode === "compress_base64") {
+          reconvertLocalRefs(
+            "compress_base64",
+            imageHostProvider,
+            litterboxExpiry,
+            compressMaxDim,
+            q
+          )
+        }
+      }}
+      referenceImages={referenceImages}
+      onFilesSelected={handleFilesSelected}
+      onAddRefUrl={handleAddRefUrl}
+      onRemoveRef={(id) =>
+        setReferenceImages((prev) => prev.filter((r) => r.id !== id))
+      }
+      onMoveRef={handleMoveRef}
+      onRetryRef={handleRetrySingleRef}
+      onAnnotateRef={(entry) => setAnnotatingEntryId(entry.id)}
+      onPasteFromClipboardButton={handlePasteFromClipboardButton}
+      onOpenSettingsTab={(t) => {
+        setSettingsTab(t)
+        setSettingsOpen(true)
+      }}
+      ratioPresets={ratioPresets}
+      selectedRatio={selectedRatio}
+      selectedSize={selectedSize}
+      onSelectRatio={handleSelectRatio}
+      onSelectPresetSize={(val, tier) => {
+        setSelectedSize(val)
+        if (tier && tier !== "auto") {
+          setPreferredTier(tier)
+        }
+      }}
+      onSelectCustomRatioMode={() => setSelectedRatio("custom")}
+      customW={customW}
+      customH={customH}
+      onChangeCustomW={setCustomW}
+      onChangeCustomH={setCustomH}
+      onApplyCustomSize={handleApplyCustomSize}
+      quality={quality}
+      onChangeQuality={setQuality}
+      background={background}
+      onChangeBackground={setBackground}
+      oversea={oversea}
+      onChangeOversea={setOversea}
+      autoCompatFallback={autoCompatFallback}
+      onChangeAutoCompatFallback={setAutoCompatFallback}
+      projects={projects}
+      activeProjectId={activeProjectId}
+      onChangeActiveProjectId={setActiveProjectId}
+      batchCount={batchCount}
+      onChangeBatchCount={setBatchCount}
+      isSubmitting={isSubmitting}
+      onSubmitGenerate={handleSubmitGenerate}
+      onOpenDevPreview={() => setDevPreviewOpen(true)}
+      onCollapseOverlay={onCollapseOverlay}
+    />
+  )
+
   return (
     <TooltipProvider delayDuration={160}>
       <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
@@ -1539,7 +1711,7 @@ export function App() {
                 variant="outline"
                 className="hidden sm:inline-flex font-mono text-[10px] px-1.5 py-0 text-muted-foreground"
               >
-                {info?.version || "v3.0.0"} 单文件便携版
+                {info?.version || "v3.0.1"} 单文件便携版
               </Badge>
 
               {activeCount > 0 && (
@@ -1570,7 +1742,7 @@ export function App() {
                   type="button"
                   onClick={toggleLayoutMode}
                   className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/45 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  title="切换悬浮灵感舱或双栏专业参数台"
+                  title="切换顶部灵感舱或双栏专业参数台"
                 >
                   {layoutMode === "omnibar" ? (
                     <>
@@ -1580,7 +1752,7 @@ export function App() {
                   ) : (
                     <>
                       <PanelTop className="h-3 w-3 text-amber-500" />
-                      <span>切换悬浮舱</span>
+                      <span>切换灵感舱</span>
                     </>
                   )}
                 </button>
@@ -1644,122 +1816,38 @@ export function App() {
 
           {/* Active Workspace Body */}
           <main className="relative flex-1 min-h-0 overflow-hidden">
-            {/* TAB 1: IMAGINE WORKSPACE (Floating Omnibar OR Pro Split Mode) */}
+            {/* TAB 1: IMAGINE WORKSPACE (Unified Scroll Omnibar OR Pro Split Mode) */}
             {activeTab === "imagine" &&
               (layoutMode === "omnibar" ? (
-                <div className="flex h-full flex-col overflow-y-auto studio-scroll pb-20 md:pb-6">
-                  {/* Sticky Floating Omnibar Creation Dock */}
-                  <div className="sticky top-0 z-20 px-3 sm:px-6 pt-3.5 pb-2 bg-gradient-to-b from-background via-background/92 to-transparent">
-                    <OmnibarComposer
-                      models={models}
-                      selectedModel={selectedModel}
-                      onSelectModel={setSelectedModel}
-                      customModel={customModel}
-                      onChangeCustomModel={setCustomModel}
-                      prompt={prompt}
-                      onChangePrompt={setPrompt}
-                      promptHistory={promptHistory}
-                      onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
-                      onOpenRecipes={() => setActiveTab("recipes")}
-                      onSaveAsTemplate={() => setTemplatesOpen(true)}
-                      refMode={refMode}
-                      onChangeRefMode={handleChangeRefMode}
-                      imageHosts={imageHosts}
-                      imageHostProvider={imageHostProvider}
-                      onChangeImageHostProvider={(p) => {
-                        setImageHostProvider(p)
-                        if (refMode === "upload") {
-                          reconvertLocalRefs("upload", p, litterboxExpiry)
-                        }
-                      }}
-                      litterboxExpiry={litterboxExpiry}
-                      onChangeLitterboxExpiry={(exp) => {
-                        setLitterboxExpiry(exp)
-                        if (refMode === "upload") {
-                          reconvertLocalRefs("upload", imageHostProvider, exp)
-                        }
-                      }}
-                      compressMaxDim={compressMaxDim}
-                      onChangeCompressMaxDim={(dim) => {
-                        setCompressMaxDim(dim)
-                        if (refMode === "compress_base64") {
-                          reconvertLocalRefs(
-                            "compress_base64",
-                            imageHostProvider,
-                            litterboxExpiry,
-                            dim,
-                            compressQuality
-                          )
-                        }
-                      }}
-                      compressQuality={compressQuality}
-                      onChangeCompressQuality={(q) => {
-                        setCompressQuality(q)
-                        if (refMode === "compress_base64") {
-                          reconvertLocalRefs(
-                            "compress_base64",
-                            imageHostProvider,
-                            litterboxExpiry,
-                            compressMaxDim,
-                            q
-                          )
-                        }
-                      }}
-                      referenceImages={referenceImages}
-                      onFilesSelected={handleFilesSelected}
-                      onAddRefUrl={handleAddRefUrl}
-                      onRemoveRef={(id) =>
-                        setReferenceImages((prev) =>
-                          prev.filter((r) => r.id !== id)
-                        )
+                <>
+                  <div
+                    ref={imagineScrollRef}
+                    onScroll={(e) => {
+                      const past = e.currentTarget.scrollTop > 165
+                      setIsScrolledPastComposer((prev) =>
+                        prev === past ? prev : past
+                      )
+                      if (!past && quickComposerOpen) {
+                        setQuickComposerOpen(false)
                       }
-                      onMoveRef={handleMoveRef}
-                      onRetryRef={handleRetrySingleRef}
-                      onAnnotateRef={(entry) => setAnnotatingEntryId(entry.id)}
-                      onPasteFromClipboardButton={handlePasteFromClipboardButton}
-                      onOpenSettingsTab={(t) => {
-                        setSettingsTab(t)
-                        setSettingsOpen(true)
-                      }}
-                      ratioPresets={ratioPresets}
-                      selectedRatio={selectedRatio}
-                      selectedSize={selectedSize}
-                      onSelectRatio={handleSelectRatio}
-                      onSelectPresetSize={(val, tier) => {
-                        setSelectedSize(val)
-                        if (tier && tier !== "auto") {
-                          setPreferredTier(tier)
-                        }
-                      }}
-                      onSelectCustomRatioMode={() => setSelectedRatio("custom")}
-                      customW={customW}
-                      customH={customH}
-                      onChangeCustomW={setCustomW}
-                      onChangeCustomH={setCustomH}
-                      onApplyCustomSize={handleApplyCustomSize}
-                      quality={quality}
-                      onChangeQuality={setQuality}
-                      background={background}
-                      onChangeBackground={setBackground}
-                      oversea={oversea}
-                      onChangeOversea={setOversea}
-                      autoCompatFallback={autoCompatFallback}
-                      onChangeAutoCompatFallback={setAutoCompatFallback}
-                      projects={projects}
-                      activeProjectId={activeProjectId}
-                      onChangeActiveProjectId={setActiveProjectId}
-                      batchCount={batchCount}
-                      onChangeBatchCount={setBatchCount}
-                      isSubmitting={isSubmitting}
-                      onSubmitGenerate={handleSubmitGenerate}
-                      onOpenDevPreview={() => setDevPreviewOpen(true)}
-                    />
-                  </div>
+                    }}
+                    className="h-full overflow-y-auto studio-scroll"
+                  >
+                    {/* Normal-Flow Top Hero Creation Band — scrolls away cleanly, zero overlap */}
+                    <div className="border-b border-border/55 bg-secondary/20 dark:bg-zinc-950/35 px-3 sm:px-6 pt-4 pb-4">
+                      {renderOmnibarComposer()}
+                    </div>
 
-                  {/* Native Aspect-Ratio Masonry Stream */}
-                  <div className="flex-1 px-1 sm:px-3">
+                    {/* Unified Full-Width Sticky Filter Bar + Native Aspect-Ratio Masonry Stream */}
                     <MasonryArtworkStream
                       mode="imagine"
+                      embeddedScroll={false}
+                      showQuickCreateTrigger={isScrolledPastComposer}
+                      hasDraftOrRefs={Boolean(
+                        prompt.trim() || referenceImages.length > 0
+                      )}
+                      onOpenQuickComposer={() => setQuickComposerOpen(true)}
+                      onScrollToTop={scrollToImagineTop}
                       records={records}
                       projects={projects}
                       onCreateProject={handleCreateProject}
@@ -1790,7 +1878,28 @@ export function App() {
                       onCopyText={copyText}
                     />
                   </div>
-                </div>
+
+                  {/* On-Demand Contextual Quick Composer Overlay (Ctrl+J or '✨ 唤起创作舱') */}
+                  {quickComposerOpen && (
+                    <div
+                      onClick={(e) => {
+                        if (e.target === e.currentTarget) {
+                          setQuickComposerOpen(false)
+                        }
+                      }}
+                      className="absolute inset-0 z-30 flex items-start justify-center bg-black/45 backdrop-blur-[2px] px-3 sm:px-6 pt-4 pb-6 overflow-y-auto"
+                    >
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="w-full max-w-4xl"
+                      >
+                        {renderOmnibarComposer(() =>
+                          setQuickComposerOpen(false)
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
                 /* Pro Split 2-Column Mode */
                 <div className="flex flex-col lg:grid lg:grid-cols-[440px_1fr] xl:grid-cols-[465px_1fr] h-full overflow-hidden">
@@ -1932,7 +2041,7 @@ export function App() {
 
                   <div
                     className={cn(
-                      "h-full overflow-y-auto studio-scroll pb-20 lg:pb-6",
+                      "h-full overflow-hidden",
                       splitMobilePane !== "gallery" && "hidden lg:block"
                     )}
                   >
@@ -1970,7 +2079,7 @@ export function App() {
 
             {/* TAB 2: DEDICATED ASSETS & PROJECT ALBUMS */}
             {activeTab === "gallery" && (
-              <div className="h-full overflow-y-auto studio-scroll pb-20 md:pb-6">
+              <div className="h-full overflow-hidden">
                 <MasonryArtworkStream
                   mode="gallery"
                   records={records}

@@ -3,6 +3,7 @@ import {
   AlertCircle,
   AlertTriangle,
   Archive,
+  ArrowUp,
   Check,
   CheckSquare,
   Columns2,
@@ -56,6 +57,12 @@ export type StreamDisplayMode = "masonry" | "showcase" | "list"
 
 interface MasonryArtworkStreamProps {
   mode: "imagine" | "gallery"
+  embeddedScroll?: boolean
+  showQuickCreateTrigger?: boolean
+  hasDraftOrRefs?: boolean
+  onOpenQuickComposer?: () => void
+  onScrollToTop?: () => void
+
   records: TaskRecord[]
   projects: ProjectFolder[]
   onCreateProject: (name: string, color: string) => void
@@ -82,6 +89,11 @@ interface MasonryArtworkStreamProps {
 
 export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   mode,
+  embeddedScroll = true,
+  showQuickCreateTrigger = false,
+  hasDraftOrRefs = false,
+  onOpenQuickComposer,
+  onScrollToTop,
   records,
   projects,
   onCreateProject,
@@ -895,7 +907,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   }
 
   return (
-    <div className="flex h-full w-full overflow-hidden">
+    <div className={cn("w-full", embeddedScroll && "flex h-full overflow-hidden")}>
       {/* Dedicated Left Project Albums & Collections Sidebar when in Gallery/Assets View */}
       {mode === "gallery" && (
         <aside className="hidden lg:flex w-60 shrink-0 flex-col justify-between border-r border-border bg-card/40 p-3.5 select-none">
@@ -1079,11 +1091,55 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       )}
 
       {/* Main Stream Column */}
-      <div className="flex flex-1 flex-col overflow-hidden relative">
-        {/* Sleek Top Filter & Density Control Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-background/80 backdrop-blur-md px-4 py-2.5 sm:px-6 shrink-0 z-10">
-          {/* Status Pills */}
-          <div className="flex items-center gap-1 overflow-x-auto">
+      <div
+        className={cn(
+          "flex flex-col relative w-full",
+          embeddedScroll && "flex-1 overflow-hidden"
+        )}
+      >
+        {/* Sleek Full-Width Sticky Filter & Density Control Bar */}
+        <div
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-2 border-b border-border/75 bg-background/95 backdrop-blur-md px-4 py-2.5 sm:px-6 z-20",
+            !embeddedScroll ? "sticky top-0 shadow-2xs" : "shrink-0"
+          )}
+        >
+          {/* Left: Quick Create Capsule (when scrolled past top composer) + Status Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            {showQuickCreateTrigger && (
+              <div className="flex items-center gap-1 pr-1.5 mr-1 border-r border-border shrink-0">
+                {onOpenQuickComposer && (
+                  <button
+                    type="button"
+                    onClick={onOpenQuickComposer}
+                    className="inline-flex h-7 items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 px-3 text-xs font-semibold text-zinc-950 shadow-2xs transition-all cursor-pointer"
+                    title="在当前位置悬浮唤起创作舱 (快捷键 Ctrl+J)"
+                  >
+                    <Sparkles className="h-3 w-3" />
+                    <span>唤起创作舱</span>
+                    {hasDraftOrRefs && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-zinc-950/75" />
+                    )}
+                  </button>
+                )}
+                {onScrollToTop && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={onScrollToTop}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                        aria-label="回到顶部创作区"
+                      >
+                        <ArrowUp className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>平滑回到顶部完整创作区</TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            )}
+
             {[
               { id: "all", label: "全部", c: counts.all },
               { id: "active", label: "显影中", c: counts.active },
@@ -1281,8 +1337,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
           </div>
         </div>
 
-        {/* Scrollable Artwork Stream */}
-        <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6 pb-24">
+        {/* Artwork Stream Body */}
+        <div
+          className={cn(
+            "px-4 py-5 sm:px-6 pb-24",
+            embeddedScroll && "flex-1 overflow-y-auto studio-scroll"
+          )}
+        >
           {filteredRecords.length === 0 ? (
             <div className="mx-auto my-12 flex max-w-lg flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card/30 p-10 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/12 text-amber-500 ring-1 ring-amber-500/25 mb-4">
