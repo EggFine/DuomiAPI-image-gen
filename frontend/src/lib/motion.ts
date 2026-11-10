@@ -1,26 +1,31 @@
 import React, { useRef } from "react"
 import gsap from "gsap"
+import { CustomEase } from "gsap/CustomEase"
 import { Flip } from "gsap/Flip"
 import { ScrollToPlugin } from "gsap/ScrollToPlugin"
 import { useGSAP } from "@gsap/react"
 
-gsap.registerPlugin(useGSAP, Flip, ScrollToPlugin)
+gsap.registerPlugin(useGSAP, Flip, ScrollToPlugin, CustomEase)
+
+// Apple Quartz / Fluid Interface critically-damped curves — zero cartoon overshoot, immediate response, silky settle
+CustomEase.create("appleOut", "0.22, 1, 0.36, 1")
+CustomEase.create("appleFluid", "0.16, 1, 0.3, 1")
+CustomEase.create("appleInOut", "0.45, 0, 0.15, 1")
 
 export const STUDIO_EASE = {
-  out: "power3.out",
-  expo: "expo.out",
-  inOut: "power2.inOut",
-  spring: "back.out(1.45)",
-  softSpring: "back.out(1.2)",
+  out: "appleOut",
+  expo: "appleFluid",
+  inOut: "appleInOut",
+  spring: "appleFluid",
+  softSpring: "appleOut",
 } as const
 
-// Project-wide GSAP defaults (per official gsap-core skill)
+// Project-wide GSAP defaults: calm, unhurried, damped transitions
 gsap.defaults({
-  duration: 0.28,
+  duration: 0.34,
   ease: STUDIO_EASE.out,
 })
 
-// Standard media query conditions for gsap.matchMedia() (per official gsap-core skill)
 export const STUDIO_MEDIA = {
   motionOk: "(prefers-reduced-motion: no-preference)",
   reduceMotion: "(prefers-reduced-motion: reduce)",
@@ -28,7 +33,6 @@ export const STUDIO_MEDIA = {
   mobile: "(max-width: 767px)",
 } as const
 
-// Reusable curried gsap.utils functions (per official gsap-utils skill)
 export const clampPercent = gsap.utils.clamp(0, 100)
 export const clampZoom = gsap.utils.clamp(0.25, 8)
 
@@ -51,7 +55,7 @@ function formatAnimatedValue(
 }
 
 /**
- * Smoothly interpolates a numeric telemetry value directly on the DOM text node
+ * Smoothly interpolates a numeric value directly on the DOM text node
  * via useGSAP — zero 60fps React re-renders and automatic unmount cleanup.
  */
 export const AnimatedNumber: React.FC<{
@@ -66,7 +70,7 @@ export const AnimatedNumber: React.FC<{
   decimals = 0,
   prefix = "",
   suffix = "",
-  duration = 0.55,
+  duration = 0.6,
   className,
 }) => {
   const spanRef = useRef<HTMLSpanElement | null>(null)
@@ -86,7 +90,7 @@ export const AnimatedNumber: React.FC<{
       gsap.to(trackerRef.current, {
         v: value,
         duration,
-        ease: STUDIO_EASE.out,
+        ease: STUDIO_EASE.expo,
         overwrite: "auto",
         onUpdate: () => {
           if (spanRef.current) {

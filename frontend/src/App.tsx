@@ -5,17 +5,7 @@ import {
   useRef,
   useState,
 } from "react"
-import {
-  AlertCircle,
-  CheckCircle2,
-  Command,
-  FolderOpen,
-  Info,
-  KeyRound,
-  LayoutPanelLeft,
-  PanelTop,
-  Search,
-} from "lucide-react"
+import { AlertCircle, CheckCircle2, Info } from "lucide-react"
 import { AnalyticsQueueView } from "@/components/AnalyticsQueueView"
 import { CommandPaletteModal } from "@/components/CommandPaletteModal"
 import { ImageLightbox } from "@/components/ImageLightbox"
@@ -32,17 +22,13 @@ import {
 } from "@/components/StudioDialogs"
 import { StudioRail } from "@/components/StudioRail"
 import { StudioSidebar } from "@/components/StudioSidebar"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { gsap, prefersReducedMotion, STUDIO_EASE, useGSAP } from "@/lib/motion"
 import {
   apiFetch,
   buildDeveloperPreview,
   convertCachedRefOnServer,
-  formatBytes,
   loadPromptHistory,
-  maskKey,
   organizeRecordsOnServer,
   pushPromptHistory,
   uploadLocalRefFile,
@@ -107,7 +93,7 @@ export function App() {
     []
   )
 
-  // Floating Toast spring-slide entrance via scoped useGSAP + autoAlpha
+  // Floating Toast calm Apple fluid settle via scoped useGSAP + autoAlpha
   useGSAP(
     () => {
       const activeIds = new Set(toasts.map((t) => t.id))
@@ -123,13 +109,13 @@ export function App() {
           if (el && !prefersReducedMotion()) {
             gsap.fromTo(
               el,
-              { autoAlpha: 0, x: 22, scale: 0.95 },
+              { autoAlpha: 0, y: 10, scale: 0.97 },
               {
                 autoAlpha: 1,
-                x: 0,
+                y: 0,
                 scale: 1,
-                duration: 0.28,
-                ease: STUDIO_EASE.spring,
+                duration: 0.34,
+                ease: STUDIO_EASE.expo,
                 clearProps: "transform,visibility",
               }
             )
@@ -171,7 +157,7 @@ export function App() {
     })
   }, [])
 
-  // Crisp workspace view entrance on tab or layout switch (preserves sticky positioning via clearProps)
+  // Calm workspace view cross-settle on tab or layout switch (preserves sticky positioning via clearProps)
   useGSAP(
     () => {
       const key = `${activeTab}:${layoutMode}`
@@ -187,11 +173,11 @@ export function App() {
         workspaceBodyRef.current
       gsap.fromTo(
         target,
-        { opacity: 0, y: 8 },
+        { opacity: 0, y: 6 },
         {
           opacity: 1,
           y: 0,
-          duration: 0.24,
+          duration: 0.3,
           ease: STUDIO_EASE.out,
           clearProps: "transform,opacity",
           overwrite: "auto",
@@ -280,7 +266,7 @@ export function App() {
     setQuickOverlayRendered(false)
   })
 
-  // Sequenced GSAP timeline entrance & exit choreography for Quick Composer Overlay
+  // Calm Apple fluid entrance & exit choreography for Quick Composer Overlay
   useGSAP(
     () => {
       if (quickComposerOpen && !prevQuickOpenAnimRef.current) {
@@ -297,7 +283,7 @@ export function App() {
             { autoAlpha: 0 },
             {
               autoAlpha: 1,
-              duration: 0.2,
+              duration: 0.24,
               ease: STUDIO_EASE.out,
               clearProps: "visibility",
             },
@@ -307,15 +293,15 @@ export function App() {
         if (card) {
           tl.fromTo(
             card,
-            { autoAlpha: 0, y: -16, scale: 0.975 },
+            { autoAlpha: 0, y: -8, scale: 0.985 },
             {
               autoAlpha: 1,
               y: 0,
               scale: 1,
-              duration: 0.26,
+              duration: 0.34,
               clearProps: "transform,visibility",
             },
-            "<0.02"
+            0
           )
         }
       } else if (!quickComposerOpen && prevQuickOpenAnimRef.current) {
@@ -328,10 +314,14 @@ export function App() {
         }
         gsap
           .timeline({
-            defaults: { duration: 0.16, ease: "power2.in", overwrite: "auto" },
+            defaults: {
+              duration: 0.2,
+              ease: STUDIO_EASE.inOut,
+              overwrite: "auto",
+            },
             onComplete: finishQuickOverlayClose,
           })
-          .to(card, { autoAlpha: 0, y: -10, scale: 0.98 }, 0)
+          .to(card, { autoAlpha: 0, y: -6, scale: 0.988 }, 0)
           .to(backdrop, { autoAlpha: 0 }, "<")
       }
     },
@@ -1839,12 +1829,12 @@ export function App() {
   )
 
   return (
-    <TooltipProvider delayDuration={160}>
+    <TooltipProvider delayDuration={180}>
       <div
         ref={appRootRef}
-        className="flex h-screen w-screen overflow-hidden bg-background text-foreground"
+        className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground"
       >
-        {/* Left Vertical Studio Navigation Rail (Desktop) + Bottom Tab Bar (Mobile) */}
+        {/* Unified Borderless Apple Top Bar (Desktop) + Floating Capsule Dock (Mobile) */}
         <StudioRail
           activeTab={activeTab}
           onSelectTab={setActiveTab}
@@ -1866,248 +1856,129 @@ export function App() {
           }}
         />
 
-        {/* Right Full-Viewport Studio Canvas */}
-        <div className="flex flex-1 flex-col min-w-0 h-full overflow-hidden">
-          {/* Sleek Studio Top Status Bar */}
-          <header className="flex h-11 shrink-0 items-center justify-between border-b border-border/75 bg-background/85 px-4 backdrop-blur-md z-20">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="text-xs font-semibold tracking-tight truncate">
-                {activeTab === "imagine" && "多米图像创作中心 · Imagine"}
-                {activeTab === "gallery" && "作品资产与项目画册 · Assets"}
-                {activeTab === "recipes" && "灵感配方广场 · Recipes"}
-                {activeTab === "analytics" && "异步队列与存储管家 · Telemetry"}
-              </span>
-
-              <Badge
-                variant="outline"
-                className="hidden sm:inline-flex font-mono text-[10px] px-1.5 py-0 text-muted-foreground"
-              >
-                {info?.version || "v3.1.1"} 单文件便携版
-              </Badge>
-
-              {activeCount > 0 && (
-                <Badge
-                  variant="warning"
-                  className="text-[10px] px-1.5 py-0 tabular-nums"
+        {/* Active Workspace Body */}
+        <main
+          ref={workspaceBodyRef}
+          className="relative flex-1 min-h-0 overflow-hidden"
+        >
+          {/* TAB 1: IMAGINE WORKSPACE (Unified Scroll Omnibar OR Pro Split Mode) */}
+          {activeTab === "imagine" &&
+            (layoutMode === "omnibar" ? (
+              <>
+                <div
+                  ref={imagineScrollRef}
+                  onScroll={(e) => {
+                    const past = e.currentTarget.scrollTop > 180
+                    setIsScrolledPastComposer((prev) =>
+                      prev === past ? prev : past
+                    )
+                    if (!past && quickComposerOpen) {
+                      setQuickComposerOpen(false)
+                    }
+                  }}
+                  className="h-full overflow-y-auto studio-scroll"
                 >
-                  显影中 {activeCount}
-                </Badge>
-              )}
-            </div>
+                  {/* Generous Borderless Creation Canvas — scrolls away cleanly */}
+                  <div className="px-4 sm:px-8 lg:px-12 pt-5 pb-4">
+                    {renderOmnibarComposer()}
+                  </div>
 
-            <div className="flex items-center gap-1.5">
-              {/* Quick Ctrl+K Search Pill */}
-              <button
-                type="button"
-                onClick={() => setCommandPaletteOpen(true)}
-                className="hidden md:inline-flex items-center gap-2 rounded-lg border border-border bg-secondary/45 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
-              >
-                <Command className="h-3 w-3 text-amber-500" />
-                <span>快捷指令...</span>
-                <span className="studio-kbd">⌘K</span>
-              </button>
+                  {/* Unified Full-Width Sticky Filter Bar + Native Aspect-Ratio Masonry Stream */}
+                  <MasonryArtworkStream
+                    mode="imagine"
+                    embeddedScroll={false}
+                    showQuickCreateTrigger={isScrolledPastComposer}
+                    hasDraftOrRefs={Boolean(
+                      prompt.trim() || referenceImages.length > 0
+                    )}
+                    onOpenQuickComposer={() => setQuickComposerOpen(true)}
+                    onScrollToTop={scrollToImagineTop}
+                    records={records}
+                    projects={projects}
+                    onCreateProject={handleCreateProject}
+                    onDeleteProject={handleDeleteProject}
+                    onAssignProject={handleAssignProject}
+                    onBatchStar={handleBatchStar}
+                    refreshingIds={refreshingIds}
+                    onRefreshAll={async () => {
+                      await refreshRecords()
+                      showToast("已同步记录", "info")
+                    }}
+                    onRefreshSingle={handleRefreshSingle}
+                    onCancelPolling={handleCancelPolling}
+                    onToggleStar={handleToggleStar}
+                    onOpenLightbox={(rec, idx, openCompare = false) => {
+                      setLightboxInitialCompare(openCompare)
+                      setLightboxRecordId(rec.id)
+                      setLightboxImgIdx(idx)
+                    }}
+                    onUseGeneratedAsRef={handleUseGeneratedAsRef}
+                    onReuseRecord={handleReuseRecord}
+                    onRetryRecord={handleRetryRecord}
+                    onDownloadMissingLocal={handleDownloadMissingLocal}
+                    onDeleteSingle={handleDeleteSingle}
+                    onBatchDelete={handleBatchDelete}
+                    onClearFailed={handleClearFailed}
+                    onOpenImportTask={() => setImportTaskOpen(true)}
+                    onCopyText={copyText}
+                  />
+                </div>
 
-              {/* Layout Switcher when in Imagine tab */}
-              {activeTab === "imagine" && (
-                <button
-                  type="button"
-                  onClick={toggleLayoutMode}
-                  className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/45 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  title="切换顶部灵感舱或双栏专业参数台"
-                >
-                  {layoutMode === "omnibar" ? (
-                    <>
-                      <LayoutPanelLeft className="h-3 w-3 text-amber-500" />
-                      <span>切换双栏</span>
-                    </>
-                  ) : (
-                    <>
-                      <PanelTop className="h-3 w-3 text-amber-500" />
-                      <span>切换灵感舱</span>
-                    </>
-                  )}
-                </button>
-              )}
-
-              {/* Portable Data Dir Pill */}
-              <button
-                type="button"
-                onClick={() => handleOpenLocalFolder()}
-                className="hidden xl:inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/45 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                title="点击打开本地绿色便携目录 duomi_data"
-              >
-                <FolderOpen className="h-3 w-3 text-amber-500" />
-                <span className="font-mono">
-                  {diskStats
-                    ? `${diskStats.generated_count}张 · ${formatBytes(
-                        diskStats.total_bytes
-                      )}`
-                    : "duomi_data"}
-                </span>
-              </button>
-
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-[11px]"
-                onClick={() => setImportTaskOpen(true)}
-              >
-                <Search className="h-3 w-3" />
-                <span className="hidden sm:inline">查任务ID</span>
-              </Button>
-
-              <button
-                id="btn-open-config-modal"
-                type="button"
-                onClick={() => {
-                  setSettingsTab("api")
-                  setSettingsOpen(true)
-                }}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer",
-                  hasApiKey
-                    ? "border-border bg-secondary/45 text-foreground hover:bg-secondary"
-                    : "border-amber-500/60 bg-amber-500/10 text-amber-500"
-                )}
-              >
-                <span
-                  className={cn(
-                    "h-1.5 w-1.5 rounded-full",
-                    hasApiKey ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
-                  )}
-                />
-                <KeyRound className="h-3 w-3" />
-                <span className="font-mono">
-                  {hasApiKey ? maskKey(config?.api_key) : "配置密钥"}
-                </span>
-              </button>
-            </div>
-          </header>
-
-          {/* Active Workspace Body */}
-          <main
-            ref={workspaceBodyRef}
-            className="relative flex-1 min-h-0 overflow-hidden"
-          >
-            {/* TAB 1: IMAGINE WORKSPACE (Unified Scroll Omnibar OR Pro Split Mode) */}
-            {activeTab === "imagine" &&
-              (layoutMode === "omnibar" ? (
-                <>
+                {/* On-Demand Contextual Quick Composer Overlay (Ctrl+J) */}
+                {(quickComposerOpen || quickOverlayRendered) && (
                   <div
-                    ref={imagineScrollRef}
-                    onScroll={(e) => {
-                      const past = e.currentTarget.scrollTop > 165
-                      setIsScrolledPastComposer((prev) =>
-                        prev === past ? prev : past
-                      )
-                      if (!past && quickComposerOpen) {
+                    ref={quickBackdropRef}
+                    onClick={(e) => {
+                      if (e.target === e.currentTarget) {
                         setQuickComposerOpen(false)
                       }
                     }}
-                    className="h-full overflow-y-auto studio-scroll"
+                    className={cn(
+                      "absolute inset-0 z-30 flex items-start justify-center bg-black/25 dark:bg-black/55 backdrop-blur-md px-4 sm:px-8 pt-6 pb-8 overflow-y-auto",
+                      !quickComposerOpen && "pointer-events-none"
+                    )}
                   >
-                    {/* Normal-Flow Top Hero Creation Band — scrolls away cleanly, zero overlap */}
-                    <div className="border-b border-border/55 bg-secondary/20 dark:bg-zinc-950/35 px-3 sm:px-6 pt-4 pb-4">
-                      {renderOmnibarComposer()}
-                    </div>
-
-                    {/* Unified Full-Width Sticky Filter Bar + Native Aspect-Ratio Masonry Stream */}
-                    <MasonryArtworkStream
-                      mode="imagine"
-                      embeddedScroll={false}
-                      showQuickCreateTrigger={isScrolledPastComposer}
-                      hasDraftOrRefs={Boolean(
-                        prompt.trim() || referenceImages.length > 0
-                      )}
-                      onOpenQuickComposer={() => setQuickComposerOpen(true)}
-                      onScrollToTop={scrollToImagineTop}
-                      records={records}
-                      projects={projects}
-                      onCreateProject={handleCreateProject}
-                      onDeleteProject={handleDeleteProject}
-                      onAssignProject={handleAssignProject}
-                      onBatchStar={handleBatchStar}
-                      refreshingIds={refreshingIds}
-                      onRefreshAll={async () => {
-                        await refreshRecords()
-                        showToast("已同步最新记录列表", "info")
-                      }}
-                      onRefreshSingle={handleRefreshSingle}
-                      onCancelPolling={handleCancelPolling}
-                      onToggleStar={handleToggleStar}
-                      onOpenLightbox={(rec, idx, openCompare = false) => {
-                        setLightboxInitialCompare(openCompare)
-                        setLightboxRecordId(rec.id)
-                        setLightboxImgIdx(idx)
-                      }}
-                      onUseGeneratedAsRef={handleUseGeneratedAsRef}
-                      onReuseRecord={handleReuseRecord}
-                      onRetryRecord={handleRetryRecord}
-                      onDownloadMissingLocal={handleDownloadMissingLocal}
-                      onDeleteSingle={handleDeleteSingle}
-                      onBatchDelete={handleBatchDelete}
-                      onClearFailed={handleClearFailed}
-                      onOpenImportTask={() => setImportTaskOpen(true)}
-                      onCopyText={copyText}
-                    />
-                  </div>
-
-                  {/* On-Demand Contextual Quick Composer Overlay (Ctrl+J or '✨ 唤起创作舱') */}
-                  {(quickComposerOpen || quickOverlayRendered) && (
                     <div
-                      ref={quickBackdropRef}
-                      onClick={(e) => {
-                        if (e.target === e.currentTarget) {
-                          setQuickComposerOpen(false)
-                        }
-                      }}
-                      className={cn(
-                        "absolute inset-0 z-30 flex items-start justify-center bg-black/45 backdrop-blur-[2px] px-3 sm:px-6 pt-4 pb-6 overflow-y-auto",
-                        !quickComposerOpen && "pointer-events-none"
-                      )}
+                      ref={quickCardRef}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full max-w-3xl"
                     >
-                      <div
-                        ref={quickCardRef}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-full max-w-4xl"
-                      >
-                        {renderOmnibarComposer(() =>
-                          setQuickComposerOpen(false)
-                        )}
-                      </div>
+                      {renderOmnibarComposer(() =>
+                        setQuickComposerOpen(false)
+                      )}
                     </div>
-                  )}
-                </>
-              ) : (
-                /* Pro Split 2-Column Mode */
-                <div className="flex flex-col lg:grid lg:grid-cols-[440px_1fr] xl:grid-cols-[465px_1fr] h-full overflow-hidden">
-                  <div className="flex lg:hidden border-b border-border bg-card/60 p-1.5 gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setSplitMobilePane("studio")}
-                      className={cn(
-                        "flex-1 rounded-lg py-1.5 text-xs font-semibold cursor-pointer",
-                        splitMobilePane === "studio"
-                          ? "bg-amber-500 text-zinc-950"
-                          : "text-muted-foreground"
-                      )}
-                    >
-                      参数工作台
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSplitMobilePane("gallery")}
-                      className={cn(
-                        "flex-1 rounded-lg py-1.5 text-xs font-semibold cursor-pointer",
-                        splitMobilePane === "gallery"
-                          ? "bg-amber-500 text-zinc-950"
-                          : "text-muted-foreground"
-                      )}
-                    >
-                      瀑布流画廊 ({records.length})
-                    </button>
                   </div>
+                )}
+              </>
+            ) : (
+              /* Pro Split 2-Column Mode */
+              <div className="flex flex-col lg:grid lg:grid-cols-[410px_1fr] xl:grid-cols-[430px_1fr] h-full overflow-hidden">
+                <div className="mx-4 mt-2 mb-1 flex lg:hidden rounded-full bg-foreground/[0.05] p-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setSplitMobilePane("studio")}
+                    className={cn(
+                      "flex-1 rounded-full py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                      splitMobilePane === "studio"
+                        ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.14]"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    参数
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSplitMobilePane("gallery")}
+                    className={cn(
+                      "flex-1 rounded-full py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                      splitMobilePane === "gallery"
+                        ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.14]"
+                        : "text-muted-foreground"
+                    )}
+                  >
+                    画廊 ({records.length})
+                  </button>
+                </div>
 
                   <div
                     className={cn(
@@ -2326,9 +2197,8 @@ export function App() {
                 onCopyText={copyText}
                 onToast={showToast}
               />
-            )}
-          </main>
-        </div>
+          )}
+        </main>
 
         {/* Modals & Cinema Darkroom Lightbox */}
         <SettingsDialog
@@ -2460,10 +2330,10 @@ export function App() {
           onToast={showToast}
         />
 
-        {/* Theme-Aware Floating Toasts */}
+        {/* Minimalist Frosted Apple Capsule Toasts */}
         <div
           id="toast-container"
-          className="fixed bottom-16 md:bottom-5 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"
+          className="fixed bottom-20 md:bottom-6 right-5 z-50 flex flex-col items-end gap-2 max-w-sm pointer-events-none"
         >
           {toasts.map((t) => (
             <div
@@ -2475,26 +2345,18 @@ export function App() {
                   toastRefs.current.delete(t.id)
                 }
               }}
-              className={cn(
-                "pointer-events-auto flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-xs font-medium shadow-lg backdrop-blur-md",
-                t.type === "success" &&
-                  "border-emerald-500/40 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/92 dark:text-emerald-200",
-                t.type === "error" &&
-                  "border-red-500/40 bg-red-50 text-red-900 dark:bg-red-950/92 dark:text-red-200",
-                t.type === "info" &&
-                  "border-border bg-card/95 text-foreground"
-              )}
+              className="studio-floating-popover pointer-events-auto flex items-center gap-2.5 rounded-full px-4 py-2.5 text-xs font-medium text-foreground"
             >
               {t.type === "success" && (
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
               )}
               {t.type === "error" && (
-                <AlertCircle className="h-4 w-4 text-red-600 dark:text-red-400 shrink-0" />
+                <AlertCircle className="h-3.5 w-3.5 text-red-500 shrink-0" />
               )}
               {t.type === "info" && (
-                <Info className="h-4 w-4 text-amber-500 shrink-0" />
+                <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               )}
-              <span className="leading-relaxed">{t.message}</span>
+              <span className="leading-snug">{t.message}</span>
             </div>
           ))}
         </div>

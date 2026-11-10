@@ -1,15 +1,11 @@
 import React, { useRef } from "react"
 import {
-  Activity,
   Command,
-  Compass,
   FolderOpen,
-  Images,
-  KeyRound,
   LayoutPanelLeft,
   Moon,
   PanelTop,
-  Sparkles,
+  SlidersHorizontal,
   Sun,
 } from "lucide-react"
 import {
@@ -21,7 +17,6 @@ import {
   gsap,
   prefersReducedMotion,
   STUDIO_EASE,
-  STUDIO_MEDIA,
   useGSAP,
 } from "@/lib/motion"
 import { cn } from "@/lib/utils"
@@ -46,38 +41,12 @@ interface StudioRailProps {
 const NAV_ITEMS: Array<{
   id: StudioNavTab
   label: string
-  short: string
-  icon: React.ComponentType<{ className?: string }>
   shortcut: string
 }> = [
-  {
-    id: "imagine",
-    label: "创作工作台 (Imagine)",
-    short: "创作",
-    icon: Sparkles,
-    shortcut: "1",
-  },
-  {
-    id: "gallery",
-    label: "作品资产与画册 (Assets)",
-    short: "画册",
-    icon: Images,
-    shortcut: "2",
-  },
-  {
-    id: "recipes",
-    label: "灵感配方广场 (Recipes)",
-    short: "灵感",
-    icon: Compass,
-    shortcut: "3",
-  },
-  {
-    id: "analytics",
-    label: "队列监控与存储管家 (Telemetry)",
-    short: "看板",
-    icon: Activity,
-    shortcut: "4",
-  },
+  { id: "imagine", label: "创作", shortcut: "1" },
+  { id: "gallery", label: "画册", shortcut: "2" },
+  { id: "recipes", label: "配方", shortcut: "3" },
+  { id: "analytics", label: "状态", shortcut: "4" },
 ]
 
 export const StudioRail: React.FC<StudioRailProps> = ({
@@ -86,7 +55,6 @@ export const StudioRail: React.FC<StudioRailProps> = ({
   layoutMode,
   onToggleLayoutMode,
   activeQueueCount,
-  totalGalleryCount,
   hasApiKey,
   sseConnected,
   theme,
@@ -95,76 +63,41 @@ export const StudioRail: React.FC<StudioRailProps> = ({
   onOpenLocalFolder,
   onOpenSettings,
 }) => {
-  const railRef = useRef<HTMLElement | null>(null)
+  const headerRef = useRef<HTMLElement | null>(null)
   const navIndicatorRef = useRef<HTMLDivElement | null>(null)
   const mobileIndicatorRef = useRef<HTMLDivElement | null>(null)
   const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const mobileBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
-  const iconRefs = useRef<Record<string, HTMLSpanElement | null>>({})
   const themeIconRef = useRef<HTMLSpanElement | null>(null)
-  const initializedIndicatorRef = useRef<boolean>(false)
+  const initializedDesktopRef = useRef<boolean>(false)
   const initializedMobileRef = useRef<boolean>(false)
   const mountedThemeRef = useRef<boolean>(false)
 
-  // Subtle initial desktop studio rail entrance via gsap.matchMedia()
-  useGSAP(
-    () => {
-      const mm = gsap.matchMedia()
-      mm.add(
-        {
-          desktop: STUDIO_MEDIA.desktop,
-          motionOk: STUDIO_MEDIA.motionOk,
-        },
-        (ctx) => {
-          const { desktop, motionOk } = ctx.conditions || {}
-          if (!desktop || !motionOk) return
-          gsap.fromTo(
-            ".rail-stagger-item",
-            { autoAlpha: 0, x: -6 },
-            {
-              autoAlpha: 1,
-              x: 0,
-              duration: 0.34,
-              stagger: 0.03,
-              ease: STUDIO_EASE.out,
-              clearProps: "transform,opacity,visibility",
-            }
-          )
-        },
-        railRef
-      )
-      return () => mm.revert()
-    },
-    { scope: railRef }
-  )
-
-  // Liquid sliding active tab pill (Desktop vertical + Mobile bottom dock) & active icon micro-spring
+  // Liquid Apple Segmented Pill glide (Desktop top bar + Mobile floating capsule)
   useGSAP(
     () => {
       const reduced = prefersReducedMotion()
 
-      // Desktop vertical pill
       const indicator = navIndicatorRef.current
       const activeBtn = btnRefs.current[activeTab]
-      if (indicator && activeBtn && activeBtn.offsetHeight > 0) {
-        const targetY = activeBtn.offsetTop
-        const targetH = activeBtn.offsetHeight
-        if (!initializedIndicatorRef.current || reduced) {
-          initializedIndicatorRef.current = true
-          gsap.set(indicator, { y: targetY, height: targetH, autoAlpha: 1 })
+      if (indicator && activeBtn && activeBtn.offsetWidth > 0) {
+        const targetX = activeBtn.offsetLeft
+        const targetW = activeBtn.offsetWidth
+        if (!initializedDesktopRef.current || reduced) {
+          initializedDesktopRef.current = true
+          gsap.set(indicator, { x: targetX, width: targetW, autoAlpha: 1 })
         } else {
           gsap.to(indicator, {
-            y: targetY,
-            height: targetH,
+            x: targetX,
+            width: targetW,
             autoAlpha: 1,
-            duration: 0.34,
+            duration: 0.38,
             ease: STUDIO_EASE.expo,
             overwrite: "auto",
           })
         }
       }
 
-      // Mobile bottom dock pill
       const mIndicator = mobileIndicatorRef.current
       const mBtn = mobileBtnRefs.current[activeTab]
       if (mIndicator && mBtn && mBtn.offsetWidth > 0) {
@@ -178,34 +111,17 @@ export const StudioRail: React.FC<StudioRailProps> = ({
             x: targetX,
             width: targetW,
             autoAlpha: 1,
-            duration: 0.32,
+            duration: 0.36,
             ease: STUDIO_EASE.expo,
             overwrite: "auto",
           })
         }
       }
-
-      // Active icon spring pop
-      const iconWrap = iconRefs.current[activeTab]
-      if (iconWrap && !reduced) {
-        gsap.fromTo(
-          iconWrap,
-          { scale: 0.82, y: 1.5 },
-          {
-            scale: 1,
-            y: 0,
-            duration: 0.32,
-            ease: STUDIO_EASE.spring,
-            overwrite: "auto",
-            clearProps: "transform",
-          }
-        )
-      }
     },
     { dependencies: [activeTab] }
   )
 
-  // Tactile celestial spin when toggling Darkroom / Paper theme (canonical `rotation` + `_cw`)
+  // Calm, weightless cross-settle on theme switch (zero cartoon spin)
   useGSAP(
     () => {
       if (!mountedThemeRef.current) {
@@ -215,13 +131,12 @@ export const StudioRail: React.FC<StudioRailProps> = ({
       if (prefersReducedMotion() || !themeIconRef.current) return
       gsap.fromTo(
         themeIconRef.current,
-        { rotation: "-72_cw", scale: 0.72, autoAlpha: 0.4 },
+        { scale: 0.86, autoAlpha: 0.25 },
         {
-          rotation: 0,
           scale: 1,
           autoAlpha: 1,
-          duration: 0.38,
-          ease: STUDIO_EASE.spring,
+          duration: 0.3,
+          ease: STUDIO_EASE.out,
           overwrite: "auto",
           clearProps: "transform,opacity,visibility",
         }
@@ -232,116 +147,84 @@ export const StudioRail: React.FC<StudioRailProps> = ({
 
   return (
     <>
-      {/* Desktop Left Vertical Studio Rail */}
-      <aside
-        ref={railRef}
-        aria-label="主工作区导航栏"
-        className="hidden md:flex w-[64px] shrink-0 flex-col items-center justify-between border-r border-border studio-rail py-3.5 select-none z-30"
+      {/* Unified Borderless Apple Top Bar */}
+      <header
+        ref={headerRef}
+        aria-label="工作区导航"
+        className="flex h-14 shrink-0 items-center justify-between bg-background/80 backdrop-blur-2xl px-5 sm:px-8 select-none z-30"
       >
-        {/* Top Brand Aperture Emblem */}
-        <div className="flex flex-col items-center gap-3 w-full">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => onSelectTab("imagine")}
-                className="rail-stagger-item group relative flex h-10 w-10 items-center justify-center rounded-2xl bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-950 shadow-sm transition-transform hover:scale-[1.04] active:scale-95 cursor-pointer"
-                aria-label="Duomi Studio Pro"
-              >
-                <span className="font-mono text-sm font-bold tracking-tighter">
-                  DM
-                </span>
-                <span
-                  className={cn(
-                    "absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background",
-                    sseConnected ? "bg-emerald-500" : "bg-amber-500"
-                  )}
-                />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              <p className="font-semibold">Duomi Studio Pro v3.1</p>
-              <p className="text-[11px] text-muted-foreground">
-                单文件纯绿色架构 ·{" "}
-                {sseConnected ? "SSE 实时引擎已连接" : "自动轮询重连中"}
-              </p>
-            </TooltipContent>
-          </Tooltip>
+        {/* Left: Quiet Wordmark & Subtle Live Status */}
+        <div className="flex items-center gap-3 min-w-[110px] sm:min-w-[160px]">
+          <button
+            type="button"
+            onClick={() => onSelectTab("imagine")}
+            className="inline-flex items-center gap-2 text-[15px] font-semibold tracking-[-0.025em] text-foreground transition-opacity hover:opacity-75 cursor-pointer"
+          >
+            <span>Duomi</span>
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full transition-colors",
+                !hasApiKey
+                  ? "bg-amber-500"
+                  : sseConnected
+                  ? "bg-emerald-500"
+                  : "bg-muted-foreground/40"
+              )}
+              title={
+                !hasApiKey
+                  ? "待配置密钥"
+                  : sseConnected
+                  ? "实时引擎已连接"
+                  : "连接中"
+              }
+            />
+          </button>
 
-          <div className="h-px w-7 bg-border/80" />
-
-          {/* Primary Workspace Switcher with Liquid Sliding GSAP Pill */}
-          <nav className="relative flex flex-col items-center gap-1.5 w-full px-2">
-            <div
-              ref={navIndicatorRef}
-              style={{ opacity: 0 }}
-              className="pointer-events-none absolute left-2 right-2 top-0 rounded-xl bg-card shadow-2xs ring-1 ring-border"
-            >
-              <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-amber-500" />
-            </div>
-
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon
-              const isActive = activeTab === item.id
-              return (
-                <Tooltip key={item.id}>
-                  <TooltipTrigger asChild>
-                    <button
-                      ref={(el) => {
-                        btnRefs.current[item.id] = el
-                      }}
-                      id={`rail-nav-${item.id}`}
-                      type="button"
-                      onClick={() => onSelectTab(item.id)}
-                      className={cn(
-                        "rail-stagger-item relative z-10 flex flex-col items-center justify-center w-full py-2 rounded-xl transition-colors cursor-pointer group",
-                        isActive
-                          ? "text-foreground"
-                          : "text-muted-foreground hover:text-foreground hover:bg-card/45"
-                      )}
-                    >
-                      <span
-                        ref={(el) => {
-                          iconRefs.current[item.id] = el
-                        }}
-                        className="inline-flex"
-                      >
-                        <Icon
-                          className={cn(
-                            "h-[18px] w-[18px] transition-transform duration-150 group-hover:scale-105",
-                            isActive && "text-amber-500"
-                          )}
-                        />
-                      </span>
-                      <span className="mt-1 text-[10px] font-medium leading-none">
-                        {item.short}
-                      </span>
-
-                      {item.id === "imagine" && activeQueueCount > 0 && (
-                        <span className="absolute right-1.5 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 font-mono text-[9px] font-bold text-zinc-950">
-                          {activeQueueCount}
-                        </span>
-                      )}
-                      {item.id === "gallery" &&
-                        totalGalleryCount > 0 &&
-                        !isActive && (
-                          <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-muted-foreground/45" />
-                        )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" className="flex items-center gap-2">
-                    <span>{item.label}</span>
-                    <kbd className="studio-kbd">Alt+{item.shortcut}</kbd>
-                  </TooltipContent>
-                </Tooltip>
-              )
-            })}
-          </nav>
+          {activeQueueCount > 0 && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-foreground/[0.05] px-2.5 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">
+              <span className="h-1.5 w-1.5 rounded-full bg-foreground animate-pulse" />
+              <span>生成中 {activeQueueCount}</span>
+            </span>
+          )}
         </div>
 
-        {/* Bottom Studio Controls */}
-        <div className="flex flex-col items-center gap-1.5 w-full px-2">
-          {/* Layout Mode Switcher (Omnibar Floating vs Pro Split) */}
+        {/* Center: Desktop Apple Segmented Pill Bar */}
+        <nav
+          aria-label="主视图切换"
+          className="hidden md:flex relative items-center rounded-full bg-foreground/[0.048] dark:bg-white/[0.06] p-1"
+        >
+          <div
+            ref={navIndicatorRef}
+            style={{ opacity: 0 }}
+            className="pointer-events-none absolute top-1 bottom-1 left-0 rounded-full bg-card shadow-[0_1px_4px_rgba(0,0,0,0.08)] dark:bg-white/[0.14]"
+          />
+
+          {NAV_ITEMS.map((item) => {
+            const isActive = activeTab === item.id
+            return (
+              <button
+                key={item.id}
+                ref={(el) => {
+                  btnRefs.current[item.id] = el
+                }}
+                id={`rail-nav-${item.id}`}
+                type="button"
+                onClick={() => onSelectTab(item.id)}
+                className={cn(
+                  "relative z-10 rounded-full px-4 py-1 text-[13px] font-medium transition-colors duration-200 cursor-pointer",
+                  isActive
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                {item.label}
+              </button>
+            )
+          })}
+        </nav>
+
+        {/* Right: Minimalist Monochrome Icon Actions */}
+        <div className="flex items-center justify-end gap-1 min-w-[110px] sm:min-w-[160px]">
           {activeTab === "imagine" && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -349,128 +232,112 @@ export const StudioRail: React.FC<StudioRailProps> = ({
                   id="btn-toggle-studio-layout"
                   type="button"
                   onClick={onToggleLayoutMode}
-                  className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                  className="hidden sm:flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground transition-colors cursor-pointer"
+                  aria-label="切换布局"
                 >
                   {layoutMode === "omnibar" ? (
-                    <PanelTop className="h-4 w-4 text-amber-500" />
+                    <LayoutPanelLeft className="h-4 w-4" />
                   ) : (
-                    <LayoutPanelLeft className="h-4 w-4 text-amber-500" />
+                    <PanelTop className="h-4 w-4" />
                   )}
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right">
-                <p className="font-medium">
-                  当前布局：
-                  {layoutMode === "omnibar"
-                    ? "沉浸创作流模式（对标即梦/MJ）"
-                    : "专业双栏检查器模式（对标 Leonardo）"}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  点击一键切换工作台形态
-                </p>
+              <TooltipContent>
+                {layoutMode === "omnibar" ? "双栏视图" : "沉浸视图"}
               </TooltipContent>
             </Tooltip>
           )}
 
-          {/* Command Palette Trigger */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 id="btn-open-command-palette"
                 type="button"
                 onClick={onOpenCommandPalette}
-                className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground transition-colors cursor-pointer"
+                aria-label="快捷指令"
               >
                 <Command className="h-4 w-4" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right" className="flex items-center gap-2">
-              <span>全局快捷命令面板</span>
-              <kbd className="studio-kbd">Ctrl+K</kbd>
+            <TooltipContent className="flex items-center gap-1.5">
+              <span>指令</span>
+              <kbd className="studio-kbd">⌘K</kbd>
             </TooltipContent>
           </Tooltip>
 
-          {/* Open Local Portable Data Folder */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 id="btn-rail-open-folder"
                 type="button"
                 onClick={onOpenLocalFolder}
-                className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                className="hidden sm:flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground transition-colors cursor-pointer"
+                aria-label="本地目录"
               >
                 <FolderOpen className="h-4 w-4" />
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right">
-              打开本地绿色图库目录 (duomi_data/images)
-            </TooltipContent>
+            <TooltipContent>本地目录</TooltipContent>
           </Tooltip>
 
-          {/* Darkroom / Paper Theme Toggle */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 id="btn-rail-theme"
                 type="button"
                 onClick={onToggleTheme}
-                className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground transition-colors cursor-pointer"
+                aria-label="切换主题"
               >
                 <span ref={themeIconRef} className="inline-flex">
                   {theme === "dark" ? (
-                    <Sun className="h-4 w-4 text-amber-400" />
+                    <Sun className="h-4 w-4" />
                   ) : (
                     <Moon className="h-4 w-4" />
                   )}
                 </span>
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right">
-              切换为{theme === "dark" ? "美术馆浅色 (Paper)" : "专业暗房深色 (Darkroom)"}
+            <TooltipContent>
+              {theme === "dark" ? "浅色外观" : "深色外观"}
             </TooltipContent>
           </Tooltip>
 
-          {/* API Key & Settings */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                id="btn-rail-settings"
+                id="btn-open-config-modal"
                 type="button"
                 onClick={() => onOpenSettings("api")}
                 className={cn(
-                  "relative flex h-9 w-9 items-center justify-center rounded-xl transition-colors cursor-pointer",
+                  "relative flex h-8 items-center justify-center gap-1.5 rounded-full transition-colors cursor-pointer",
                   hasApiKey
-                    ? "text-muted-foreground hover:bg-card hover:text-foreground"
-                    : "bg-amber-500/15 text-amber-500 ring-1 ring-amber-500/40"
+                    ? "w-8 text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground"
+                    : "bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90"
                 )}
+                aria-label="设置"
               >
-                <KeyRound className="h-4 w-4" />
-                {!hasApiKey && (
-                  <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-amber-500 animate-ping" />
-                )}
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                {!hasApiKey && <span>配置密钥</span>}
               </button>
             </TooltipTrigger>
-            <TooltipContent side="right">
-              {hasApiKey
-                ? "系统设置 · API 连通性测速 · 图床配置"
-                : "未配置多米 API Key（点击立即配置）"}
-            </TooltipContent>
+            <TooltipContent>设置</TooltipContent>
           </Tooltip>
         </div>
-      </aside>
+      </header>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Mobile Floating Frosted Segmented Capsule */}
       <nav
         aria-label="移动端底部导航"
-        className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-card/95 backdrop-blur-lg px-2 py-1.5"
+        className="md:hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center rounded-full studio-omnibar p-1"
       >
         <div
           ref={mobileIndicatorRef}
           style={{ opacity: 0, visibility: "hidden" }}
-          className="pointer-events-none absolute top-1.5 bottom-1.5 left-0 rounded-lg bg-amber-500/12 ring-1 ring-amber-500/25"
+          className="pointer-events-none absolute top-1 bottom-1 left-0 rounded-full bg-foreground/[0.09] dark:bg-white/[0.15]"
         />
         {NAV_ITEMS.map((item) => {
-          const Icon = item.icon
           const isActive = activeTab === item.id
           return (
             <button
@@ -481,26 +348,14 @@ export const StudioRail: React.FC<StudioRailProps> = ({
               type="button"
               onClick={() => onSelectTab(item.id)}
               className={cn(
-                "relative z-10 flex flex-col items-center justify-center px-3 py-1 rounded-lg text-[11px] font-medium cursor-pointer",
-                isActive ? "text-amber-500" : "text-muted-foreground"
+                "relative z-10 rounded-full px-4 py-1.5 text-xs font-medium transition-colors cursor-pointer",
+                isActive ? "text-foreground" : "text-muted-foreground"
               )}
             >
-              <Icon className="h-4 w-4" />
-              <span className="mt-0.5">{item.short}</span>
+              {item.label}
             </button>
           )
         })}
-        <button
-          type="button"
-          onClick={() => onOpenSettings("api")}
-          className={cn(
-            "relative z-10 flex flex-col items-center justify-center px-3 py-1 rounded-lg text-[11px] font-medium cursor-pointer",
-            !hasApiKey ? "text-amber-500" : "text-muted-foreground"
-          )}
-        >
-          <KeyRound className="h-4 w-4" />
-          <span className="mt-0.5">设置</span>
-        </button>
       </nav>
     </>
   )

@@ -3,64 +3,68 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: hsl(38 22% 96.8%);
-  --foreground: hsl(240 10% 8.5%);
+  --background: hsl(240 5% 96.6%);
+  --foreground: hsl(240 6% 11%);
   --card: hsl(0 0% 100%);
-  --card-foreground: hsl(240 10% 8.5%);
+  --card-foreground: hsl(240 6% 11%);
   --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(240 10% 8.5%);
-  --primary: hsl(240 8% 10%);
-  --primary-foreground: hsl(0 0% 98%);
-  --secondary: hsl(36 12% 92.5%);
-  --secondary-foreground: hsl(240 8% 12%);
-  --muted: hsl(36 10% 93.2%);
-  --muted-foreground: hsl(240 4% 41%);
-  --accent: hsl(36 12% 90.5%);
-  --accent-foreground: hsl(240 8% 10%);
-  --destructive: hsl(0 72% 49%);
-  --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(30 8% 85.5%);
-  --input: hsl(30 8% 84.5%);
-  --ring: hsl(36 92% 46%);
-  --radius: 0.75rem;
+  --popover-foreground: hsl(240 6% 11%);
+  --primary: hsl(240 6% 11%);
+  --primary-foreground: hsl(0 0% 100%);
+  --secondary: hsl(240 5% 92.8%);
+  --secondary-foreground: hsl(240 6% 13%);
+  --muted: hsl(240 5% 93.5%);
+  --muted-foreground: hsl(240 4% 48%);
+  --accent: hsl(240 5% 91.2%);
+  --accent-foreground: hsl(240 6% 11%);
+  --destructive: hsl(3 78% 54%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(240 6% 10% / 0.055);
+  --input: hsl(240 6% 10% / 0.075);
+  --ring: hsl(240 6% 11% / 0.16);
+  --radius: 1rem;
 
-  --rail-bg: hsl(38 18% 94.5%);
-  --glass-bg: rgba(255, 255, 255, 0.86);
-  --glass-border: rgba(24, 24, 27, 0.09);
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-border: rgba(0, 0, 0, 0.045);
   --glass-shadow:
-    0 18px 42px -14px rgba(15, 15, 20, 0.12),
-    0 2px 6px rgba(15, 15, 20, 0.05),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    0 20px 52px -14px rgba(0, 0, 0, 0.075),
+    0 2px 10px -2px rgba(0, 0, 0, 0.03),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.95);
+  --surface-shadow:
+    0 4px 24px -4px rgba(0, 0, 0, 0.038),
+    0 1px 2px rgba(0, 0, 0, 0.02);
 }
 
 .dark {
-  --background: hsl(240 7% 4.5%);
-  --foreground: hsl(0 0% 95.5%);
-  --card: hsl(240 6% 7.8%);
-  --card-foreground: hsl(0 0% 95.5%);
-  --popover: hsl(240 6% 8.8%);
-  --popover-foreground: hsl(0 0% 95.5%);
-  --primary: hsl(0 0% 96.5%);
-  --primary-foreground: hsl(240 8% 7%);
-  --secondary: hsl(240 5% 13%);
-  --secondary-foreground: hsl(0 0% 94%);
-  --muted: hsl(240 5% 11.8%);
-  --muted-foreground: hsl(240 5% 58%);
-  --accent: hsl(240 5% 15.2%);
-  --accent-foreground: hsl(0 0% 96%);
-  --destructive: hsl(0 68% 54%);
-  --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 5% 15.5%);
-  --input: hsl(240 5% 15.5%);
-  --ring: hsl(37 95% 52%);
+  --background: hsl(240 6% 4%);
+  --foreground: hsl(240 5% 96%);
+  --card: hsl(240 5% 8.6%);
+  --card-foreground: hsl(240 5% 96%);
+  --popover: hsl(240 5% 10%);
+  --popover-foreground: hsl(240 5% 96%);
+  --primary: hsl(240 5% 96%);
+  --primary-foreground: hsl(240 6% 6%);
+  --secondary: hsl(240 4% 13.5%);
+  --secondary-foreground: hsl(240 5% 94%);
+  --muted: hsl(240 4% 12.5%);
+  --muted-foreground: hsl(240 4% 58%);
+  --accent: hsl(240 4% 15.8%);
+  --accent-foreground: hsl(240 5% 96%);
+  --destructive: hsl(3 82% 58%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --border: hsl(0 0% 100% / 0.065);
+  --input: hsl(0 0% 100% / 0.08);
+  --ring: hsl(0 0% 100% / 0.2);
 
-  --rail-bg: hsl(240 7% 6%);
-  --glass-bg: rgba(18, 18, 22, 0.84);
-  --glass-border: rgba(255, 255, 255, 0.085);
+  --glass-bg: rgba(22, 22, 25, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.07);
   --glass-shadow:
-    0 24px 54px -16px rgba(0, 0, 0, 0.72),
-    0 4px 14px rgba(0, 0, 0, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.055);
+    0 28px 64px -16px rgba(0, 0, 0, 0.68),
+    0 4px 16px rgba(0, 0, 0, 0.34),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.09);
+  --surface-shadow:
+    0 12px 32px -12px rgba(0, 0, 0, 0.45),
+    inset 0 0.5px 0 rgba(255, 255, 255, 0.055);
 }
 
 @theme inline {
@@ -84,8 +88,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
 }
 
 @layer base {
@@ -101,6 +105,7 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
+    letter-spacing: -0.011em;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -111,25 +116,26 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Studio Rail & Glassmorphic Omnibar Surfaces */
-.studio-rail {
-  background-color: var(--rail-bg);
+/* Borderless Apple Elevated Surface & Vibrancy Capsules */
+.apple-surface {
+  background: var(--card);
+  box-shadow: var(--surface-shadow);
 }
 
 .studio-omnibar {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(22px) saturate(165%);
-  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  backdrop-filter: blur(32px) saturate(185%);
+  -webkit-backdrop-filter: blur(32px) saturate(185%);
 }
 
 .studio-floating-popover {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(24px) saturate(180%);
-  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(36px) saturate(190%);
+  -webkit-backdrop-filter: blur(36px) saturate(190%);
 }
 
 .studio-kbd {
@@ -137,41 +143,40 @@
   align-items: center;
   justify-content: center;
   min-width: 1.25rem;
-  height: 1.2rem;
+  height: 1.15rem;
   padding: 0 0.32rem;
-  border-radius: 0.3rem;
+  border-radius: 0.35rem;
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   line-height: 1;
-  background-color: color-mix(in srgb, var(--foreground) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+  background-color: color-mix(in srgb, var(--foreground) 6%, transparent);
   color: var(--muted-foreground);
 }
 
-/* Custom Studio Scrollbar */
+/* Whisper-Thin Apple Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(240 5% 50% / 0.22);
+  background: hsl(240 5% 50% / 0.18);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(240 5% 50% / 0.42);
+  background: hsl(240 5% 50% / 0.34);
 }
 
-/* Precision Range Slider */
+/* Minimalist Monochrome Range Slider */
 input[type="range"].studio-slider {
   -webkit-appearance: none;
   appearance: none;
-  height: 4px;
+  height: 3px;
   border-radius: 9999px;
-  background: color-mix(in srgb, var(--foreground) 15%, transparent);
+  background: color-mix(in srgb, var(--foreground) 12%, transparent);
   outline: none;
   cursor: pointer;
 }
@@ -181,45 +186,40 @@ input[type="range"].studio-slider::-webkit-slider-thumb {
   width: 13px;
   height: 13px;
   border-radius: 9999px;
-  background: #f59e0b;
+  background: var(--foreground);
   border: 2px solid var(--card);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-  transition: transform 0.12s ease;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.22);
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 input[type="range"].studio-slider::-webkit-slider-thumb:hover {
-  transform: scale(1.18);
+  transform: scale(1.14);
 }
 
 /* Checkerboard pattern ONLY for explicit transparent PNG previews */
 .bg-checkerboard {
   background-image:
-    linear-gradient(45deg, rgba(128, 128, 128, 0.13) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(128, 128, 128, 0.13) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.13) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.13) 75%);
+    linear-gradient(45deg, rgba(128, 128, 128, 0.11) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128, 128, 128, 0.11) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.11) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.11) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
 
-/* Filmic Darkroom Developing Shimmer for Pending/Running Tasks */
+/* Subtle Pearl Developing Shimmer for Pending/Running Tasks */
 @keyframes filmic-sweep {
   0% {
-    transform: translateX(-120%) skewX(-16deg);
+    transform: translateX(-120%);
   }
   100% {
-    transform: translateX(220%) skewX(-16deg);
+    transform: translateX(220%);
   }
 }
 
 .developing-canvas {
   position: relative;
   overflow: hidden;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--card) 92%, #f59e0b 8%) 0%,
-    var(--secondary) 50%,
-    color-mix(in srgb, var(--card) 94%, #f59e0b 6%) 100%
-  );
+  background: color-mix(in srgb, var(--foreground) 4%, var(--card));
 }
 .developing-canvas::after {
   content: "";
@@ -228,18 +228,16 @@ input[type="range"].studio-slider::-webkit-slider-thumb:hover {
   background: linear-gradient(
     90deg,
     transparent 0%,
-    rgba(245, 158, 11, 0.08) 45%,
-    rgba(255, 255, 255, 0.09) 50%,
-    rgba(245, 158, 11, 0.08) 55%,
+    color-mix(in srgb, var(--foreground) 4.5%, transparent) 50%,
     transparent 100%
   );
-  animation: filmic-sweep 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  animation: filmic-sweep 2.6s cubic-bezier(0.22, 1, 0.36, 1) infinite;
   pointer-events: none;
 }
 
-/* Masonry Card break prevention */
+/* Generous Masonry Card Breathing Space */
 .masonry-item {
   break-inside: avoid;
   page-break-inside: avoid;
-  margin-bottom: 1rem;
+  margin-bottom: 1.25rem;
 }

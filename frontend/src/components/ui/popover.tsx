@@ -86,7 +86,7 @@ export function PopoverContent({
   children,
   className,
   align = "start",
-  sideOffset = 8,
+  sideOffset = 10,
   preferredSide = "bottom",
 }: {
   children: React.ReactNode
@@ -111,7 +111,7 @@ export function PopoverContent({
     const pop = contentRef.current.getBoundingClientRect()
     const vw = window.innerWidth
     const vh = window.innerHeight
-    const pad = 12
+    const pad = 14
 
     let actualSide: "top" | "bottom" = preferredSide
     let top =
@@ -119,7 +119,6 @@ export function PopoverContent({
         ? trig.top - pop.height - sideOffset
         : trig.bottom + sideOffset
 
-    // Flip vertically if clipped
     if (
       preferredSide === "bottom" &&
       top + pop.height > vh - pad &&
@@ -181,8 +180,8 @@ export function PopoverContent({
         el,
         {
           autoAlpha: 0,
-          y: coords.side === "top" ? 6 : -6,
-          scale: 0.965,
+          y: coords.side === "top" ? 5 : -5,
+          scale: 0.98,
           transformOrigin:
             coords.side === "top" ? "bottom center" : "top center",
         },
@@ -190,7 +189,7 @@ export function PopoverContent({
           autoAlpha: 1,
           y: 0,
           scale: 1,
-          duration: 0.22,
+          duration: 0.26,
           ease: STUDIO_EASE.expo,
           clearProps: "transform,visibility",
         }
@@ -206,7 +205,6 @@ export function PopoverContent({
       if (!target) return
       if (contentRef.current?.contains(target)) return
       if (ctx.triggerRef.current?.contains(target)) return
-      // Also allow Radix Select portals rendered at body root
       if (
         (target as HTMLElement).closest?.("[data-radix-popper-content-wrapper]")
       ) {
@@ -240,7 +238,7 @@ export function PopoverContent({
         zIndex: 60,
       }}
       className={cn(
-        "studio-floating-popover rounded-2xl p-3.5 text-popover-foreground",
+        "studio-floating-popover rounded-[22px] p-4 text-popover-foreground",
         className
       )}
     >

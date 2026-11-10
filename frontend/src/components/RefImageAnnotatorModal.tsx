@@ -12,7 +12,6 @@ import {
   Undo2,
   X,
 } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -40,12 +39,12 @@ interface CropBox {
 }
 
 const COLOR_SWATCHES = [
-  { value: "#ef4444", label: "重点红 (排除/标注)" },
-  { value: "#22c55e", label: "保留绿 (主体锁定)" },
-  { value: "#f59e0b", label: "琥珀金 (区域提示)" },
-  { value: "#38bdf8", label: "晴空蓝 (空间辅助)" },
-  { value: "#ffffff", label: "纯白" },
-  { value: "#09090b", label: "深黑" },
+  { value: "#ef4444", label: "红" },
+  { value: "#22c55e", label: "绿" },
+  { value: "#f59e0b", label: "黄" },
+  { value: "#38bdf8", label: "蓝" },
+  { value: "#ffffff", label: "白" },
+  { value: "#09090b", label: "黑" },
 ]
 
 interface RefImageAnnotatorModalProps {
@@ -87,7 +86,7 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
       setCropDraft(null)
     }
     img.onerror = () => {
-      setLoadError("无法跨域读取该外部图片像素，请先保存至本地后拖入上传再编辑。")
+      setLoadError("无法跨域读取外部图片像素，请先保存至本地后拖入编辑。")
     }
     img.src = src
   }, [])
@@ -174,7 +173,6 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
     ctx.restore()
   }
 
-  // Render full canvas whenever baseImage, actions, activeAction, or cropDraft changes
   const renderCanvas = useCallback(
     (includeCropOverlay = true) => {
       const canvas = canvasRef.current
@@ -201,8 +199,7 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
 
       if (includeCropOverlay && cropDraft && cropDraft.w > 8 && cropDraft.h > 8) {
         ctx.save()
-        ctx.fillStyle = "rgba(0, 0, 0, 0.56)"
-        // Dim outside crop rectangle
+        ctx.fillStyle = "rgba(0, 0, 0, 0.58)"
         ctx.fillRect(0, 0, w, cropDraft.y)
         ctx.fillRect(
           0,
@@ -218,13 +215,13 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
           cropDraft.h
         )
 
-        // Crisp crop frame + rule of thirds
-        ctx.strokeStyle = "#f59e0b"
-        ctx.lineWidth = Math.max(2, 2.5 * scaleFactor)
+        // Luminous Apple Photos white crop frame + subtle rule of thirds
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.95)"
+        ctx.lineWidth = Math.max(2, 2.2 * scaleFactor)
         ctx.strokeRect(cropDraft.x, cropDraft.y, cropDraft.w, cropDraft.h)
 
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.38)"
-        ctx.lineWidth = Math.max(1, 1.2 * scaleFactor)
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.3)"
+        ctx.lineWidth = Math.max(1, 1 * scaleFactor)
         ctx.beginPath()
         ctx.moveTo(cropDraft.x + cropDraft.w / 3, cropDraft.y)
         ctx.lineTo(cropDraft.x + cropDraft.w / 3, cropDraft.y + cropDraft.h)
@@ -251,7 +248,6 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
     renderCanvas(true)
   }, [renderCanvas])
 
-  // Keyboard Ctrl+Z inside modal
   useEffect(() => {
     if (!entry) return
     const onKeyDown = (e: KeyboardEvent) => {
@@ -333,7 +329,6 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
     if (!canvas || !baseImage || !cropDraft) return
     if (cropDraft.w < 24 || cropDraft.h < 24) return
 
-    // First draw clean canvas without crop dimming overlay
     renderCanvas(false)
 
     const off = document.createElement("canvas")
@@ -369,7 +364,6 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
 
   const handleSaveAndApply = async () => {
     if (!entry || !canvasRef.current || !baseImage) return
-    // Ensure any pending crop overlay isn't baked into exported pixels
     renderCanvas(false)
     setSaving(true)
     try {
@@ -393,39 +387,36 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
 
   return (
     <Dialog open={Boolean(entry)} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-[95vw] sm:max-w-5xl p-0 overflow-hidden bg-zinc-950 text-zinc-100 border-zinc-800 shadow-2xl">
+      <DialogContent className="max-w-[95vw] sm:max-w-5xl p-0 overflow-hidden bg-[#0D0D10]/96 text-zinc-100 border-0 shadow-[0_32px_90px_-16px_rgba(0,0,0,0.7)]">
         <DialogTitle className="sr-only">
-          参考图裁剪与视觉标注画板 (@图{refIndex + 1})
+          编辑参考图 (@图{refIndex + 1})
         </DialogTitle>
         <DialogDescription className="sr-only">
-          对参考图进行局部框选、箭头指引、画笔涂抹、排除标记或构图裁剪
+          对参考图进行局部标注或裁剪
         </DialogDescription>
 
-        {/* Top Studio Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/90 bg-zinc-900/90 px-4 py-2.5 pr-12">
+        {/* Top Bar — De-lined */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-5 pt-4 pb-2 pr-14">
           <div className="flex items-center gap-2.5">
-            <Badge variant="amber" className="font-mono text-[11px]">
-              @图{refIndex + 1} 视觉标注画板
-            </Badge>
+            <span className="rounded-full bg-white/[0.09] px-3 py-1 font-mono text-xs font-medium text-white">
+              @图{refIndex + 1}
+            </span>
             {baseImage && (
-              <span className="text-[11px] font-mono text-zinc-400 tabular-nums">
+              <span className="text-xs font-mono text-white/45 tabular-nums">
                 {baseImage.naturalWidth || baseImage.width} ×{" "}
-                {baseImage.naturalHeight || baseImage.height} px
+                {baseImage.naturalHeight || baseImage.height}
               </span>
             )}
-            <span className="hidden lg:inline text-[11px] text-zinc-400">
-              提示：框选或打叉标记后，可在提示词中写「保留绿框人物，去除红叉人物」提升模型空间理解
-            </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="xs"
               disabled={actions.length === 0}
               onClick={() => setActions((prev) => prev.slice(0, -1))}
-              className="h-7 px-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
+              className="text-white/65 hover:bg-white/[0.08] hover:text-white"
             >
               <Undo2 className="h-3.5 w-3.5" />
               撤销
@@ -433,37 +424,36 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="xs"
               disabled={actions.length === 0}
               onClick={() => setActions([])}
-              className="h-7 px-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
+              className="text-white/65 hover:bg-white/[0.08] hover:text-white"
             >
               <Eraser className="h-3.5 w-3.5" />
-              清空笔迹
+              清空
             </Button>
             <Button
               type="button"
               variant="ghost"
-              size="sm"
+              size="xs"
               onClick={handleResetOriginal}
-              className="h-7 px-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white"
+              className="text-white/65 hover:bg-white/[0.08] hover:text-white"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              还原原图
+              原图
             </Button>
           </div>
         </div>
 
-        {/* Tool & Color Strip */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-zinc-900/50 px-4 py-2">
-          {/* Tool Selector */}
-          <div className="flex flex-wrap items-center gap-1 rounded-xl bg-zinc-950/90 p-1 border border-zinc-800">
+        {/* Tool & Color Strip — Borderless Floating Capsules */}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-3">
+          <div className="flex flex-wrap items-center gap-0.5 rounded-full bg-white/[0.06] p-1">
             {[
-              { id: "rect" as const, label: "矩形圈选", icon: Square },
-              { id: "arrow" as const, label: "箭头指引", icon: ArrowUpRight },
-              { id: "cross" as const, label: "打叉排除", icon: X },
-              { id: "brush" as const, label: "自由画笔", icon: Paintbrush },
-              { id: "crop" as const, label: "裁剪构图", icon: Crop },
+              { id: "rect" as const, label: "框选", icon: Square },
+              { id: "arrow" as const, label: "箭头", icon: ArrowUpRight },
+              { id: "cross" as const, label: "排除", icon: X },
+              { id: "brush" as const, label: "画笔", icon: Paintbrush },
+              { id: "crop" as const, label: "裁剪", icon: Crop },
             ].map((t) => {
               const Icon = t.icon
               const active = tool === t.id
@@ -476,10 +466,10 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
                     if (t.id !== "crop") setCropDraft(null)
                   }}
                   className={cn(
-                    "flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all cursor-pointer",
+                    "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-all cursor-pointer",
                     active
-                      ? "bg-amber-500 text-zinc-950 font-semibold shadow-xs"
-                      : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/70"
+                      ? "bg-white text-zinc-950 shadow-xs"
+                      : "text-white/60 hover:text-white"
                   )}
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -489,10 +479,9 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
             })}
           </div>
 
-          {/* Color & Width Controls (hidden during crop) */}
           {tool !== "crop" ? (
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
                 {COLOR_SWATCHES.map((sw) => (
                   <button
                     key={sw.value}
@@ -500,57 +489,56 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
                     title={sw.label}
                     onClick={() => setColor(sw.value)}
                     className={cn(
-                      "h-5 w-5 rounded-full border transition-transform cursor-pointer",
+                      "h-5 w-5 rounded-full transition-transform cursor-pointer",
                       color === sw.value
-                        ? "scale-120 ring-2 ring-amber-400 border-white"
-                        : "border-zinc-700 opacity-80 hover:opacity-100"
+                        ? "scale-115 ring-2 ring-white ring-offset-2 ring-offset-[#0D0D10]"
+                        : "opacity-75 hover:opacity-100"
                     )}
                     style={{ backgroundColor: sw.value }}
                   />
                 ))}
               </div>
 
-              <div className="flex items-center gap-2 text-xs text-zinc-400">
-                <span>粗细</span>
+              <div className="flex items-center gap-2 text-xs text-white/55">
+                <span>线宽</span>
                 <input
                   type="range"
                   min={2}
                   max={18}
                   value={strokeWidth}
                   onChange={(e) => setStrokeWidth(Number(e.target.value))}
-                  className="studio-slider w-20"
+                  className="studio-slider w-20 text-white"
                 />
-                <span className="font-mono text-[11px] w-6 tabular-nums">
+                <span className="font-mono text-[11px] w-5 tabular-nums text-white/75">
                   {strokeWidth}
                 </span>
               </div>
             </div>
           ) : (
             <div className="flex items-center gap-2">
-              <span className="text-xs text-amber-400 flex items-center gap-1.5">
+              <span className="text-xs text-white/60 flex items-center gap-1.5">
                 <MousePointerSquareDashed className="h-3.5 w-3.5" />
-                在画面上拖拽框选要保留的构图区域
+                拖拽框选保留区域
               </span>
               {cropDraft && cropDraft.w >= 24 && cropDraft.h >= 24 && (
                 <>
                   <Button
                     type="button"
-                    variant="studio"
-                    size="sm"
-                    className="h-7 px-2.5 text-xs"
+                    size="xs"
+                    className="bg-white text-zinc-950 hover:bg-white/90"
                     onClick={handleConfirmCrop}
                   >
                     <Check className="h-3.5 w-3.5" />
-                    确认裁剪 ({Math.round(cropDraft.w)}×{Math.round(cropDraft.h)})
+                    裁剪 ({Math.round(cropDraft.w)}×{Math.round(cropDraft.h)})
                   </Button>
                   <Button
                     type="button"
                     variant="ghost"
-                    size="sm"
-                    className="h-7 px-2 text-xs text-zinc-300"
+                    size="xs"
+                    className="text-white/65 hover:bg-white/[0.08] hover:text-white"
                     onClick={() => setCropDraft(null)}
                   >
-                    取消选区
+                    取消
                   </Button>
                 </>
               )}
@@ -559,15 +547,15 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
         </div>
 
         {/* Interactive Canvas Stage */}
-        <div className="relative flex h-[60vh] min-h-[360px] items-center justify-center overflow-auto bg-[#070708] p-4 select-none">
+        <div className="relative mx-5 flex h-[58vh] min-h-[340px] items-center justify-center overflow-auto rounded-2xl bg-black/55 p-5 select-none">
           {loadError ? (
-            <div className="max-w-md rounded-xl border border-red-500/30 bg-red-950/30 p-5 text-center text-xs text-red-200">
+            <div className="max-w-md rounded-2xl bg-red-500/12 p-5 text-center text-xs text-red-200">
               {loadError}
             </div>
           ) : !baseImage ? (
-            <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
-              正在载入高清画布...
+            <div className="flex items-center gap-2 text-xs text-white/55">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              载入画布...
             </div>
           ) : (
             <canvas
@@ -575,31 +563,30 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
-              className="max-h-full max-w-full rounded-lg shadow-2xl ring-1 ring-white/10 cursor-crosshair touch-none"
+              className="max-h-full max-w-full rounded-xl shadow-2xl cursor-crosshair touch-none"
             />
           )}
         </div>
 
-        {/* Bottom Action Footer */}
-        <div className="flex items-center justify-between border-t border-zinc-800/90 bg-zinc-900/90 px-4 py-3">
-          <p className="text-[11px] text-zinc-400">
-            确认应用后将按您当前选择的参考图传输模式（默认无损上传图床）自动更新{" "}
-            <code className="text-amber-400">@图{refIndex + 1}</code>，随时可还原原图。
-          </p>
+        {/* Minimalist Footer */}
+        <div className="flex items-center justify-between px-5 py-4">
+          <span className="text-xs text-white/45">
+            修改仅作用于当前参考图，可随时还原
+          </span>
           <div className="flex items-center gap-2">
             <Button
               type="button"
               variant="ghost"
               size="sm"
               onClick={onClose}
-              className="text-zinc-300 hover:bg-zinc-800 hover:text-white"
+              className="text-white/65 hover:bg-white/[0.08] hover:text-white"
             >
               取消
             </Button>
             <Button
               type="button"
-              variant="studio"
               size="sm"
+              className="bg-white text-zinc-950 hover:bg-white/90"
               disabled={saving || Boolean(loadError) || !baseImage}
               onClick={handleSaveAndApply}
             >
@@ -608,7 +595,7 @@ export const RefImageAnnotatorModal: React.FC<RefImageAnnotatorModalProps> = ({
               ) : (
                 <Check className="h-3.5 w-3.5" />
               )}
-              应用修改并同步参考图
+              应用
             </Button>
           </div>
         </div>

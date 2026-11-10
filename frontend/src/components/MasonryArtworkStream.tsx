@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   Archive,
   ArrowUp,
-  Check,
   CheckSquare,
   Columns2,
   Copy,
@@ -14,6 +13,7 @@ import {
   Grid2X2,
   Image as ImageIcon,
   ImagePlus,
+  LayoutGrid,
   LayoutList,
   Loader2,
   Maximize2,
@@ -21,10 +21,8 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
-  Sparkles,
   Square,
   Star,
-  StopCircle,
   Trash2,
   X,
 } from "lucide-react"
@@ -50,7 +48,6 @@ import {
 } from "@/lib/motion"
 import {
   computeRecordAspectRatio,
-  formatBytes,
   formatDurationSeconds,
   formatStateLabel,
   formatUnixTime,
@@ -63,8 +60,7 @@ import type { ProjectFolder, SavedImage, TaskRecord } from "@/types"
 export type StreamDisplayMode = "masonry" | "showcase" | "list"
 
 /**
- * Filmic darkroom exposure reveal when an artwork image finishes loading.
- * Uses scoped useGSAP + contextSafe so async image loads never mutate unmounted nodes.
+ * Calm Apple-grade image settle when an artwork finishes loading.
  */
 const ArtworkImageReveal: React.FC<
   React.ImgHTMLAttributes<HTMLImageElement>
@@ -89,32 +85,31 @@ const ArtworkImageReveal: React.FC<
     { scope: imgRef, dependencies: [props.src] }
   )
 
-  const animateLoadedImage = contextSafe(() => {
-    const el = imgRef.current
-    if (!el) return
-    if (prefersReducedMotion() || alreadyCachedRef.current) {
-      gsap.set(el, { clearProps: "opacity,visibility,transform,filter" })
-      return
-    }
-    gsap.fromTo(
-      el,
-      { autoAlpha: 0, scale: 1.028, filter: "blur(5px)" },
-      {
-        autoAlpha: 1,
-        scale: 1,
-        filter: "blur(0px)",
-        duration: 0.44,
-        ease: "power2.out",
-        clearProps: "transform,filter,visibility",
+  const animateLoadedImage = contextSafe(
+    (el: HTMLImageElement, isCached: boolean) => {
+      if (prefersReducedMotion() || isCached) {
+        gsap.set(el, { clearProps: "opacity,visibility,transform" })
+        return
       }
-    )
-  })
+      gsap.fromTo(
+        el,
+        { autoAlpha: 0, scale: 1.016 },
+        {
+          autoAlpha: 1,
+          scale: 1,
+          duration: 0.48,
+          ease: STUDIO_EASE.out,
+          clearProps: "transform,visibility",
+        }
+      )
+    }
+  )
 
   const handleLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     onLoad?.(e)
     if (revealedRef.current) return
     revealedRef.current = true
-    animateLoadedImage()
+    animateLoadedImage(e.currentTarget, alreadyCachedRef.current)
   }
 
   return (
@@ -148,7 +143,11 @@ interface MasonryArtworkStreamProps {
   onRefreshSingle: (id: string) => void
   onCancelPolling: (id: string) => void
   onToggleStar: (rec: TaskRecord) => void
-  onOpenLightbox: (rec: TaskRecord, imgIdx: number, openCompare?: boolean) => void
+  onOpenLightbox: (
+    rec: TaskRecord,
+    imgIdx: number,
+    openCompare?: boolean
+  ) => void
   onUseGeneratedAsRef: (img: SavedImage, rec: TaskRecord) => void
   onReuseRecord: (rec: TaskRecord, includeRefs: boolean) => void
   onRetryRecord: (rec: TaskRecord) => void
@@ -210,7 +209,6 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   const [confirmBatchDelete, setConfirmBatchDelete] = useState<boolean>(false)
   const [confirmClearFailed, setConfirmClearFailed] = useState<boolean>(false)
 
-  // Create Project Inline State
   const [newProjOpen, setNewProjOpen] = useState(false)
   const [newProjName, setNewProjName] = useState("")
   const [newProjColor, setNewProjColor] = useState("amber")
@@ -219,7 +217,6 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     Math.floor(Date.now() / 1000)
   )
 
-  // Scoped GSAP root, Flip layout state & indicator refs
   const streamRootRef = useRef<HTMLDivElement | null>(null)
   const streamBodyRef = useRef<HTMLDivElement | null>(null)
   const statusPillRef = useRef<HTMLDivElement | null>(null)
@@ -247,11 +244,11 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     if (prefersReducedMotion()) return
     gsap.fromTo(
       btn,
-      { scale: 1.32 },
+      { scale: 1.15 },
       {
         scale: 1,
-        duration: 0.3,
-        ease: STUDIO_EASE.spring,
+        duration: 0.28,
+        ease: STUDIO_EASE.out,
         clearProps: "transform",
       }
     )
@@ -365,7 +362,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     () =>
       groupByDate
         ? groupRecordsByDateBucket(filteredRecords)
-        : [{ label: "全部结果", items: filteredRecords }],
+        : [{ label: "全部", items: filteredRecords }],
     [filteredRecords, groupByDate]
   )
 
@@ -383,13 +380,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     setConfirmBatchDelete(false)
   }
 
-  // 1. Liquid sliding status filter pill (autoAlpha hides inactive pill cleanly)
+  // 1. Liquid Apple Segmented Pill glide for status filter
   useGSAP(
     () => {
       const pill = statusPillRef.current
       if (!pill) return
       const activeBtn = statusBtnRefs.current[statusFilter]
-      if (!activeBtn) {
+      if (!activeBtn || activeBtn.offsetWidth === 0) {
         gsap.to(pill, { autoAlpha: 0, duration: 0.16, overwrite: "auto" })
         return
       }
@@ -405,7 +402,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         x: targetX,
         width: targetW,
         autoAlpha: 1,
-        duration: 0.28,
+        duration: 0.34,
         ease: STUDIO_EASE.expo,
         overwrite: "auto",
       })
@@ -423,7 +420,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     }
   )
 
-  // 2. Quick Create Capsule entrance when scrolling past top composer
+  // 2. Quick Create Capsule calm entrance when scrolling past top composer
   useGSAP(
     () => {
       if (
@@ -435,13 +432,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       }
       gsap.fromTo(
         quickCapsuleRef.current,
-        { autoAlpha: 0, x: -10, scale: 0.92 },
+        { autoAlpha: 0, x: -6, scale: 0.96 },
         {
           autoAlpha: 1,
           x: 0,
           scale: 1,
-          duration: 0.25,
-          ease: STUDIO_EASE.spring,
+          duration: 0.28,
+          ease: STUDIO_EASE.expo,
           clearProps: "transform,visibility",
         }
       )
@@ -449,18 +446,18 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     { scope: streamRootRef, dependencies: [showQuickCreateTrigger] }
   )
 
-  // 3. Floating Batch Action Dock smooth entrance
+  // 3. Floating Batch Action Dock calm entrance
   useGSAP(
     () => {
       if (!selectMode || !batchDockRef.current || prefersReducedMotion()) return
       gsap.fromTo(
         batchDockRef.current,
-        { autoAlpha: 0, y: 20, scale: 0.96 },
+        { autoAlpha: 0, y: 14, scale: 0.97 },
         {
           autoAlpha: 1,
           y: 0,
           scale: 1,
-          duration: 0.26,
+          duration: 0.32,
           ease: STUDIO_EASE.expo,
           clearProps: "transform,visibility",
         }
@@ -469,7 +466,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     { scope: streamRootRef, dependencies: [selectMode] }
   )
 
-  // 4. Genuine Flip.getState() -> Flip.from() layout choreography when switching filters, density columns, or display mode
+  // 4. Genuine Flip.getState() -> Flip.from() layout choreography
   useGSAP(
     () => {
       if (!filterChangeInitRef.current) {
@@ -496,21 +493,21 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       if (flipState) {
         Flip.from(flipState, {
           targets: visibleCards,
-          duration: 0.34,
+          duration: 0.38,
           ease: STUDIO_EASE.expo,
           simple: true,
           scale: false,
-          stagger: { each: 0.012, amount: 0.14 },
+          stagger: { each: 0.01, amount: 0.12 },
           onEnter: (elements) =>
             gsap.fromTo(
               elements,
-              { autoAlpha: 0, y: 12, scale: 0.975 },
+              { autoAlpha: 0, y: 8, scale: 0.985 },
               {
                 autoAlpha: 1,
                 y: 0,
                 scale: 1,
-                duration: 0.28,
-                stagger: 0.016,
+                duration: 0.3,
+                stagger: 0.014,
                 ease: STUDIO_EASE.out,
                 clearProps: "transform,opacity,visibility",
               }
@@ -522,12 +519,12 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
 
       gsap.fromTo(
         visibleCards.slice(0, 20),
-        { autoAlpha: 0.58, y: 7 },
+        { autoAlpha: 0.65, y: 5 },
         {
           autoAlpha: 1,
           y: 0,
-          duration: 0.24,
-          stagger: { each: 0.015, amount: 0.14 },
+          duration: 0.26,
+          stagger: { each: 0.012, amount: 0.12 },
           ease: STUDIO_EASE.out,
           overwrite: "auto",
           clearProps: "transform,opacity,visibility",
@@ -547,7 +544,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     }
   )
 
-  // 5. Staggered reveal for newly mounted cards (e.g. initial load or new SSE task)
+  // 5. Calm staggered reveal for newly mounted cards
   useGSAP(
     () => {
       const container = streamBodyRef.current
@@ -568,13 +565,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       const animatedSlice = freshNodes.slice(0, 24)
       gsap.fromTo(
         animatedSlice,
-        { autoAlpha: 0, y: 14, scale: 0.985 },
+        { autoAlpha: 0, y: 10, scale: 0.99 },
         {
           autoAlpha: 1,
           y: 0,
           scale: 1,
-          duration: 0.34,
-          stagger: { each: 0.024, amount: 0.22 },
+          duration: 0.36,
+          stagger: { each: 0.02, amount: 0.2 },
           ease: STUDIO_EASE.out,
           clearProps: "transform,opacity,visibility",
         }
@@ -627,7 +624,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     const missingLocal =
       isSucceeded && images.some((i) => !i.local_file && i.remote_url)
 
-    // LIST INSPECTOR MODE
+    // LIST INSPECTOR MODE (Borderless Apple Surface)
     if (displayMode === "list") {
       return (
         <div
@@ -636,12 +633,12 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
           data-flip-id={rec.id}
           onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
           className={cn(
-            "artwork-card-anim group flex flex-col sm:flex-row gap-4 rounded-2xl border border-border/80 bg-card p-3 transition-colors hover:border-amber-500/40",
+            "artwork-card-anim apple-surface group flex flex-col sm:flex-row gap-4 rounded-3xl p-4 transition-all duration-200",
             selectMode && "cursor-pointer",
-            isChecked && "ring-2 ring-amber-500 border-amber-500"
+            isChecked && "ring-2 ring-primary"
           )}
         >
-          <div className="relative h-44 sm:h-36 sm:w-52 shrink-0 overflow-hidden rounded-xl bg-secondary/50 flex items-center justify-center">
+          <div className="relative h-44 sm:h-36 sm:w-52 shrink-0 overflow-hidden rounded-2xl bg-foreground/[0.035] flex items-center justify-center">
             {isSucceeded ? (
               <ArtworkImageReveal
                 src={
@@ -662,8 +659,8 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               />
             ) : isPending ? (
               <div className="developing-canvas flex h-full w-full flex-col items-center justify-center p-3 text-center">
-                <Loader2 className="h-5 w-5 animate-spin text-amber-500" />
-                <span className="mt-1.5 text-[11px] font-medium">
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                <span className="mt-1.5 text-[11px] font-medium text-foreground">
                   {formatStateLabel(rec.state, rec.progress)}
                 </span>
                 <span className="font-mono text-[10px] text-muted-foreground">
@@ -672,7 +669,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center p-3 text-center">
-                <AlertCircle className="h-5 w-5 text-destructive" />
+                <AlertCircle className="h-4 w-4 text-destructive" />
                 <span className="mt-1 text-[11px] text-destructive">
                   {formatStateLabel(rec.state)}
                 </span>
@@ -692,7 +689,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         ? "warning"
                         : "destructive"
                     }
-                    className="text-[10px] px-1.5 py-0"
+                    className="text-[10px]"
                   >
                     {formatStateLabel(rec.state, rec.progress)}
                   </Badge>
@@ -705,14 +702,15 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     </Badge>
                   )}
                   {proj && (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-medium",
-                        PROJECT_COLOR_MAP[proj.color || "amber"]?.badge
-                      )}
-                    >
+                    <Badge variant="secondary" className="gap-1.5 text-[10px]">
+                      <span
+                        className={cn(
+                          "h-1.5 w-1.5 rounded-full",
+                          PROJECT_COLOR_MAP[proj.color || "amber"]?.dot
+                        )}
+                      />
                       {proj.name}
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <span className="font-mono text-[11px] text-muted-foreground">
@@ -728,8 +726,8 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               )}
             </div>
 
-            <div className="flex items-center justify-between border-t border-border/50 pt-2 mt-2">
-              <div className="flex items-center gap-1 flex-wrap">
+            <div className="flex items-center justify-between pt-3 mt-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 {isSucceeded && (
                   <>
                     <Button
@@ -739,7 +737,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       onClick={() => onOpenLightbox(rec, 0)}
                     >
                       <Maximize2 className="h-3 w-3" />
-                      暗房检视
+                      检视
                     </Button>
                     {hasRefCompare && (
                       <Button
@@ -749,7 +747,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         onClick={() => onOpenLightbox(rec, 0, true)}
                       >
                         <Columns2 className="h-3 w-3" />
-                        拉帘对比
+                        对比
                       </Button>
                     )}
                     <Button
@@ -759,7 +757,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       onClick={() => onUseGeneratedAsRef(images[0], rec)}
                     >
                       <ImagePlus className="h-3 w-3" />
-                      设为参考图
+                      设为参考
                     </Button>
                   </>
                 )}
@@ -770,17 +768,16 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                   onClick={() => onReuseRecord(rec, true)}
                 >
                   <RotateCcw className="h-3 w-3" />
-                  做同款
+                  复用
                 </Button>
                 {isFailed && (
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="secondary"
                     size="xs"
-                    className="text-amber-500"
                     onClick={() => onRetryRecord(rec)}
                   >
-                    重试提交
+                    重试
                   </Button>
                 )}
               </div>
@@ -793,7 +790,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     onToggleStar(rec)
                   }}
                   className={cn(
-                    "p-1.5 rounded-lg cursor-pointer",
+                    "p-1.5 rounded-full transition-colors cursor-pointer",
                     rec.starred
                       ? "text-amber-400"
                       : "text-muted-foreground hover:text-foreground"
@@ -806,7 +803,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 <button
                   type="button"
                   onClick={() => onDeleteSingle(rec)}
-                  className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive cursor-pointer"
+                  className="p-1.5 rounded-full text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
                   title="删除"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -818,7 +815,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       )
     }
 
-    // MASONRY (Pure Midjourney/Ideogram Art Card) & SHOWCASE CARD
+    // MASONRY (Pure Borderless Art Frame) & SHOWCASE (Apple Tonal Surface)
     return (
       <article
         key={rec.id}
@@ -826,46 +823,45 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         data-flip-id={rec.id}
         onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
         className={cn(
-          "artwork-card-anim masonry-item group relative overflow-hidden rounded-2xl border transition-colors duration-200",
+          "artwork-card-anim masonry-item group relative overflow-hidden rounded-2xl transition-shadow duration-300",
           displayMode === "masonry"
-            ? "border-border/60 bg-card/40 hover:border-amber-500/45 hover:shadow-xl"
-            : "border-border bg-card shadow-2xs hover:shadow-md",
+            ? "bg-foreground/[0.03] hover:shadow-[0_16px_40px_-12px_rgba(0,0,0,0.16)] dark:hover:shadow-[0_20px_48px_-12px_rgba(0,0,0,0.55)]"
+            : "apple-surface",
           selectMode && "cursor-pointer",
-          isChecked && "ring-2 ring-amber-500 border-amber-500"
+          isChecked && "ring-2 ring-primary"
         )}
       >
-        {/* Artwork / Developing Frame */}
         <div
           style={!isSucceeded ? { aspectRatio } : undefined}
           className={cn(
             "relative w-full overflow-hidden",
             rec.background === "transparent" && isSucceeded
               ? "bg-checkerboard"
-              : "bg-secondary/35"
+              : "bg-foreground/[0.03]"
           )}
         >
-          {/* Floating Top Badges (Select / Star / Project / Ref Thumbnails) */}
+          {/* Quiet Floating Top Badges */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className="pointer-events-none absolute inset-x-2.5 top-2.5 z-20 flex items-start justify-between gap-2"
+            className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-between gap-2"
           >
             <div className="pointer-events-auto flex items-center gap-1.5">
               {(selectMode || isChecked) && (
                 <button
                   type="button"
                   onClick={() => toggleSelect(rec.id)}
-                  className="flex h-7 w-7 items-center justify-center rounded-xl bg-black/70 text-white backdrop-blur-md cursor-pointer"
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur-xl cursor-pointer"
                 >
                   {isChecked ? (
-                    <CheckSquare className="h-4 w-4 text-amber-400" />
+                    <CheckSquare className="h-3.5 w-3.5 text-white" />
                   ) : (
-                    <Square className="h-4 w-4" />
+                    <Square className="h-3.5 w-3.5 text-white/80" />
                   )}
                 </button>
               )}
 
               {proj && (
-                <span className="inline-flex items-center gap-1 rounded-lg bg-black/65 px-2 py-0.5 text-[10px] font-medium text-white backdrop-blur-md">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-black/55 px-2.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xl">
                   <span
                     className={cn(
                       "h-1.5 w-1.5 rounded-full",
@@ -876,11 +872,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 </span>
               )}
 
-              {/* Mini Reference Stack Badge */}
               {rec.ref_items && rec.ref_items.length > 0 && (
                 <div
-                  className="hidden sm:flex items-center -space-x-1.5 rounded-lg bg-black/60 p-0.5 pr-1.5 backdrop-blur-md opacity-90"
-                  title={`使用了 ${rec.ref_items.length} 张参考图`}
+                  className="hidden sm:flex items-center -space-x-1.5 rounded-full bg-black/50 p-0.5 pr-2 backdrop-blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+                  title={`${rec.ref_items.length} 张参考图`}
                 >
                   {rec.ref_items.slice(0, 3).map((ri, rIdx) => {
                     const rSrc = ri.local_ref
@@ -892,18 +887,15 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         key={rIdx}
                         src={rSrc}
                         alt=""
-                        className="h-5 w-5 rounded-md border border-white/30 object-cover"
+                        className="h-5 w-5 rounded-full border border-white/25 object-cover"
                       />
                     )
                   })}
-                  <span className="pl-2 font-mono text-[9px] text-zinc-200">
-                    参考
-                  </span>
+                  <span className="pl-2 text-[9px] text-white/90">参考</span>
                 </div>
               )}
             </div>
 
-            {/* Star & Quick Select Circle */}
             {!selectMode && (
               <div className="pointer-events-auto flex items-center gap-1">
                 <button
@@ -913,12 +905,12 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     onToggleStar(rec)
                   }}
                   className={cn(
-                    "flex h-7 w-7 items-center justify-center rounded-xl backdrop-blur-md transition-opacity cursor-pointer",
+                    "flex h-7 w-7 items-center justify-center rounded-full backdrop-blur-xl transition-opacity duration-200 cursor-pointer",
                     rec.starred
-                      ? "bg-black/70 text-amber-400 opacity-100"
-                      : "bg-black/50 text-white/85 opacity-0 group-hover:opacity-100 hover:text-amber-400"
+                      ? "bg-black/60 text-amber-400 opacity-100"
+                      : "bg-black/45 text-white/85 opacity-0 group-hover:opacity-100 hover:text-amber-400"
                   )}
-                  title={rec.starred ? "取消星标收藏" : "加入星标精选"}
+                  title={rec.starred ? "取消收藏" : "收藏"}
                 >
                   <Star
                     className={cn("h-3.5 w-3.5", rec.starred && "fill-amber-400")}
@@ -953,21 +945,21 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         e.stopPropagation()
                         onOpenLightbox(rec, idx)
                       }}
-                      className="block w-full h-auto transition-transform duration-500 ease-out group-hover:scale-[1.022] cursor-zoom-in"
+                      className="block w-full h-auto transition-transform duration-700 ease-out group-hover:scale-[1.015] cursor-zoom-in"
                     />
 
-                    {/* Midjourney / Ideogram Style Glassmorphic Hover Overlay */}
+                    {/* Subtle Frosted Hover Actions */}
                     {!selectMode && (
                       <div
                         onClick={(e) => e.stopPropagation()}
-                        className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col justify-end bg-gradient-to-t from-black/90 via-black/50 to-transparent p-3 pt-12 opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+                        className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-black/35 to-transparent p-3.5 pt-14 opacity-0 transition-opacity duration-250 group-hover:opacity-100"
                       >
                         {displayMode === "masonry" && (
-                          <div className="mb-2 space-y-1">
-                            <p className="text-[11px] text-zinc-100 line-clamp-2 leading-snug drop-shadow-xs">
+                          <div className="mb-2.5 space-y-0.5">
+                            <p className="text-[11px] text-white/95 line-clamp-2 leading-snug">
                               {rec.prompt}
                             </p>
-                            <div className="flex items-center gap-1.5 font-mono text-[10px] text-zinc-300/85">
+                            <div className="flex items-center gap-1.5 font-mono text-[10px] text-white/65">
                               <span>{rec.model.replace("gpt-image-", "")}</span>
                               {img.width && img.height && (
                                 <>
@@ -982,37 +974,25 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         )}
 
                         <div className="pointer-events-auto flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 flex-wrap">
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <button
-                                  type="button"
-                                  onClick={() => onOpenLightbox(rec, idx)}
-                                  className="inline-flex h-7 items-center gap-1 rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur-md px-2 text-[11px] font-medium text-white transition-colors cursor-pointer"
-                                >
-                                  <Maximize2 className="h-3 w-3" />
-                                  <span>检视</span>
-                                </button>
-                              </TooltipTrigger>
-                              <TooltipContent>暗房级无级缩放与元数据检视</TooltipContent>
-                            </Tooltip>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => onOpenLightbox(rec, idx)}
+                              className="inline-flex h-7 items-center gap-1 rounded-full bg-white/18 hover:bg-white/28 backdrop-blur-xl px-2.5 text-[11px] font-medium text-white transition-colors cursor-pointer"
+                            >
+                              <Maximize2 className="h-3 w-3" />
+                              <span>检视</span>
+                            </button>
 
                             {hasRefCompare && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <button
-                                    type="button"
-                                    onClick={() => onOpenLightbox(rec, idx, true)}
-                                    className="inline-flex h-7 items-center gap-1 rounded-lg bg-amber-500/85 hover:bg-amber-400 px-2 text-[11px] font-semibold text-zinc-950 transition-colors cursor-pointer"
-                                  >
-                                    <Columns2 className="h-3 w-3" />
-                                    <span>对比</span>
-                                  </button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  拉帘滑块对比参考原图与生成效果
-                                </TooltipContent>
-                              </Tooltip>
+                              <button
+                                type="button"
+                                onClick={() => onOpenLightbox(rec, idx, true)}
+                                className="inline-flex h-7 items-center gap-1 rounded-full bg-white/18 hover:bg-white/28 backdrop-blur-xl px-2.5 text-[11px] font-medium text-white transition-colors cursor-pointer"
+                              >
+                                <Columns2 className="h-3 w-3" />
+                                <span>对比</span>
+                              </button>
                             )}
 
                             <Tooltip>
@@ -1020,12 +1000,12 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => onUseGeneratedAsRef(img, rec)}
-                                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/15 hover:bg-amber-500 hover:text-zinc-950 backdrop-blur-md text-white transition-colors cursor-pointer"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/18 hover:bg-white/28 backdrop-blur-xl text-white transition-colors cursor-pointer"
                                 >
                                   <ImagePlus className="h-3.5 w-3.5" />
                                 </button>
                               </TooltipTrigger>
-                              <TooltipContent>将此图设为参考图继续精修</TooltipContent>
+                              <TooltipContent>设为参考图</TooltipContent>
                             </Tooltip>
 
                             <Tooltip>
@@ -1033,14 +1013,12 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                                 <button
                                   type="button"
                                   onClick={() => onReuseRecord(rec, true)}
-                                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-white/15 hover:bg-white/25 backdrop-blur-md text-white transition-colors cursor-pointer"
+                                  className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white/18 hover:bg-white/28 backdrop-blur-xl text-white transition-colors cursor-pointer"
                                 >
                                   <RotateCcw className="h-3.5 w-3.5" />
                                 </button>
                               </TooltipTrigger>
-                              <TooltipContent>
-                                一键做同款 (回填提示词、尺寸及原参考图)
-                              </TooltipContent>
+                              <TooltipContent>复用参数与提示词</TooltipContent>
                             </Tooltip>
                           </div>
 
@@ -1052,16 +1030,16 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                                   onDeleteSingle(rec)
                                   setConfirmDeleteId(null)
                                 }}
-                                className="rounded-lg bg-destructive px-2 py-1 text-[10px] font-bold text-white cursor-pointer"
+                                className="rounded-full bg-destructive px-2.5 py-1 text-[10px] font-medium text-white cursor-pointer"
                               >
-                                确认删
+                                确认
                               </button>
                             ) : (
                               <button
                                 type="button"
                                 onClick={() => setConfirmDeleteId(rec.id)}
-                                className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-black/55 hover:bg-destructive text-white/80 hover:text-white transition-colors cursor-pointer"
-                                title="删除作品"
+                                className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-black/45 hover:bg-destructive text-white/80 hover:text-white transition-colors cursor-pointer"
+                                title="删除"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </button>
@@ -1072,8 +1050,8 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                               download={img.local_file || `duomi_${rec.id}.png`}
                               target="_blank"
                               rel="noreferrer"
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-zinc-100 text-zinc-950 hover:bg-white transition-colors"
-                              title="下载本地无损原图"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-white text-zinc-950 hover:bg-white/90 transition-colors"
+                              title="下载原图"
                             >
                               <Download className="h-3.5 w-3.5" />
                             </a>
@@ -1086,7 +1064,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               })}
             </div>
           ) : isPending ? (
-            /* Aspect-Ratio-True Filmic Darkroom Developing Frame */
+            /* Pearl-Neutral Developing Frame */
             <div className="developing-canvas flex h-full min-h-[210px] w-full flex-col items-center justify-between p-4 text-center">
               <div className="w-full flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                 <span>{rec.model.replace("gpt-image-", "")}</span>
@@ -1094,20 +1072,20 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               </div>
 
               <div className="space-y-2.5 my-4 z-10">
-                <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-500 ring-1 ring-amber-500/30">
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-foreground/[0.06] text-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
                 </div>
                 <div>
-                  <p className="text-xs font-semibold text-foreground">
+                  <p className="text-xs font-medium text-foreground">
                     {formatStateLabel(rec.state, rec.progress)}
                   </p>
-                  <p className="mt-0.5 font-mono text-[11px] text-muted-foreground tabular-nums">
-                    已耗时 {formatDurationSeconds(elapsedSec)}
+                  <p className="mt-0.5 font-mono text-[10px] text-muted-foreground tabular-nums">
+                    {formatDurationSeconds(elapsedSec)}
                   </p>
                 </div>
-                <div className="mx-auto h-1.5 w-40 overflow-hidden rounded-full bg-background/70">
+                <div className="mx-auto h-1 w-32 overflow-hidden rounded-full bg-foreground/[0.08]">
                   <div
-                    className="h-full rounded-full bg-amber-500 transition-all duration-500"
+                    className="h-full rounded-full bg-foreground/75 transition-all duration-500"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
@@ -1124,7 +1102,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       e.stopPropagation()
                       onCancelPolling(rec.id)
                     }}
-                    className="shrink-0 rounded-lg bg-background/80 px-2 py-0.5 text-[10px] text-muted-foreground hover:text-destructive cursor-pointer"
+                    className="shrink-0 rounded-full bg-foreground/[0.06] px-2.5 py-0.5 text-[10px] text-muted-foreground hover:text-destructive cursor-pointer"
                   >
                     停止
                   </button>
@@ -1132,15 +1110,15 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               </div>
             </div>
           ) : (
-            /* Failed / Error Frame */
+            /* Minimalist Error Frame */
             <div className="flex h-full min-h-[200px] w-full flex-col items-center justify-center p-5 text-center space-y-2.5 bg-destructive/[0.04]">
-              <AlertCircle className="h-6 w-6 text-destructive" />
+              <AlertCircle className="h-5 w-5 text-destructive" />
               <div className="space-y-1">
-                <p className="text-xs font-semibold text-destructive">
+                <p className="text-xs font-medium text-destructive">
                   {formatStateLabel(rec.state)}
                 </p>
                 <p className="text-[11px] text-muted-foreground line-clamp-3 max-w-xs leading-relaxed">
-                  {rec.error_msg || "上游任务未能完成"}
+                  {rec.error_msg || "生成未完成"}
                 </p>
               </div>
               {!selectMode && (
@@ -1155,7 +1133,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     }}
                   >
                     <RotateCcw className="h-3 w-3" />
-                    重试提交
+                    重试
                   </Button>
                   <Button
                     type="button"
@@ -1174,11 +1152,11 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
           )}
         </div>
 
-        {/* Optional Below-Image Metadata Footer ONLY in Showcase Mode */}
+        {/* Borderless Showcase Caption */}
         {displayMode === "showcase" && (
-          <div className="p-3 space-y-2 border-t border-border/60">
+          <div className="p-3.5 space-y-2">
             {rec.warning_msg && (
-              <div className="flex items-start gap-1 rounded-lg bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600 dark:text-amber-400">
+              <div className="flex items-start gap-1.5 rounded-xl bg-amber-500/10 px-2.5 py-1.5 text-[10px] text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
                 <span>{rec.warning_msg}</span>
               </div>
@@ -1190,12 +1168,12 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               <span>
                 {rec.model.replace("gpt-image-", "")} · {rec.size || "auto"}
               </span>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 {missingLocal && (
                   <button
                     type="button"
                     onClick={() => onDownloadMissingLocal(rec)}
-                    className="text-amber-500 hover:underline cursor-pointer"
+                    className="text-foreground hover:underline cursor-pointer"
                   >
                     补下原图
                   </button>
@@ -1204,7 +1182,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                   type="button"
                   onClick={() => onRefreshSingle(rec.id)}
                   className="hover:text-foreground cursor-pointer"
-                  title="同步远端状态"
+                  title="同步状态"
                 >
                   <RefreshCw
                     className={cn("h-3 w-3", isRefreshing && "animate-spin")}
@@ -1225,26 +1203,29 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     )
   }
 
+  const tonalControlPill =
+    "h-8 rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] text-xs text-muted-foreground hover:text-foreground transition-colors"
+
   return (
     <div
       ref={streamRootRef}
       className={cn("w-full", embeddedScroll && "flex h-full overflow-hidden")}
     >
-      {/* Dedicated Left Project Albums & Collections Sidebar when in Gallery/Assets View */}
+      {/* Borderless Floating Album Column in Gallery View */}
       {mode === "gallery" && (
-        <aside className="hidden lg:flex w-60 shrink-0 flex-col justify-between border-r border-border bg-card/40 p-3.5 select-none">
-          <div className="space-y-4 overflow-y-auto">
+        <aside className="hidden lg:flex w-56 shrink-0 flex-col justify-between pl-6 sm:pl-8 pr-2 py-5 select-none">
+          <div className="space-y-6 overflow-y-auto studio-scroll">
             <div>
-              <h2 className="px-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                智能视图 (Smart Views)
+              <h2 className="px-3 text-[11px] font-medium text-muted-foreground">
+                视图
               </h2>
-              <div className="mt-2 space-y-0.5">
+              <div className="mt-1.5 space-y-0.5">
                 {[
-                  { id: "all", label: "全部创作资产", count: counts.all },
-                  { id: "starred", label: "★ 星标精选集", count: counts.starred },
-                  { id: "with_refs", label: "含参考图生图", count: counts.withRefs },
-                  { id: "active", label: "正在显影队列", count: counts.active },
-                  { id: "failed", label: "异常与失败", count: counts.failed },
+                  { id: "all", label: "全部作品", count: counts.all },
+                  { id: "starred", label: "收藏", count: counts.starred },
+                  { id: "with_refs", label: "参考生图", count: counts.withRefs },
+                  { id: "active", label: "生成中", count: counts.active },
+                  { id: "failed", label: "异常", count: counts.failed },
                 ].map((v) => (
                   <button
                     key={v.id}
@@ -1255,14 +1236,14 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       setProjectFilter("all")
                     }}
                     className={cn(
-                      "flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-xs font-medium transition-colors cursor-pointer",
+                      "flex w-full items-center justify-between rounded-full px-3 py-2 text-xs font-medium transition-colors cursor-pointer",
                       statusFilter === v.id && projectFilter === "all"
-                        ? "bg-accent text-foreground font-semibold"
-                        : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                        ? "bg-foreground/[0.07] dark:bg-white/[0.1] text-foreground"
+                        : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground"
                     )}
                   >
                     <span>{v.label}</span>
-                    <span className="font-mono text-[10px] opacity-75 tabular-nums">
+                    <span className="font-mono text-[10px] opacity-65 tabular-nums">
                       {v.count}
                     </span>
                   </button>
@@ -1270,28 +1251,27 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               </div>
             </div>
 
-            {/* Custom Project Albums */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between px-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  项目画册 (Albums)
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between px-3">
+                <span className="text-[11px] font-medium text-muted-foreground">
+                  画册
                 </span>
                 <Popover open={newProjOpen} onOpenChange={setNewProjOpen}>
                   <PopoverTrigger asChild>
                     <button
                       type="button"
-                      className="rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer"
-                      title="新建项目画册"
+                      className="rounded-full p-1 text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground cursor-pointer"
+                      title="新建画册"
                     >
                       <FolderPlus className="h-3.5 w-3.5" />
                     </button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-64 space-y-2.5">
-                    <p className="text-xs font-semibold">新建项目画册</p>
+                  <PopoverContent className="w-60 space-y-2.5">
+                    <p className="text-xs font-medium">新建画册</p>
                     <Input
                       value={newProjName}
                       onChange={(e) => setNewProjName(e.target.value)}
-                      placeholder="例如：机房辅导写真 / 电商主图"
+                      placeholder="画册名称"
                       className="h-8 text-xs"
                     />
                     <div className="flex items-center gap-1.5">
@@ -1321,7 +1301,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         setNewProjOpen(false)
                       }}
                     >
-                      创建画册
+                      创建
                     </Button>
                   </PopoverContent>
                 </Popover>
@@ -1329,8 +1309,8 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
 
               <div className="space-y-0.5">
                 {projects.length === 0 ? (
-                  <p className="px-2 py-2 text-[11px] text-muted-foreground leading-relaxed">
-                    点击右上角 <FolderPlus className="inline h-3 w-3" /> 创建项目画册，按主题归档与批量导出作品。
+                  <p className="px-3 py-2 text-[11px] text-muted-foreground/75">
+                    暂无画册
                   </p>
                 ) : (
                   projects.map((p) => {
@@ -1339,10 +1319,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       <div
                         key={p.id}
                         className={cn(
-                          "group flex items-center justify-between rounded-xl px-2.5 py-2 text-xs transition-colors",
+                          "group flex items-center justify-between rounded-full px-3 py-2 text-xs transition-colors",
                           active
-                            ? "bg-accent text-foreground font-semibold"
-                            : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                            ? "bg-foreground/[0.07] dark:bg-white/[0.1] text-foreground font-medium"
+                            : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground"
                         )}
                       >
                         <button
@@ -1363,7 +1343,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                           <span className="truncate">{p.name}</span>
                         </button>
                         <div className="flex items-center gap-1">
-                          <span className="font-mono text-[10px] opacity-75">
+                          <span className="font-mono text-[10px] opacity-65">
                             {counts.byProject[p.id] || 0}
                           </span>
                           <button
@@ -1376,7 +1356,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                               onDeleteProject(p.id)
                             }}
                             className="opacity-0 group-hover:opacity-100 p-0.5 text-muted-foreground hover:text-destructive cursor-pointer"
-                            title="移除此画册分类（不删除图片文件）"
+                            title="移除画册"
                           >
                             <X className="h-3 w-3" />
                           </button>
@@ -1389,10 +1369,15 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
             </div>
           </div>
 
-          {/* Quick Album Export */}
-          <div className="space-y-1.5 border-t border-border pt-3">
+          {/* Quiet Album ZIP Export */}
+          <div className="pt-3">
             {projectFilter !== "all" && projectFilter !== "unassigned" ? (
-              <Button asChild variant="outline" size="sm" className="w-full text-xs">
+              <Button
+                asChild
+                variant="secondary"
+                size="sm"
+                className="w-full text-xs"
+              >
                 <a
                   href={`/api/records/export-zip?project_id=${encodeURIComponent(
                     projectFilter
@@ -1400,15 +1385,20 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                   download
                 >
                   <Archive className="h-3.5 w-3.5" />
-                  导出当前画册 ZIP
+                  导出画册 ZIP
                 </a>
               </Button>
             ) : (
               counts.succeeded > 0 && (
-                <Button asChild variant="outline" size="sm" className="w-full text-xs">
+                <Button
+                  asChild
+                  variant="secondary"
+                  size="sm"
+                  className="w-full text-xs"
+                >
                   <a href="/api/records/export-zip" download>
                     <Archive className="h-3.5 w-3.5" />
-                    导出全部原图 ZIP
+                    导出全部 ZIP
                   </a>
                 </Button>
               )
@@ -1424,31 +1414,30 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
           embeddedScroll && "flex-1 overflow-hidden"
         )}
       >
-        {/* Sleek Full-Width Sticky Filter & Density Control Bar */}
+        {/* Borderless Apple Vibrancy Filter Bar */}
         <div
           className={cn(
-            "flex flex-wrap items-center justify-between gap-2 border-b border-border/75 bg-background/95 backdrop-blur-md px-4 py-2.5 sm:px-6 z-20",
-            !embeddedScroll ? "sticky top-0 shadow-2xs" : "shrink-0"
+            "flex flex-wrap items-center justify-between gap-2.5 bg-background/80 backdrop-blur-2xl px-5 sm:px-8 lg:px-12 py-3 z-20",
+            !embeddedScroll ? "sticky top-0" : "shrink-0"
           )}
         >
-          {/* Left: Quick Create Capsule (when scrolled past top composer) + Liquid Sliding Status Pills */}
-          <div className="flex items-center gap-1.5 overflow-x-auto">
+          {/* Left: Quick Create Capsule + Segmented Filter Pill */}
+          <div className="flex items-center gap-2 overflow-x-auto">
             {showQuickCreateTrigger && (
               <div
                 ref={quickCapsuleRef}
-                className="flex items-center gap-1 pr-1.5 mr-1 border-r border-border shrink-0"
+                className="flex items-center gap-1.5 shrink-0"
               >
                 {onOpenQuickComposer && (
                   <button
                     type="button"
                     onClick={onOpenQuickComposer}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 active:scale-95 px-3 text-xs font-semibold text-zinc-950 shadow-2xs transition-all cursor-pointer"
-                    title="在当前位置悬浮唤起创作舱 (快捷键 Ctrl+J)"
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 cursor-pointer"
+                    title="唤起创作框 (Ctrl+J)"
                   >
-                    <Sparkles className="h-3 w-3" />
-                    <span>唤起创作舱</span>
+                    <span>创作</span>
                     {hasDraftOrRefs && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-zinc-950/75" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground/75" />
                     )}
                   </button>
                 )}
@@ -1458,29 +1447,29 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       <button
                         type="button"
                         onClick={onScrollToTop}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground hover:text-foreground active:scale-95 transition-all cursor-pointer"
-                        aria-label="回到顶部创作区"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                        aria-label="回到顶部"
                       >
                         <ArrowUp className="h-3.5 w-3.5" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>平滑回到顶部完整创作区</TooltipContent>
+                    <TooltipContent>回到顶部</TooltipContent>
                   </Tooltip>
                 )}
               </div>
             )}
 
-            <div className="relative flex items-center gap-1 shrink-0">
+            <div className="relative flex items-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] p-1 shrink-0">
               <div
                 ref={statusPillRef}
                 style={{ opacity: 0, visibility: "hidden" }}
-                className="pointer-events-none absolute top-0 bottom-0 left-0 rounded-full bg-foreground"
+                className="pointer-events-none absolute top-1 bottom-1 left-0 rounded-full bg-card shadow-[0_1px_4px_rgba(0,0,0,0.08)] dark:bg-white/[0.15]"
               />
               {[
                 { id: "all", label: "全部", c: counts.all },
-                { id: "active", label: "显影中", c: counts.active },
+                { id: "active", label: "生成中", c: counts.active },
                 { id: "succeeded", label: "已完成", c: counts.succeeded },
-                { id: "starred", label: "★ 收藏", c: counts.starred },
+                { id: "starred", label: "收藏", c: counts.starred },
                 { id: "failed", label: "异常", c: counts.failed },
               ].map((tab) => (
                 <button
@@ -1496,13 +1485,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                   className={cn(
                     "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0",
                     statusFilter === tab.id
-                      ? "text-background font-semibold"
-                      : "text-muted-foreground hover:bg-secondary/75 hover:text-foreground"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   <span>{tab.label}</span>
                   {tab.c > 0 && (
-                    <span className="font-mono text-[10px] opacity-75 tabular-nums">
+                    <span className="font-mono text-[10px] opacity-60 tabular-nums">
                       {tab.c}
                     </span>
                   )}
@@ -1511,15 +1500,15 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
             </div>
           </div>
 
-          {/* Right Controls: Search, Model Filter, Column Density Slider, View Mode, Multi-Select */}
-          <div className="flex flex-wrap items-center gap-2 ml-auto">
-            <div className="relative w-40 sm:w-52">
-              <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
+          {/* Right: Quiet Tonal Controls */}
+          <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+            <div className="relative w-36 sm:w-48">
+              <Search className="pointer-events-none absolute left-3 top-2.25 h-3.5 w-3.5 text-muted-foreground/75" />
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索提示词 / 模型 / ID..."
-                className="h-7 rounded-full pl-8 text-xs bg-card/70"
+                placeholder="搜索"
+                className="h-8 rounded-full pl-8 text-xs"
               />
             </div>
 
@@ -1530,7 +1519,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                   captureStreamFlip()
                   setModelFilter(e.target.value)
                 }}
-                className="h-7 rounded-full border border-border bg-card/70 px-2.5 text-xs text-foreground"
+                className={cn(tonalControlPill, "px-3 focus:outline-none cursor-pointer")}
               >
                 <option value="all">全部模型</option>
                 {distinctModels.map((m) => (
@@ -1541,13 +1530,15 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               </select>
             )}
 
-            {/* Midjourney-style Live Column Density Slider */}
             {displayMode !== "list" && (
               <div
-                className="hidden xl:flex items-center gap-2 rounded-full border border-border/80 bg-card/70 px-3 h-7"
-                title="拖动滑杆无级调节瀑布流列数密度"
+                className={cn(
+                  "hidden xl:flex items-center gap-2 px-3",
+                  tonalControlPill
+                )}
+                title="调节列数"
               >
-                <span className="text-[10px] text-muted-foreground font-mono">
+                <span className="text-[11px] font-mono tabular-nums">
                   {columnCount}列
                 </span>
                 <input
@@ -1565,13 +1556,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               </div>
             )}
 
-            {/* Display Style Switcher */}
-            <div className="inline-flex items-center rounded-full border border-border/80 bg-card/70 p-0.5">
+            {/* Monochrome Segmented View Switcher */}
+            <div className="inline-flex items-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] p-1">
               {(
                 [
-                  { m: "masonry", icon: Sparkles, tip: "沉浸瀑布流（无边框纯享艺术墙）" },
-                  { m: "showcase", icon: Grid2X2, tip: "审片卡片流（显示提示词摘要）" },
-                  { m: "list", icon: LayoutList, tip: "详情宽列表" },
+                  { m: "masonry", icon: LayoutGrid, tip: "纯享瀑布流" },
+                  { m: "showcase", icon: Grid2X2, tip: "卡片视图" },
+                  { m: "list", icon: LayoutList, tip: "列表视图" },
                 ] as const
               ).map(({ m, icon: Icon, tip }) => (
                 <Tooltip key={m}>
@@ -1583,9 +1574,9 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         setDisplayMode(m)
                       }}
                       className={cn(
-                        "flex h-6 w-7 items-center justify-center rounded-full transition-colors cursor-pointer",
+                        "flex h-6 w-7 items-center justify-center rounded-full transition-all cursor-pointer",
                         displayMode === m
-                          ? "bg-amber-500 text-zinc-950"
+                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.16]"
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
@@ -1604,10 +1595,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 setGroupByDate((v) => !v)
               }}
               className={cn(
-                "hidden sm:inline-flex h-7 items-center rounded-full border px-2.5 text-[11px] transition-colors cursor-pointer",
+                "hidden sm:inline-flex h-8 items-center rounded-full px-3 text-xs font-medium transition-colors cursor-pointer",
                 groupByDate
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-600 dark:text-amber-400 font-medium"
-                  : "border-border/80 bg-card/70 text-muted-foreground"
+                  ? "bg-foreground/[0.09] dark:bg-white/[0.12] text-foreground"
+                  : tonalControlPill
               )}
             >
               时间轴
@@ -1620,27 +1611,29 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 if (selectMode) clearSelection()
               }}
               className={cn(
-                "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11px] font-medium transition-colors cursor-pointer",
+                "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors cursor-pointer",
                 selectMode
-                  ? "border-amber-500 bg-amber-500 text-zinc-950 font-semibold"
-                  : "border-border/80 bg-card/70 text-muted-foreground hover:text-foreground"
+                  ? "bg-primary text-primary-foreground"
+                  : tonalControlPill
               )}
             >
-              <CheckSquare className="h-3 w-3" />
               <span>多选</span>
             </button>
 
-            {counts.failed > 0 && !selectMode && (
-              confirmClearFailed ? (
-                <div className="inline-flex items-center gap-1 rounded-full border border-destructive/50 bg-destructive/10 px-2.5 py-0.5 text-[11px]">
-                  <span className="text-destructive">清理{counts.failed}条失败?</span>
+            {counts.failed > 0 &&
+              !selectMode &&
+              (confirmClearFailed ? (
+                <div className="inline-flex h-8 items-center gap-1.5 rounded-full bg-destructive/10 px-3 text-xs">
+                  <span className="text-destructive">
+                    清理 {counts.failed} 条？
+                  </span>
                   <button
                     type="button"
                     onClick={() => {
                       onClearFailed()
                       setConfirmClearFailed(false)
                     }}
-                    className="font-bold text-destructive underline cursor-pointer"
+                    className="font-medium text-destructive underline cursor-pointer"
                   >
                     确认
                   </button>
@@ -1656,25 +1649,30 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 <button
                   type="button"
                   onClick={() => setConfirmClearFailed(true)}
-                  className="inline-flex h-7 items-center gap-1 rounded-full border border-border/80 bg-card/70 px-2.5 text-[11px] text-muted-foreground hover:text-destructive cursor-pointer"
+                  className={cn(
+                    "inline-flex items-center gap-1 px-3 hover:text-destructive cursor-pointer",
+                    tonalControlPill
+                  )}
                 >
                   <Trash2 className="h-3 w-3" />
-                  <span className="hidden md:inline">清失败</span>
+                  <span className="hidden md:inline">清异常</span>
                 </button>
-              )
-            )}
+              ))}
 
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
                   onClick={onOpenImportTask}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/80 bg-card/70 text-muted-foreground hover:text-foreground cursor-pointer"
+                  className={cn(
+                    "inline-flex w-8 items-center justify-center cursor-pointer",
+                    tonalControlPill
+                  )}
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent>通过多米 Task ID 导入查询远端任务</TooltipContent>
+              <TooltipContent>查询或导入任务 ID</TooltipContent>
             </Tooltip>
 
             <Tooltip>
@@ -1682,59 +1680,53 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 <button
                   type="button"
                   onClick={onRefreshAll}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/80 bg-card/70 text-muted-foreground hover:text-foreground cursor-pointer"
+                  className={cn(
+                    "inline-flex w-8 items-center justify-center cursor-pointer",
+                    tonalControlPill
+                  )}
                 >
                   <RefreshCw className="h-3.5 w-3.5" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent>刷新列表</TooltipContent>
+              <TooltipContent>刷新</TooltipContent>
             </Tooltip>
           </div>
         </div>
 
-        {/* Artwork Stream Body */}
+        {/* Generous Whitespace Artwork Stream Body */}
         <div
           ref={streamBodyRef}
           className={cn(
-            "px-4 py-5 sm:px-6 pb-24",
+            "px-5 sm:px-8 lg:px-12 py-6 pb-28",
             embeddedScroll && "flex-1 overflow-y-auto studio-scroll"
           )}
         >
           {filteredRecords.length === 0 ? (
-            <div className="mx-auto my-12 flex max-w-lg flex-col items-center justify-center rounded-3xl border border-dashed border-border bg-card/30 p-10 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500/12 text-amber-500 ring-1 ring-amber-500/25 mb-4">
-                <ImageIcon className="h-6 w-6" />
+            <div className="mx-auto my-20 flex max-w-sm flex-col items-center justify-center text-center select-none">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-foreground/[0.045] text-muted-foreground/70 mb-4">
+                <ImageIcon className="h-5 w-5" />
               </div>
-              <h2 className="text-base font-semibold text-foreground">
-                画布已就绪，开始你的第一幅创作
-              </h2>
-              <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">
-                支持在上方灵动创作坞直接输入提示词或 <kbd className="studio-kbd">Ctrl+V</kbd> 粘贴参考图（默认采用二进制原图无损上传图床，Base64 压缩独立可选）。所有生成的原图将自动持久化归档在本地{" "}
-                <code className="font-mono text-foreground">duomi_data/images/</code>。
+              <p className="text-sm font-medium text-foreground">暂无作品</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                输入画面描述，或拖入参考图开始创作
               </p>
             </div>
           ) : (
-            <div className="space-y-8">
+            <div className="space-y-10">
               {dateGroups.map((group) => (
-                <section key={group.label} className="space-y-3.5">
+                <section key={group.label} className="space-y-4">
                   {groupByDate && (
-                    <div className="flex items-center gap-3">
-                      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground">
-                        {group.label}
-                      </h3>
-                      <span className="rounded-full bg-secondary px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-                        {group.items.length}
-                      </span>
-                      <div className="h-px flex-1 bg-border/50" />
-                    </div>
+                    <h3 className="text-[13px] font-medium tracking-tight text-muted-foreground">
+                      {group.label}
+                    </h3>
                   )}
 
                   {displayMode === "list" ? (
-                    <div className="space-y-3">
+                    <div className="space-y-4">
                       {group.items.map((rec) => renderRecordCard(rec))}
                     </div>
                   ) : (
-                    <div className={cn("gap-4", masonryColumnClasses)}>
+                    <div className={cn("gap-5", masonryColumnClasses)}>
                       {group.items.map((rec) => renderRecordCard(rec))}
                     </div>
                   )}
@@ -1744,13 +1736,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
           )}
         </div>
 
-        {/* Linear / Figma Style Floating Glass Batch Action Dock */}
+        {/* Frosted Apple Capsule Batch Action Dock */}
         {selectMode && (
           <div
             ref={batchDockRef}
-            className="fixed bottom-16 md:bottom-6 left-1/2 z-40 -translate-x-1/2 studio-omnibar flex flex-wrap items-center gap-2 rounded-2xl px-4 py-2.5 text-xs"
+            className="fixed bottom-20 md:bottom-6 left-1/2 z-40 -translate-x-1/2 studio-floating-popover flex flex-wrap items-center gap-2 rounded-full px-4 py-2 text-xs"
           >
-            <span className="font-semibold text-foreground tabular-nums pr-1">
+            <span className="font-medium text-foreground tabular-nums pl-1">
               已选 {selectedIdList.length} 项
             </span>
             <button
@@ -1760,36 +1752,38 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 for (const r of filteredRecords) next[r.id] = true
                 setSelectedIds(next)
               }}
-              className="text-amber-500 hover:underline cursor-pointer"
+              className="rounded-full bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-foreground/[0.1] cursor-pointer"
             >
-              全选当前 ({filteredRecords.length})
+              全选 ({filteredRecords.length})
             </button>
-
-            <div className="h-4 w-px bg-border mx-1" />
 
             {selectedIdList.length > 0 && (
               <>
-                {/* Batch Move to Project Album */}
                 <Popover>
                   <PopoverTrigger asChild>
-                    <Button type="button" variant="secondary" size="xs" className="h-7">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="xs"
+                      className="h-7"
+                    >
                       <FolderKanban className="h-3.5 w-3.5" />
                       移入画册
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent preferredSide="top" className="w-52 space-y-1">
-                    <p className="text-[11px] font-semibold text-muted-foreground px-1">
-                      批量归档至项目画册
-                    </p>
+                  <PopoverContent
+                    preferredSide="top"
+                    className="w-48 space-y-1"
+                  >
                     <button
                       type="button"
                       onClick={() => {
                         onAssignProject(selectedIdList, "")
                         clearSelection()
                       }}
-                      className="flex w-full items-center rounded-lg px-2 py-1.5 text-xs hover:bg-accent cursor-pointer"
+                      className="flex w-full items-center rounded-xl px-2.5 py-1.5 text-xs hover:bg-foreground/[0.05] cursor-pointer"
                     >
-                      移出画册（未归档）
+                      移出画册
                     </button>
                     {projects.map((p) => (
                       <button
@@ -1799,7 +1793,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                           onAssignProject(selectedIdList, p.id)
                           clearSelection()
                         }}
-                        className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent cursor-pointer"
+                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs hover:bg-foreground/[0.05] cursor-pointer"
                       >
                         <span
                           className={cn(
@@ -1823,7 +1817,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     clearSelection()
                   }}
                 >
-                  <Star className="h-3.5 w-3.5 text-amber-500" />
+                  <Star className="h-3.5 w-3.5" />
                   收藏
                 </Button>
 
@@ -1835,27 +1829,27 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     download
                   >
                     <Archive className="h-3.5 w-3.5" />
-                    打包 ZIP
+                    导出 ZIP
                   </a>
                 </Button>
 
                 {confirmBatchDelete ? (
-                  <div className="inline-flex items-center gap-1 rounded-lg bg-destructive px-2 py-1 text-white">
-                    <span>确定删除?</span>
+                  <div className="inline-flex items-center gap-1.5 rounded-full bg-destructive px-3 py-1 text-white">
+                    <span>确认删除？</span>
                     <button
                       type="button"
                       onClick={() => {
                         onBatchDelete(selectedIdList)
                         clearSelection()
                       }}
-                      className="underline font-bold cursor-pointer"
+                      className="underline font-medium cursor-pointer"
                     >
                       是
                     </button>
                     <button
                       type="button"
                       onClick={() => setConfirmBatchDelete(false)}
-                      className="opacity-80 cursor-pointer ml-1"
+                      className="opacity-80 cursor-pointer"
                     >
                       否
                     </button>
@@ -1881,7 +1875,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 setSelectMode(false)
                 clearSelection()
               }}
-              className="ml-1 rounded-lg p-1 text-muted-foreground hover:text-foreground cursor-pointer"
+              className="rounded-full p-1 text-muted-foreground hover:text-foreground cursor-pointer"
               title="退出多选"
             >
               <X className="h-4 w-4" />

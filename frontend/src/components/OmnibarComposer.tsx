@@ -1,6 +1,5 @@
 import React, { useMemo, useRef, useState } from "react"
 import {
-  AlertTriangle,
   BookMarked,
   BookmarkPlus,
   Check,
@@ -13,16 +12,13 @@ import {
   FolderKanban,
   History,
   ImagePlus,
-  Layers,
   Link2,
   Loader2,
-  Maximize2,
   Minus,
   PencilRuler,
   Plus,
   RefreshCw,
   SlidersHorizontal,
-  Sparkles,
   Wand2,
   X,
 } from "lucide-react"
@@ -62,7 +58,7 @@ import type {
 function MiniRatioBox({ w, h }: { w: number; h: number }) {
   if (!w || !h) {
     return (
-      <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-dashed border-current text-[8px] font-mono opacity-75">
+      <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-current/60 text-[8px] font-mono opacity-75">
         A
       </span>
     )
@@ -72,7 +68,7 @@ function MiniRatioBox({ w, h }: { w: number; h: number }) {
   const bh = h > w ? max : Math.max(6, Math.round((max * h) / w))
   return (
     <span
-      className="inline-block rounded-[2.5px] border border-current opacity-85 shrink-0"
+      className="inline-block rounded-[2.5px] border border-current opacity-80 shrink-0"
       style={{ width: `${bw}px`, height: `${bh}px` }}
     />
   )
@@ -227,7 +223,6 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false)
   const [historyPopoverOpen, setHistoryPopoverOpen] = useState(false)
 
-  // Scoped GSAP context & contextSafe wrapper for event-driven animations (per gsap-react skill)
   const { contextSafe } = useGSAP({ scope: composerRootRef })
 
   // Smooth GSAP auto-height interpolation on prompt textarea
@@ -237,7 +232,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
       if (!el) return
       const prevH = el.offsetHeight
       el.style.height = "auto"
-      const nextH = Math.min(200, Math.max(54, el.scrollHeight))
+      const nextH = Math.min(220, Math.max(58, el.scrollHeight))
 
       if (
         !mountedTextareaRef.current ||
@@ -252,15 +247,15 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
       el.style.height = `${prevH}px`
       gsap.to(el, {
         height: nextH,
-        duration: 0.18,
-        ease: "power2.out",
+        duration: 0.22,
+        ease: STUDIO_EASE.out,
         overwrite: "auto",
       })
     },
     { scope: composerRootRef, dependencies: [prompt] }
   )
 
-  // Spring pop-in for newly added Reference Image Chips (@图1, @图2...)
+  // Calm Apple fluid settle for newly added Reference Image Chips (@图1, @图2...)
   useGSAP(
     () => {
       const currentIds = new Set(referenceImages.map((r) => r.id))
@@ -280,14 +275,14 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
       if (newTargets.length > 0 && !prefersReducedMotion()) {
         gsap.fromTo(
           newTargets,
-          { autoAlpha: 0, scale: 0.86, y: 6 },
+          { autoAlpha: 0, scale: 0.94, y: 4 },
           {
             autoAlpha: 1,
             scale: 1,
             y: 0,
-            duration: 0.28,
+            duration: 0.32,
             stagger: 0.04,
-            ease: STUDIO_EASE.spring,
+            ease: STUDIO_EASE.expo,
             clearProps: "transform,visibility",
           }
         )
@@ -296,7 +291,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
     { scope: composerRootRef, dependencies: [referenceImages] }
   )
 
-  // Subtle tactile pop when changing batch count (×1..×10)
+  // Subtle calm micro-scale when changing batch count (×1..×10)
   useGSAP(
     () => {
       if (!mountedBatchRef.current) {
@@ -306,12 +301,11 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
       if (!batchValueRef.current || prefersReducedMotion()) return
       gsap.fromTo(
         batchValueRef.current,
-        { scale: 1.25, y: -1.5 },
+        { scale: 1.09 },
         {
           scale: 1,
-          y: 0,
           duration: 0.24,
-          ease: STUDIO_EASE.spring,
+          ease: STUDIO_EASE.out,
           overwrite: "auto",
           clearProps: "transform",
         }
@@ -325,14 +319,14 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
     gsap
       .timeline({ defaults: { overwrite: "auto" } })
       .to(btn, {
-        scale: 0.955,
-        duration: 0.07,
+        scale: 0.97,
+        duration: 0.08,
         ease: "power2.in",
       })
       .to(btn, {
         scale: 1,
-        duration: 0.24,
-        ease: STUDIO_EASE.spring,
+        duration: 0.26,
+        ease: STUDIO_EASE.out,
         clearProps: "transform",
       })
   })
@@ -379,7 +373,6 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
 
   const anyUploadingRef = referenceImages.some((r) => r.uploading)
 
-  // Insert "@图1" or text right at cursor position
   const insertAtCursor = (token: string) => {
     const el = textareaRef.current
     if (!el) {
@@ -413,7 +406,6 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
       ? "压缩Base64"
       : "原图Base64"
 
-  // Live preview rectangle dimensions inside Aspect Ratio Popover
   const previewRectStyle = useMemo(() => {
     let w = activeRatioGroup?.aspect_w || 1
     let h = activeRatioGroup?.aspect_h || 1
@@ -424,11 +416,17 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
       w = 1
       h = 1
     }
-    const maxBox = 68
+    const maxBox = 64
     const rw = w >= h ? maxBox : Math.max(22, Math.round((maxBox * w) / h))
     const rh = h > w ? maxBox : Math.max(22, Math.round((maxBox * h) / w))
     return { width: `${rw}px`, height: `${rh}px` }
   }, [activeRatioGroup, selectedRatio, customW, customH])
+
+  const pillClass =
+    "inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] hover:bg-foreground/[0.085] dark:hover:bg-white/[0.1] px-3 text-xs font-medium text-foreground transition-colors cursor-pointer"
+
+  const ghostUtilityClass =
+    "inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-xs font-medium text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground transition-colors cursor-pointer"
 
   return (
     <div
@@ -446,16 +444,16 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
         }
       }}
       className={cn(
-        "studio-omnibar relative mx-auto w-full max-w-4xl rounded-[22px] p-3 transition-all duration-200",
-        isDragging && "ring-2 ring-amber-500 scale-[1.005]"
+        "studio-omnibar relative mx-auto w-full max-w-3xl rounded-[28px] p-4 sm:p-5 transition-all duration-300",
+        isDragging && "ring-2 ring-foreground/25 scale-[1.004]"
       )}
     >
-      {/* Drag & Drop Glass Overlay */}
+      {/* Minimalist Frosted Drag & Drop Overlay */}
       {isDragging && (
-        <div className="pointer-events-none absolute inset-1.5 z-30 flex items-center justify-center rounded-2xl bg-amber-500/15 backdrop-blur-xs border-2 border-dashed border-amber-500">
-          <div className="flex items-center gap-2 rounded-full bg-card px-4 py-2 text-xs font-semibold text-amber-500 shadow-lg">
-            <CloudUpload className="h-4 w-4" />
-            松开鼠标即可添加参考图（当前策略：{refModeShortLabel}）
+        <div className="pointer-events-none absolute inset-2 z-30 flex items-center justify-center rounded-3xl bg-background/75 backdrop-blur-md">
+          <div className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-xs font-medium text-primary-foreground shadow-md">
+            <CloudUpload className="h-3.5 w-3.5" />
+            <span>松开添加参考图（{refModeShortLabel}）</span>
           </div>
         </div>
       )}
@@ -474,10 +472,9 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
         }}
       />
 
-      {/* Top Strip: Reference Images + Quick Studio Utilities */}
+      {/* Top Strip: Reference Chips + Quiet Utility Triggers */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* Existing Reference Image Chips */}
           {referenceImages.map((item, idx) => (
             <div
               key={item.id}
@@ -485,25 +482,25 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 refChipRefs.current[item.id] = el
               }}
               className={cn(
-                "group relative flex items-center gap-2 rounded-xl border p-1 pr-2 transition-colors",
+                "group relative flex items-center gap-2 rounded-2xl p-1.5 pr-2.5 transition-colors",
                 item.error
-                  ? "border-destructive/60 bg-destructive/10"
-                  : "border-border/80 bg-card/85 hover:border-amber-500/60"
+                  ? "bg-destructive/10"
+                  : "bg-foreground/[0.045] dark:bg-white/[0.06] hover:bg-foreground/[0.075]"
               )}
             >
-              <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-secondary">
+              <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-secondary">
                 <img
                   src={item.preview}
                   alt={`参考图${idx + 1}`}
                   className="h-full w-full object-cover"
                 />
                 {item.uploading && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/65">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/55 backdrop-blur-[1px]">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-white" />
                   </div>
                 )}
                 {item.annotated && (
-                  <span className="absolute bottom-0 inset-x-0 bg-amber-500 text-[8px] font-bold text-center text-zinc-950 leading-tight">
+                  <span className="absolute bottom-0 inset-x-0 bg-black/70 text-[8px] font-medium text-center text-white leading-tight py-0.5">
                     已标注
                   </span>
                 )}
@@ -516,14 +513,12 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       <button
                         type="button"
                         onClick={() => insertAtCursor(`图${idx + 1}`)}
-                        className="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[10px] font-bold text-amber-600 dark:text-amber-400 hover:bg-amber-500 hover:text-zinc-950 transition-colors cursor-pointer"
+                        className="rounded-full bg-foreground/[0.08] px-2 py-0.5 font-mono text-[10px] font-medium text-foreground hover:bg-primary hover:text-primary-foreground transition-colors cursor-pointer"
                       >
                         @图{idx + 1}
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>
-                      点击将「图{idx + 1}」插入提示词光标处，精准指代该参考图
-                    </TooltipContent>
+                    <TooltipContent>插入「图{idx + 1}」到光标处</TooltipContent>
                   </Tooltip>
 
                   {!item.uploading && !item.error && (
@@ -532,15 +527,13 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                         <button
                           type="button"
                           onClick={() => onAnnotateRef(item)}
-                          className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors cursor-pointer"
-                          aria-label="涂鸦标注或裁剪参考图"
+                          className="rounded-full p-1 text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors cursor-pointer"
+                          aria-label="裁剪或标注参考图"
                         >
                           <PencilRuler className="h-3 w-3" />
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent>
-                        打开参考图画板：裁剪构图 / 红框圈选 / 打叉排除无关人物
-                      </TooltipContent>
+                      <TooltipContent>裁剪与标注</TooltipContent>
                     </Tooltip>
                   )}
 
@@ -548,7 +541,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     <button
                       type="button"
                       onClick={() => onRetryRef(item)}
-                      className="rounded p-0.5 text-amber-500 hover:bg-amber-500/15 cursor-pointer"
+                      className="rounded-full p-1 text-destructive hover:bg-destructive/15 cursor-pointer"
                       title="重试上传"
                     >
                       <RefreshCw className="h-3 w-3" />
@@ -558,7 +551,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
 
                 <span
                   className={cn(
-                    "text-[9px] truncate max-w-[96px] mt-0.5",
+                    "text-[10px] truncate max-w-[92px] mt-0.5",
                     item.error ? "text-destructive" : "text-muted-foreground"
                   )}
                   title={item.error || item.label}
@@ -567,14 +560,13 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 </span>
               </div>
 
-              {/* Reorder & Remove */}
               <div className="flex items-center gap-0.5 ml-0.5">
                 {referenceImages.length > 1 && idx > 0 && (
                   <button
                     type="button"
                     onClick={() => onMoveRef(idx, -1)}
-                    className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
-                    title="前移顺序"
+                    className="rounded-full p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                    title="前移"
                   >
                     <ChevronLeft className="h-3 w-3" />
                   </button>
@@ -584,8 +576,8 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     <button
                       type="button"
                       onClick={() => onMoveRef(idx, 1)}
-                      className="rounded p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
-                      title="后移顺序"
+                      className="rounded-full p-0.5 text-muted-foreground hover:text-foreground cursor-pointer"
+                      title="后移"
                     >
                       <ChevronRight className="h-3 w-3" />
                     </button>
@@ -593,24 +585,24 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <button
                   type="button"
                   onClick={() => onRemoveRef(item.id)}
-                  className="rounded-full p-0.5 text-muted-foreground hover:bg-destructive/15 hover:text-destructive transition-colors cursor-pointer"
-                  title="移除此参考图"
+                  className="rounded-full p-1 text-muted-foreground hover:bg-foreground/[0.08] hover:text-foreground transition-colors cursor-pointer"
+                  title="移除"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-3 w-3" />
                 </button>
               </div>
             </div>
           ))}
 
-          {/* Add Reference Triggers */}
+          {/* Quiet Ghost Reference Utilities */}
           <button
             id="btn-omnibar-upload-ref"
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-dashed border-border bg-background/50 px-2.5 text-xs font-medium text-muted-foreground hover:border-amber-500/60 hover:text-foreground transition-colors cursor-pointer"
+            className={ghostUtilityClass}
           >
-            <ImagePlus className="h-3.5 w-3.5 text-amber-500" />
-            <span>{referenceImages.length > 0 ? "继续加图" : "参考图"}</span>
+            <ImagePlus className="h-3.5 w-3.5" />
+            <span>{referenceImages.length > 0 ? "加图" : "参考图"}</span>
           </button>
 
           <Tooltip>
@@ -618,28 +610,25 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               <button
                 type="button"
                 onClick={onPasteFromClipboardButton}
-                className="inline-flex h-8 items-center gap-1 rounded-xl border border-border/70 bg-background/40 px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
+                className={ghostUtilityClass}
               >
-                <ClipboardPaste className="h-3 w-3" />
+                <ClipboardPaste className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">粘贴</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent>读取剪贴板图片作为参考图 (全局支持 Ctrl+V)</TooltipContent>
+            <TooltipContent>粘贴剪贴板图片 (⌘V)</TooltipContent>
           </Tooltip>
 
           <Popover open={urlPopoverOpen} onOpenChange={setUrlPopoverOpen}>
             <PopoverTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex h-8 items-center gap-1 rounded-xl border border-border/70 bg-background/40 px-2 text-[11px] text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors cursor-pointer"
-              >
-                <Link2 className="h-3 w-3" />
+              <button type="button" className={ghostUtilityClass}>
+                <Link2 className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">URL</span>
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 space-y-2">
-              <p className="text-xs font-semibold">添加远程参考图直链</p>
-              <div className="flex gap-1.5">
+            <PopoverContent className="w-80 space-y-2.5">
+              <p className="text-xs font-medium text-foreground">参考图直链</p>
+              <div className="flex gap-2">
                 <Input
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
@@ -656,7 +645,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <Button
                   type="button"
                   size="sm"
-                  className="h-8 px-3"
+                  className="h-8 px-3.5"
                   onClick={() => {
                     if (urlInput.trim()) {
                       onAddRefUrl(urlInput)
@@ -672,23 +661,21 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
           </Popover>
         </div>
 
-        {/* Right Prompt Studio Actions: Zen Workbench, Recipes, History, Save */}
-        <div className="flex items-center gap-1">
+        {/* Right Quiet Prompt Tools */}
+        <div className="flex items-center gap-0.5">
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 id="btn-open-zen-workbench"
                 type="button"
                 onClick={onOpenZenWorkbench}
-                className="inline-flex h-7 items-center gap-1 rounded-lg bg-amber-500/12 border border-amber-500/30 px-2.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 transition-colors cursor-pointer"
+                className={ghostUtilityClass}
               >
-                <Wand2 className="h-3 w-3" />
-                <span>结构化长文台</span>
+                <Wand2 className="h-3.5 w-3.5" />
+                <span>长文</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent>
-              展开大屏沉浸提示词工作台：内置镜头/光影/一致性护栏积木与长文排版
-            </TooltipContent>
+            <TooltipContent>沉浸长文工作台</TooltipContent>
           </Tooltip>
 
           <Tooltip>
@@ -696,13 +683,13 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               <button
                 type="button"
                 onClick={onOpenRecipes}
-                className="inline-flex h-7 items-center gap-1 rounded-lg border border-border/70 bg-background/50 px-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                className={ghostUtilityClass}
               >
-                <BookMarked className="h-3 w-3" />
-                <span className="hidden sm:inline">配方库</span>
+                <BookMarked className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">配方</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent>浏览内置与自定义高质量提示词配方</TooltipContent>
+            <TooltipContent>浏览提示词配方</TooltipContent>
           </Tooltip>
 
           {promptHistory.length > 0 && (
@@ -713,17 +700,22 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               <PopoverTrigger asChild>
                 <button
                   type="button"
-                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-border/70 bg-background/50 px-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                  title="最近提交的提示词历史"
+                  className={ghostUtilityClass}
+                  title="提示词历史"
                 >
-                  <History className="h-3 w-3" />
+                  <History className="h-3.5 w-3.5" />
                 </button>
               </PopoverTrigger>
-              <PopoverContent align="end" className="w-96 max-h-80 overflow-y-auto space-y-1.5">
-                <div className="flex items-center justify-between pb-1 border-b border-border/60">
-                  <span className="text-xs font-semibold">最近创作提示词历史</span>
-                  <span className="font-mono text-[10px] text-muted-foreground">
-                    最近 {promptHistory.length} 条
+              <PopoverContent
+                align="end"
+                className="w-92 max-h-80 overflow-y-auto space-y-1"
+              >
+                <div className="flex items-center justify-between px-2 pb-1.5">
+                  <span className="text-xs font-medium text-foreground">
+                    最近提示词
+                  </span>
+                  <span className="text-[11px] text-muted-foreground tabular-nums">
+                    {promptHistory.length} 条
                   </span>
                 </div>
                 {promptHistory.map((item) => (
@@ -734,7 +726,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       onChangePrompt(item.prompt)
                       setHistoryPopoverOpen(false)
                     }}
-                    className="w-full rounded-xl border border-transparent hover:border-border hover:bg-accent/60 p-2 text-left transition-colors cursor-pointer"
+                    className="w-full rounded-2xl hover:bg-foreground/[0.055] p-2.5 text-left transition-colors cursor-pointer"
                   >
                     <p className="text-xs text-foreground line-clamp-2 leading-relaxed">
                       {item.prompt}
@@ -756,12 +748,12 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <button
                   type="button"
                   onClick={onSaveAsTemplate}
-                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-border/70 bg-background/50 px-2 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  className={ghostUtilityClass}
                 >
-                  <BookmarkPlus className="h-3 w-3" />
+                  <BookmarkPlus className="h-3.5 w-3.5" />
                 </button>
               </TooltipTrigger>
-              <TooltipContent>将当前提示词保存为自定义配方模板</TooltipContent>
+              <TooltipContent>存为配方</TooltipContent>
             </Tooltip>
           )}
 
@@ -769,20 +761,24 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             <button
               type="button"
               onClick={onCollapseOverlay}
-              className="inline-flex h-7 items-center gap-1 rounded-lg border border-border bg-secondary/70 px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-              title="收起悬浮创作舱 (快捷键 Esc)"
+              className={cn(ghostUtilityClass, "bg-foreground/[0.05]")}
+              title="收起 (Esc)"
             >
-              <X className="h-3 w-3" />
+              <X className="h-3.5 w-3.5" />
               <span>收起</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Main Smart Prompt Textarea */}
+      {/* Main Clean Prompt Textarea — Zero Dividing Lines */}
       <div className="relative">
         <textarea
-          id={onCollapseOverlay ? "omnibar-overlay-prompt-input" : "omnibar-prompt-input"}
+          id={
+            onCollapseOverlay
+              ? "omnibar-overlay-prompt-input"
+              : "omnibar-prompt-input"
+          }
           ref={textareaRef}
           autoFocus={Boolean(onCollapseOverlay)}
           value={prompt}
@@ -802,55 +798,53 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
           maxLength={5000}
           placeholder={
             referenceImages.length > 0
-              ? "描述画面内容，可点击上方 @图1 直接指代参考人物/主体（例如：保持图1左一与左二人物五官服装不变，生成自然抓拍...）"
-              : "你想创作什么画面？输入主体、构图、光影与质感描述（支持直接拖拽或 Ctrl+V 粘贴参考图，Ctrl+Enter 立即生成）"
+              ? "描述画面细节，点击上方 @图1 可直接指代对应参考主体"
+              : "描述你想创作的画面，支持拖入或粘贴参考图"
           }
-          className="w-full resize-none bg-transparent px-1 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground/70 focus:outline-none min-h-[54px] max-h-[200px] overflow-y-auto studio-scroll"
+          className="w-full resize-none bg-transparent px-1 py-2 text-[15px] leading-relaxed text-foreground placeholder:text-muted-foreground/55 focus:outline-none min-h-[58px] max-h-[220px] overflow-y-auto studio-scroll"
         />
 
-        {/* Inline Multi-Photo Hint Banner */}
         {promptMetrics.multiHint && (
-          <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-1.5 text-[11px]">
-            <span className="text-amber-700 dark:text-amber-300">
-              检测到提示词包含多图词句：若需生成多张独立照片而非单张拼图，请调高右侧并发张数
-            </span>
+          <div className="mt-1 mb-1 flex items-center justify-between gap-3 rounded-2xl bg-foreground/[0.045] px-3.5 py-2 text-xs text-muted-foreground">
+            <span>检测到多图描述，如需生成多张独立照片可调高张数</span>
             <button
               type="button"
               onClick={() => onChangeBatchCount(4)}
-              className="shrink-0 rounded-md bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-zinc-950 cursor-pointer"
+              className="shrink-0 rounded-full bg-primary px-3 py-1 text-[11px] font-medium text-primary-foreground cursor-pointer"
             >
-              设为 ×4 张
+              设为 ×4
             </button>
           </div>
         )}
       </div>
 
-      {/* Bottom Precision Parameter Pill Bar + Submit Action */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-2.5">
+      {/* Bottom Precision Parameter Capsules + Generate CTA (No Border Line) */}
+      <div className="flex flex-wrap items-center justify-between gap-2 pt-3">
         <div className="flex flex-wrap items-center gap-1.5">
-          {/* 1. Model Selector Pill */}
+          {/* 1. Model Selector Capsule */}
           <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
             <PopoverTrigger asChild>
               <button
                 id="pill-model-selector"
                 type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/80 bg-card/90 px-2.5 text-xs font-medium text-foreground hover:border-amber-500/50 transition-colors cursor-pointer"
+                className={pillClass}
               >
-                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                <span className="max-w-[140px] truncate">{displayModelLabel}</span>
+                <span className="max-w-[148px] truncate">
+                  {displayModelLabel}
+                </span>
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-88 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold">选择多米生图引擎</span>
-                <span className="font-mono text-[10px] text-muted-foreground">
-                  官方直连 · 异步高并发
+            <PopoverContent className="w-84 space-y-2.5">
+              <div className="px-1">
+                <span className="text-xs font-medium text-foreground">
+                  生图模型
                 </span>
               </div>
               <div className="space-y-1">
                 {models.map((m) => {
-                  const selected = !customModel.trim() && selectedModel === m.id
+                  const selected =
+                    !customModel.trim() && selectedModel === m.id
                   return (
                     <button
                       key={m.id}
@@ -861,27 +855,32 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                         setModelPopoverOpen(false)
                       }}
                       className={cn(
-                        "w-full rounded-xl border p-2.5 text-left transition-all cursor-pointer",
+                        "w-full rounded-2xl p-2.5 text-left transition-colors cursor-pointer",
                         selected
-                          ? "border-amber-500/70 bg-amber-500/10"
-                          : "border-transparent hover:border-border hover:bg-accent/55"
+                          ? "bg-foreground/[0.07] dark:bg-white/[0.1]"
+                          : "hover:bg-foreground/[0.045]"
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-semibold text-foreground">
+                          <span className="text-xs font-medium text-foreground">
                             {m.name}
                           </span>
                           <Badge
-                            variant={selected ? "amber" : "secondary"}
-                            className="text-[10px] px-1.5 py-0"
+                            variant="secondary"
+                            className="text-[10px] px-2 py-0"
                           >
                             {m.badge}
                           </Badge>
                         </div>
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {m.price}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            {m.price}
+                          </span>
+                          {selected && (
+                            <Check className="h-3.5 w-3.5 text-foreground" />
+                          )}
+                        </div>
                       </div>
                       <p className="mt-1 text-[11px] text-muted-foreground leading-snug">
                         {m.description}
@@ -890,27 +889,27 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                   )
                 })}
               </div>
-              <div className="border-t border-border/60 pt-2 space-y-1">
-                <span className="text-[10px] font-medium text-muted-foreground">
-                  或输入任意自定义模型 ID
+              <div className="pt-1 space-y-1.5">
+                <span className="px-1 text-[11px] text-muted-foreground">
+                  自定义模型 ID
                 </span>
                 <Input
                   value={customModel}
                   onChange={(e) => onChangeCustomModel(e.target.value)}
-                  placeholder="例如 gpt-image-2.6-sunburst"
-                  className="h-7 text-xs font-mono"
+                  placeholder="gpt-image-2.6-sunburst"
+                  className="h-8 text-xs font-mono"
                 />
               </div>
             </PopoverContent>
           </Popover>
 
-          {/* 2. Aspect Ratio & Resolution Visualizer Pill */}
+          {/* 2. Aspect Ratio & Resolution Visualizer Capsule */}
           <Popover open={ratioPopoverOpen} onOpenChange={setRatioPopoverOpen}>
             <PopoverTrigger asChild>
               <button
                 id="pill-ratio-selector"
                 type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/80 bg-card/90 px-2.5 text-xs font-medium text-foreground hover:border-amber-500/50 transition-colors cursor-pointer"
+                className={pillClass}
               >
                 <MiniRatioBox
                   w={
@@ -928,47 +927,47 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-[360px] sm:w-[430px] space-y-3">
-              {/* Top Visual Aspect Frame Preview */}
-              <div className="flex items-center gap-3.5 rounded-xl border border-border/70 bg-background/60 p-3">
-                <div className="flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-lg bg-secondary/70">
+            <PopoverContent className="w-[356px] sm:w-[416px] space-y-3.5">
+              {/* Clean Monochrome Aspect Frame Preview */}
+              <div className="flex items-center gap-3.5 rounded-2xl bg-foreground/[0.04] dark:bg-white/[0.05] p-3">
+                <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-xl bg-background/70">
                   <div
                     style={previewRectStyle}
-                    className="rounded-sm border-2 border-amber-500 bg-amber-500/15 transition-all duration-200 flex items-center justify-center"
+                    className="rounded-[5px] border-[1.5px] border-foreground/75 bg-foreground/[0.06] transition-all duration-200 flex items-center justify-center"
                   >
-                    <span className="font-mono text-[9px] font-bold text-amber-600 dark:text-amber-400">
+                    <span className="font-mono text-[9px] font-medium text-foreground">
                       {selectedRatio === "custom" ? "W×H" : selectedRatio}
                     </span>
                   </div>
                 </div>
                 <div className="space-y-1 min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-semibold text-foreground">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-foreground">
                       {selectedRatio === "custom"
-                        ? "自定义像素宽高"
+                        ? "自定义尺寸"
                         : `${activeRatioGroup?.ratio || "1:1"} · ${
                             activeRatioGroup?.name || ""
                           }`}
                     </span>
                     {pixelInfo && (
-                      <Badge variant="amber" className="font-mono text-[10px] px-1.5 py-0">
+                      <Badge
+                        variant="secondary"
+                        className="font-mono text-[10px] px-2 py-0"
+                      >
                         {pixelInfo.mp} MP
                       </Badge>
                     )}
                   </div>
                   <p className="font-mono text-xs text-muted-foreground">
-                    请求参数: <strong className="text-foreground">{selectedSize}</strong>
-                  </p>
-                  <p className="text-[10px] text-muted-foreground">
-                    严格遵循多米 16px 倍数对齐与总像素预算规范
+                    {selectedSize}
                   </p>
                 </div>
               </div>
 
-              {/* Step 1: 12 Aspect Ratios + Custom */}
+              {/* 12 Aspect Ratios + Custom */}
               <div className="space-y-1.5">
-                <span className="text-[11px] font-semibold text-muted-foreground">
-                  1. 选择画幅比例
+                <span className="px-1 text-[11px] font-medium text-muted-foreground">
+                  画幅比例
                 </span>
                 <div className="grid grid-cols-4 sm:grid-cols-5 gap-1.5">
                   {ratioPresets.map((grp) => {
@@ -979,10 +978,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                         type="button"
                         onClick={() => onSelectRatio(grp)}
                         className={cn(
-                          "flex flex-col items-center justify-center gap-1 rounded-xl border py-1.5 px-1 text-center transition-all cursor-pointer",
+                          "flex flex-col items-center justify-center gap-1 rounded-xl py-2 px-1 text-center transition-colors cursor-pointer",
                           active
-                            ? "border-amber-500 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold"
-                            : "border-border/70 bg-card/60 text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                            ? "bg-primary text-primary-foreground font-medium"
+                            : "bg-foreground/[0.04] text-muted-foreground hover:text-foreground hover:bg-foreground/[0.075]"
                         )}
                       >
                         <MiniRatioBox w={grp.aspect_w} h={grp.aspect_h} />
@@ -996,10 +995,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     type="button"
                     onClick={onSelectCustomRatioMode}
                     className={cn(
-                      "flex flex-col items-center justify-center gap-1 rounded-xl border py-1.5 px-1 text-center transition-all cursor-pointer",
+                      "flex flex-col items-center justify-center gap-1 rounded-xl py-2 px-1 text-center transition-colors cursor-pointer",
                       selectedRatio === "custom"
-                        ? "border-amber-500 bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold"
-                        : "border-border/70 bg-card/60 text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : "bg-foreground/[0.04] text-muted-foreground hover:text-foreground hover:bg-foreground/[0.075]"
                     )}
                   >
                     <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -1008,14 +1007,12 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 </div>
               </div>
 
-              {/* Step 2: Corresponding Resolution Tiers */}
+              {/* Resolution Tiers or Custom W×H */}
               {selectedRatio === "custom" ? (
-                <div className="space-y-2 border-t border-border/60 pt-2.5">
-                  <div className="flex items-center justify-between text-[11px]">
-                    <span className="font-semibold text-muted-foreground">
-                      2. 输入自定义宽高 (自动对齐 16 倍数)
-                    </span>
-                  </div>
+                <div className="space-y-2 pt-1">
+                  <span className="px-1 text-[11px] font-medium text-muted-foreground">
+                    像素宽高（16 倍数）
+                  </span>
                   <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-1.5">
                     <Input
                       type="number"
@@ -1030,7 +1027,9 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       }}
                       className="h-8 font-mono text-xs text-center"
                     />
-                    <span className="font-mono text-xs text-muted-foreground">×</span>
+                    <span className="font-mono text-xs text-muted-foreground">
+                      ×
+                    </span>
                     <Input
                       type="number"
                       min={256}
@@ -1048,7 +1047,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       type="button"
                       variant="secondary"
                       size="xs"
-                      className="h-8"
+                      className="h-8 px-3"
                       onClick={() => {
                         const aw = Math.min(
                           3840,
@@ -1063,16 +1062,16 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                         onApplyCustomSize(aw, ah)
                       }}
                     >
-                      对齐16
+                      对齐 16
                     </Button>
                   </div>
                 </div>
               ) : (
                 activeRatioGroup &&
                 activeRatioGroup.sizes.length > 0 && (
-                  <div className="space-y-1.5 border-t border-border/60 pt-2.5">
-                    <span className="text-[11px] font-semibold text-muted-foreground">
-                      2. 选择对应清晰度尺寸档位
+                  <div className="space-y-1.5 pt-1">
+                    <span className="px-1 text-[11px] font-medium text-muted-foreground">
+                      分辨率档位
                     </span>
                     <div className="grid grid-cols-2 gap-1.5">
                       {activeRatioGroup.sizes.map((sz) => {
@@ -1085,14 +1084,14 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                               onSelectPresetSize(sz.value, sz.tier)
                             }}
                             className={cn(
-                              "flex items-center justify-between rounded-xl border px-2.5 py-2 text-left transition-all cursor-pointer",
+                              "flex items-center justify-between rounded-2xl px-3 py-2 text-left transition-colors cursor-pointer",
                               active
-                                ? "border-amber-500 bg-amber-500/12"
-                                : "border-border/70 bg-card/50 hover:bg-accent/50"
+                                ? "bg-foreground/[0.08] dark:bg-white/[0.12]"
+                                : "bg-foreground/[0.035] hover:bg-foreground/[0.065]"
                             )}
                           >
                             <div>
-                              <p className="text-xs font-semibold text-foreground">
+                              <p className="text-xs font-medium text-foreground">
                                 {sz.label}
                               </p>
                               <p className="font-mono text-[10px] text-muted-foreground">
@@ -1100,7 +1099,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                               </p>
                             </div>
                             {active && (
-                              <Check className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                              <Check className="h-3.5 w-3.5 text-foreground shrink-0" />
                             )}
                           </button>
                         )
@@ -1112,25 +1111,23 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             </PopoverContent>
           </Popover>
 
-          {/* 3. Quality & Transparent PNG Pill */}
+          {/* 3. Quality & Background Capsule */}
           <Popover>
             <PopoverTrigger asChild>
-              <button
-                type="button"
-                className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/80 bg-card/90 px-2.5 text-xs font-medium text-foreground hover:border-amber-500/50 transition-colors cursor-pointer"
-              >
-                <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+              <button type="button" className={pillClass}>
                 <span>
-                  {quality === "default" ? "标准精细" : quality.toUpperCase()}
+                  {quality === "default" ? "标准画质" : quality.toUpperCase()}
                   {background === "transparent" ? " · 透明底" : ""}
                 </span>
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-72 space-y-3">
+            <PopoverContent className="w-72 space-y-3.5">
               <div className="space-y-1.5">
-                <span className="text-xs font-semibold">思考与刻画深度 (Quality)</span>
-                <div className="grid grid-cols-4 gap-1 rounded-xl border border-border bg-background/60 p-1">
+                <span className="px-1 text-xs font-medium text-foreground">
+                  刻画精细度
+                </span>
+                <div className="grid grid-cols-4 gap-1 rounded-full bg-foreground/[0.05] dark:bg-white/[0.06] p-1">
                   {[
                     { v: "default", l: "默认" },
                     { v: "low", l: "极速" },
@@ -1142,9 +1139,9 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       type="button"
                       onClick={() => onChangeQuality(q.v)}
                       className={cn(
-                        "rounded-lg py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                        "rounded-full py-1 text-[11px] font-medium transition-all cursor-pointer",
                         quality === q.v
-                          ? "bg-amber-500 text-zinc-950 font-semibold"
+                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.16]"
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
@@ -1155,21 +1152,23 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               </div>
 
               <div className="space-y-1.5">
-                <span className="text-xs font-semibold">背景通道 (Background)</span>
-                <div className="grid grid-cols-3 gap-1 rounded-xl border border-border bg-background/60 p-1">
+                <span className="px-1 text-xs font-medium text-foreground">
+                  背景通道
+                </span>
+                <div className="grid grid-cols-3 gap-1 rounded-full bg-foreground/[0.05] dark:bg-white/[0.06] p-1">
                   {[
-                    { v: "auto", l: "智能默认" },
-                    { v: "opaque", l: "纯实色底" },
-                    { v: "transparent", l: "透明 PNG" },
+                    { v: "auto", l: "自动" },
+                    { v: "opaque", l: "实色" },
+                    { v: "transparent", l: "透明" },
                   ].map((b) => (
                     <button
                       key={b.v}
                       type="button"
                       onClick={() => onChangeBackground(b.v)}
                       className={cn(
-                        "rounded-lg py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                        "rounded-full py-1 text-[11px] font-medium transition-all cursor-pointer",
                         background === b.v
-                          ? "bg-amber-500 text-zinc-950 font-semibold"
+                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.16]"
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
@@ -1179,69 +1178,73 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 </div>
               </div>
 
-              <div className="space-y-2 border-t border-border/60 pt-2.5 text-xs">
+              <div className="space-y-2.5 pt-1 px-1 text-xs">
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">智能兼容降级重试</span>
+                  <span className="text-muted-foreground">自动兼容重试</span>
                   <Switch
                     checked={autoCompatFallback}
                     onCheckedChange={onChangeAutoCompatFallback}
                   />
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">海外加速线路 (Oversea)</span>
+                  <span className="text-muted-foreground">海外加速线路</span>
                   <Switch checked={oversea} onCheckedChange={onChangeOversea} />
                 </div>
               </div>
             </PopoverContent>
           </Popover>
 
-          {/* 4. Reference Strategy Pill (Lossless Upload Default vs Optional Base64) */}
+          {/* 4. Reference Strategy Capsule */}
           <Popover>
             <PopoverTrigger asChild>
               <button
                 id="pill-ref-strategy"
                 type="button"
-                className={cn(
-                  "inline-flex h-8 items-center gap-1.5 rounded-xl border px-2.5 text-xs font-medium transition-colors cursor-pointer",
-                  refMode === "upload"
-                    ? "border-emerald-500/35 bg-emerald-500/[0.07] text-emerald-700 dark:text-emerald-300"
-                    : "border-border/80 bg-card/90 text-foreground"
-                )}
+                className={pillClass}
               >
-                <CloudUpload className="h-3.5 w-3.5" />
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    refMode === "upload"
+                      ? "bg-emerald-500"
+                      : "bg-muted-foreground/60"
+                  )}
+                />
                 <span>{refModeShortLabel}</span>
-                <ChevronDown className="h-3 w-3 opacity-70" />
+                <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-84 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold">本地参考图传输策略</span>
+            <PopoverContent className="w-80 space-y-3">
+              <div className="flex items-center justify-between px-1">
+                <span className="text-xs font-medium text-foreground">
+                  参考图传输方式
+                </span>
                 <button
                   type="button"
                   onClick={() => onOpenSettingsTab("imagehost")}
-                  className="text-[11px] text-amber-500 hover:underline cursor-pointer"
+                  className="text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
-                  配置私有图床 →
+                  图床设置 →
                 </button>
               </div>
 
-              <div className="space-y-1.5">
+              <div className="space-y-1">
                 {(
                   [
                     {
                       m: "upload",
-                      title: "自动传图床直链（默认 · 原图无损）",
-                      desc: "二进制流原图无损上传获取 https:// 直链，零画质折损，上游成功率最高",
+                      title: "无损图床直链（默认）",
+                      desc: "原图直传获取 HTTPS 链接，零画质折损",
                     },
                     {
                       m: "compress_base64",
-                      title: "压缩并转 Base64（可选 · 纯本地隐私）",
-                      desc: "绝不上传外部图床；本地剥离 EXIF 并缩放为轻量 sRGB JPEG Base64",
+                      title: "本地压缩 Base64",
+                      desc: "不经外部图床，本地缩放为轻量 JPEG",
                     },
                     {
                       m: "raw_base64",
-                      title: "原图直转 Base64（可选 · 不压缩）",
-                      desc: "不经图床且不缩放，仅建议 <500KB 小图使用",
+                      title: "原图直转 Base64",
+                      desc: "不经图床且不压缩，适合小体积图片",
                     },
                   ] as const
                 ).map((opt) => (
@@ -1250,21 +1253,21 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     type="button"
                     onClick={() => onChangeRefMode(opt.m)}
                     className={cn(
-                      "w-full rounded-xl border p-2 text-left transition-all cursor-pointer",
+                      "w-full rounded-2xl p-2.5 text-left transition-colors cursor-pointer",
                       refMode === opt.m
-                        ? "border-amber-500 bg-amber-500/12"
-                        : "border-border/70 bg-card/50 hover:bg-accent/50"
+                        ? "bg-foreground/[0.07] dark:bg-white/[0.1]"
+                        : "hover:bg-foreground/[0.04]"
                     )}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-foreground">
+                      <span className="text-xs font-medium text-foreground">
                         {opt.title}
                       </span>
                       {refMode === opt.m && (
-                        <Check className="h-3.5 w-3.5 text-amber-500" />
+                        <Check className="h-3.5 w-3.5 text-foreground" />
                       )}
                     </div>
-                    <p className="mt-0.5 text-[10px] text-muted-foreground leading-snug">
+                    <p className="mt-0.5 text-[11px] text-muted-foreground leading-snug">
                       {opt.desc}
                     </p>
                   </button>
@@ -1272,9 +1275,11 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               </div>
 
               {refMode === "upload" && (
-                <div className="grid grid-cols-2 gap-2 border-t border-border/60 pt-2.5">
+                <div className="grid grid-cols-2 gap-2 pt-1">
                   <div className="space-y-1">
-                    <span className="text-[10px] text-muted-foreground">图床节点</span>
+                    <span className="px-1 text-[10px] text-muted-foreground">
+                      节点
+                    </span>
                     <select
                       value={imageHostProvider}
                       onChange={(e) =>
@@ -1282,7 +1287,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                           e.target.value as ImageHostProvider
                         )
                       }
-                      className="h-7 w-full rounded-lg border border-border bg-background px-2 text-xs"
+                      className="h-8 w-full rounded-xl bg-foreground/[0.05] px-2.5 text-xs text-foreground focus:outline-none"
                     >
                       {imageHosts.map((h) => (
                         <option key={h.id} value={h.id}>
@@ -1292,28 +1297,28 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     </select>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-[10px] text-muted-foreground">
-                      Litterbox 有效期
+                    <span className="px-1 text-[10px] text-muted-foreground">
+                      有效期
                     </span>
                     <select
                       value={litterboxExpiry}
                       onChange={(e) => onChangeLitterboxExpiry(e.target.value)}
-                      className="h-7 w-full rounded-lg border border-border bg-background px-2 text-xs font-mono"
+                      className="h-8 w-full rounded-xl bg-foreground/[0.05] px-2.5 text-xs font-mono text-foreground focus:outline-none"
                     >
-                      <option value="1h">1 小时后销毁</option>
-                      <option value="12h">12 小时后销毁</option>
-                      <option value="24h">24 小时后销毁</option>
-                      <option value="72h">72 小时后销毁</option>
+                      <option value="1h">1 小时</option>
+                      <option value="12h">12 小时</option>
+                      <option value="24h">24 小时</option>
+                      <option value="72h">72 小时</option>
                     </select>
                   </div>
                 </div>
               )}
 
               {refMode === "compress_base64" && (
-                <div className="space-y-2 border-t border-border/60 pt-2.5">
+                <div className="space-y-2.5 pt-1 px-1">
                   <div className="space-y-1">
-                    <div className="flex justify-between text-[10px]">
-                      <span className="text-muted-foreground">最长边限制</span>
+                    <div className="flex justify-between text-[11px]">
+                      <span className="text-muted-foreground">最长边</span>
                       <span className="font-mono">{compressMaxDim}px</span>
                     </div>
                     <input
@@ -1329,8 +1334,8 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     />
                   </div>
                   <div className="space-y-1">
-                    <div className="flex justify-between text-[10px]">
-                      <span className="text-muted-foreground">JPEG 品质</span>
+                    <div className="flex justify-between text-[11px]">
+                      <span className="text-muted-foreground">品质</span>
                       <span className="font-mono">{compressQuality}%</span>
                     </div>
                     <input
@@ -1350,44 +1355,45 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             </PopoverContent>
           </Popover>
 
-          {/* 5. Active Project Album Target Pill */}
+          {/* 5. Active Project Album Capsule */}
           {projects.length > 0 && (
             <Popover>
               <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-xl border border-border/80 bg-card/90 px-2.5 text-xs font-medium text-foreground hover:border-amber-500/50 transition-colors cursor-pointer"
-                >
+                <button type="button" className={pillClass}>
                   {activeProject ? (
                     <span
                       className={cn(
                         "h-2 w-2 rounded-full",
-                        PROJECT_COLOR_MAP[activeProject.color || "amber"]?.dot ||
-                          "bg-amber-500"
+                        PROJECT_COLOR_MAP[activeProject.color || "amber"]
+                          ?.dot || "bg-foreground"
                       )}
                     />
                   ) : (
                     <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
                   )}
                   <span className="max-w-[96px] truncate">
-                    {activeProject ? activeProject.name : "默认未归档"}
+                    {activeProject ? activeProject.name : "未归档"}
                   </span>
                 </button>
               </PopoverTrigger>
-              <PopoverContent className="w-56 space-y-1">
-                <p className="text-[11px] font-semibold text-muted-foreground px-1 pb-1">
-                  生成后自动归入项目画册
+              <PopoverContent className="w-52 space-y-1">
+                <p className="text-[11px] font-medium text-muted-foreground px-2 pb-1">
+                  自动归入画册
                 </p>
                 <button
                   type="button"
                   onClick={() => onChangeActiveProjectId("")}
                   className={cn(
-                    "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs cursor-pointer",
-                    !activeProjectId ? "bg-accent font-semibold" : "hover:bg-accent/50"
+                    "flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-xs cursor-pointer",
+                    !activeProjectId
+                      ? "bg-foreground/[0.07] font-medium"
+                      : "hover:bg-foreground/[0.04]"
                   )}
                 >
-                  <span>不指定画册</span>
-                  {!activeProjectId && <Check className="h-3.5 w-3.5 text-amber-500" />}
+                  <span>不指定</span>
+                  {!activeProjectId && (
+                    <Check className="h-3.5 w-3.5 text-foreground" />
+                  )}
                 </button>
                 {projects.map((p) => (
                   <button
@@ -1395,10 +1401,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     type="button"
                     onClick={() => onChangeActiveProjectId(p.id)}
                     className={cn(
-                      "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-xs cursor-pointer",
+                      "flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-xs cursor-pointer",
                       activeProjectId === p.id
-                        ? "bg-accent font-semibold"
-                        : "hover:bg-accent/50"
+                        ? "bg-foreground/[0.07] font-medium"
+                        : "hover:bg-foreground/[0.04]"
                     )}
                   >
                     <span className="flex items-center gap-2 truncate">
@@ -1411,7 +1417,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       <span className="truncate">{p.name}</span>
                     </span>
                     {activeProjectId === p.id && (
-                      <Check className="h-3.5 w-3.5 text-amber-500" />
+                      <Check className="h-3.5 w-3.5 text-foreground" />
                     )}
                   </button>
                 ))}
@@ -1419,52 +1425,54 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             </Popover>
           )}
 
-          {/* API Request Code Preview */}
+          {/* Request Payload Preview */}
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
                 onClick={onOpenDevPreview}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-border/70 bg-card/60 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                aria-label="预览等价 API 请求代码"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] text-muted-foreground hover:bg-foreground/[0.085] hover:text-foreground transition-colors cursor-pointer"
+                aria-label="预览 API 请求参数"
               >
                 <Code2 className="h-3.5 w-3.5" />
               </button>
             </TooltipTrigger>
-            <TooltipContent>查看等价 JSON / curl / CLI 命令行参数</TooltipContent>
+            <TooltipContent>请求代码预览</TooltipContent>
           </Tooltip>
         </div>
 
-        {/* Right Side: Character Counter + Batch Stepper + Generate CTA */}
+        {/* Right Side: Subtle Counter + Tonal Batch Capsule + Pure Apple Generate Button */}
         <div className="flex items-center gap-2 ml-auto">
-          <span
-            className={cn(
-              "hidden xl:inline-block font-mono text-[10px] tabular-nums",
-              promptMetrics.utf8Bytes > 5000
-                ? "text-amber-500 font-semibold"
-                : "text-muted-foreground/75"
-            )}
-            title={`UTF-8 字节数: ${promptMetrics.utf8Bytes}`}
-          >
-            {promptMetrics.chars}/5000
-          </span>
+          {promptMetrics.chars > 0 && (
+            <span
+              className={cn(
+                "hidden xl:inline-block font-mono text-[11px] tabular-nums",
+                promptMetrics.utf8Bytes > 5000
+                  ? "text-amber-500 font-medium"
+                  : "text-muted-foreground/55"
+              )}
+              title={`UTF-8: ${promptMetrics.utf8Bytes} 字节`}
+            >
+              {promptMetrics.chars}
+            </span>
+          )}
 
-          {/* Tactile Batch Stepper */}
+          {/* Borderless Tonal Batch Stepper */}
           <div
-            className="inline-flex h-9 items-center rounded-xl border border-border/80 bg-card/90 px-1"
-            title="单次并发生成张数 (1..10)"
+            className="inline-flex h-9 items-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] px-1"
+            title="生成张数 (1–10)"
           >
             <button
               type="button"
               disabled={batchCount <= 1}
               onClick={() => onChangeBatchCount(Math.max(1, batchCount - 1))}
-              className="flex h-7 w-6 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-35 cursor-pointer"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:text-foreground disabled:opacity-30 cursor-pointer"
             >
               <Minus className="h-3 w-3" />
             </button>
             <span
               ref={batchValueRef}
-              className="w-7 text-center font-mono text-xs font-semibold tabular-nums inline-block"
+              className="w-7 text-center font-mono text-xs font-medium tabular-nums inline-block"
             >
               ×{batchCount}
             </span>
@@ -1472,13 +1480,13 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               type="button"
               disabled={batchCount >= 10}
               onClick={() => onChangeBatchCount(Math.min(10, batchCount + 1))}
-              className="flex h-7 w-6 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground disabled:opacity-35 cursor-pointer"
+              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground hover:text-foreground disabled:opacity-30 cursor-pointer"
             >
               <Plus className="h-3 w-3" />
             </button>
           </div>
 
-          {/* Primary Generate Button */}
+          {/* Pure Monochrome Apple Pill CTA */}
           <Button
             ref={submitBtnRef}
             id={
@@ -1489,23 +1497,18 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             type="button"
             disabled={isSubmitting || anyUploadingRef}
             onClick={triggerGenerateWithShutter}
-            className="h-9 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-white px-4 font-semibold shadow-sm gap-1.5 cursor-pointer"
+            className="h-9 rounded-full px-5 text-[13px] font-medium gap-1.5"
           >
-            {isSubmitting || anyUploadingRef ? (
+            {(isSubmitting || anyUploadingRef) && (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5 text-amber-400 dark:text-amber-600" />
             )}
             <span>
               {anyUploadingRef
-                ? "处理参考图..."
+                ? "准备中"
                 : isSubmitting
-                ? "提交中..."
-                : "立即生成"}
+                ? "提交中"
+                : "生成"}
             </span>
-            <kbd className="hidden sm:inline-flex ml-0.5 rounded bg-white/15 dark:bg-black/10 px-1.5 py-0.5 font-mono text-[10px]">
-              ⌘↵
-            </kbd>
           </Button>
         </div>
       </div>

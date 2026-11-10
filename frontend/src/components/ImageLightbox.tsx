@@ -7,9 +7,7 @@ import {
   Copy,
   Download,
   ExternalLink,
-  FolderKanban,
   FolderOpen,
-  Grid,
   ImagePlus,
   Maximize,
   MoveHorizontal,
@@ -21,8 +19,6 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -103,7 +99,6 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
   const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
   const dragOriginRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
-  // Scoped GSAP Stage & Zero-Re-Render Refs
   const stageRootRef = useRef<HTMLDivElement | null>(null)
   const stageContentRef = useRef<HTMLDivElement | null>(null)
   const curtainBoxRef = useRef<HTMLDivElement | null>(null)
@@ -154,7 +149,6 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     return []
   }, [record])
 
-  // Sync state when record / initialCompare changes
   useEffect(() => {
     panRef.current = { x: 0, y: 0 }
     setZoom(1)
@@ -169,11 +163,16 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     }
   }, [recordId, recordNote, imageIndex, initialCompare, validRefSources.length])
 
-  // 1. Signature tactile Curtain Wipe intro sweep (34% -> 50%) via CSS variable (--curtain-pos) — zero React re-renders
+  // 1. Calm Curtain Wipe intro sweep (38% -> 50%) via CSS variable (--curtain-pos)
   useGSAP(
     () => {
       const el = curtainBoxRef.current
-      if (!el || !recordId || viewMode !== "curtain" || validRefSources.length === 0) {
+      if (
+        !el ||
+        !recordId ||
+        viewMode !== "curtain" ||
+        validRefSources.length === 0
+      ) {
         return
       }
       if (prefersReducedMotion()) {
@@ -182,10 +181,10 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       }
       gsap.fromTo(
         el,
-        { "--curtain-pos": "34%" },
+        { "--curtain-pos": "38%" },
         {
           "--curtain-pos": "50%",
-          duration: 0.56,
+          duration: 0.62,
           ease: STUDIO_EASE.expo,
           overwrite: "auto",
         }
@@ -204,11 +203,11 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       if (!el || !recordId || prefersReducedMotion()) return
       gsap.fromTo(
         el,
-        { autoAlpha: 0.42, scale: 0.986 },
+        { autoAlpha: 0.48, scale: 0.99 },
         {
           autoAlpha: 1,
           scale: 1,
-          duration: 0.22,
+          duration: 0.28,
           ease: STUDIO_EASE.out,
           clearProps: "transform,opacity,visibility",
         }
@@ -220,7 +219,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     }
   )
 
-  // 3. Compositor-only Zoom & reusable gsap.quickTo() Pan followers (zero 60fps setState during drag)
+  // 3. Compositor-only Zoom & reusable gsap.quickTo() Pan followers
   useGSAP(
     () => {
       const targets = [
@@ -245,15 +244,15 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
           x: panRef.current.x,
           y: panRef.current.y,
           scale: zoom,
-          duration: 0.2,
+          duration: 0.24,
           ease: STUDIO_EASE.out,
           overwrite: "auto",
         })
       }
 
       quickPanFnsRef.current = targets.map((el) => ({
-        xTo: gsap.quickTo(el, "x", { duration: 0.12, ease: "power3.out" }),
-        yTo: gsap.quickTo(el, "y", { duration: 0.12, ease: "power3.out" }),
+        xTo: gsap.quickTo(el, "x", { duration: 0.14, ease: "power3.out" }),
+        yTo: gsap.quickTo(el, "y", { duration: 0.14, ease: "power3.out" }),
       }))
     },
     {
@@ -278,7 +277,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
           x: 0,
           y: 0,
           scale: clamped,
-          duration: prefersReducedMotion() ? 0 : 0.22,
+          duration: prefersReducedMotion() ? 0 : 0.26,
           ease: STUDIO_EASE.out,
           overwrite: "auto",
         })
@@ -287,7 +286,6 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     [contextSafe]
   )
 
-  // Keyboard navigation
   useEffect(() => {
     if (!record) return
     const handleKey = (e: KeyboardEvent) => {
@@ -416,9 +414,9 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     setCopyingImg(true)
     try {
       await copyImageToClipboard(imgSrc)
-      onToast("已复制原图到系统剪贴板", "success")
+      onToast("已复制图像", "success")
     } catch {
-      onToast("浏览器剪贴板写入受限，请右键复制或下载原图", "error")
+      onToast("剪贴板写入受限，请右键复制或下载原图", "error")
     } finally {
       setCopyingImg(false)
     }
@@ -429,7 +427,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     setSavingNote(true)
     try {
       await onOrganizeRecord(record.id, { note: noteDraft.trim() })
-      onToast("作品备注已保存", "success")
+      onToast("备注已保存", "success")
     } finally {
       setSavingNote(false)
     }
@@ -437,101 +435,95 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 
   const stageBgClass =
     backdrop === "checker"
-      ? "bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:16px_16px] bg-zinc-900"
+      ? "bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:16px_16px] bg-[#141416]"
       : backdrop === "paper"
-      ? "bg-[#f4f3ef]"
-      : "bg-[#050507]"
+      ? "bg-[#F5F5F7]"
+      : "bg-[#070709]"
 
   return (
     <Dialog open={Boolean(record)} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-[97vw] sm:max-w-[95vw] xl:max-w-[1440px] p-0 overflow-hidden bg-zinc-950 text-zinc-100 border-zinc-800/90 shadow-2xl">
-        <DialogTitle className="sr-only">
-          电影级暗房检视台 - {record.model}
-        </DialogTitle>
+      <DialogContent className="max-w-[97vw] sm:max-w-[95vw] xl:max-w-[1440px] p-0 overflow-hidden bg-[#0D0D10]/96 backdrop-blur-3xl text-zinc-100 border-white/[0.07] rounded-3xl shadow-2xl">
+        <DialogTitle className="sr-only">作品检视 - {record.model}</DialogTitle>
         <DialogDescription className="sr-only">
-          支持像素级无级缩放、卷帘滑动前后对比、双栏同步透视核验与胶片序列快切
+          缩放、前后对比与参数详情
         </DialogDescription>
 
-        {/* Top Darkroom Control Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-800/90 bg-zinc-950 px-4 py-2.5 pr-12">
+        {/* Borderless Darkroom Top Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-5 py-3 pr-14">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="amber" className="font-mono text-[11px]">
+            <span className="rounded-full bg-white/[0.08] px-3 py-1 font-mono text-[11px] font-medium text-zinc-100">
               {record.model}
-            </Badge>
-            <Badge
-              variant="outline"
-              className="border-zinc-700 text-zinc-300 font-mono text-[11px] tabular-nums"
-            >
+            </span>
+            <span className="rounded-full bg-white/[0.05] px-2.5 py-1 font-mono text-[11px] text-zinc-400 tabular-nums">
               {displayW} × {displayH}
-            </Badge>
+            </span>
             {activeImg.size_bytes ? (
-              <span className="text-[11px] font-mono text-zinc-400 tabular-nums">
+              <span className="text-[11px] font-mono text-zinc-500 tabular-nums">
                 {formatBytes(activeImg.size_bytes)}
               </span>
             ) : null}
 
-            {/* View Mode Segmented Switcher */}
+            {/* Apple Segmented View Mode Switcher */}
             {validRefSources.length > 0 && (
-              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-zinc-900 p-0.5 ml-1">
+              <div className="flex items-center gap-0.5 rounded-full bg-white/[0.06] p-1 ml-1">
                 <button
                   type="button"
                   onClick={() => setViewMode("single")}
                   className={cn(
-                    "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                    "rounded-full px-3 py-1 text-[11px] font-medium transition-colors cursor-pointer",
                     viewMode === "single"
-                      ? "bg-zinc-100 text-zinc-950 font-semibold"
+                      ? "bg-white text-zinc-950"
                       : "text-zinc-400 hover:text-zinc-100"
                   )}
                 >
-                  成片单图
+                  单图
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewMode("curtain")}
                   className={cn(
-                    "flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                    "flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium transition-colors cursor-pointer",
                     viewMode === "curtain"
-                      ? "bg-amber-500 text-zinc-950 font-semibold"
+                      ? "bg-white text-zinc-950"
                       : "text-zinc-400 hover:text-zinc-100"
                   )}
                 >
                   <SplitSquareHorizontal className="h-3 w-3" />
-                  卷帘对比
+                  卷帘
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewMode("side_by_side")}
                   className={cn(
-                    "flex items-center gap-1 rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                    "flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-medium transition-colors cursor-pointer",
                     viewMode === "side_by_side"
-                      ? "bg-amber-500 text-zinc-950 font-semibold"
+                      ? "bg-white text-zinc-950"
                       : "text-zinc-400 hover:text-zinc-100"
                   )}
                 >
                   <Columns2 className="h-3 w-3" />
-                  双栏同步
+                  双栏
                 </button>
               </div>
             )}
           </div>
 
-          {/* Right Controls: Backdrop + Zoom + Inspector Toggle */}
+          {/* Right Darkroom Controls */}
           <div className="flex items-center gap-1.5">
-            {/* Backdrop Switcher */}
-            <div className="hidden md:flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-zinc-900 p-0.5">
+            <div className="hidden md:flex items-center gap-0.5 rounded-full bg-white/[0.06] p-1">
               {[
                 { id: "darkroom" as const, label: "暗房" },
                 { id: "checker" as const, label: "透明格" },
-                { id: "paper" as const, label: "白纸" },
+                { id: "paper" as const, label: "浅底" },
               ].map((b) => (
                 <button
                   key={b.id}
                   type="button"
                   onClick={() => setBackdrop(b.id)}
                   className={cn(
-                    "rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors cursor-pointer",
+                    "rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors cursor-pointer",
                     backdrop === b.id
-                      ? "bg-zinc-700 text-white"
+                      ? "bg-white/[0.18] text-white"
                       : "text-zinc-400 hover:text-zinc-200"
                   )}
                 >
@@ -541,12 +533,10 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
             </div>
 
             {viewMode !== "curtain" && (
-              <div className="flex items-center gap-0.5 rounded-lg border border-zinc-800 bg-zinc-900 px-1 py-0.5">
-                <Button
+              <div className="flex items-center gap-0.5 rounded-full bg-white/[0.06] px-1.5 py-0.5">
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-zinc-300 hover:text-white hover:bg-zinc-800"
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-zinc-300 hover:bg-white/[0.1] hover:text-white cursor-pointer"
                   onClick={() =>
                     setZoom((z) => {
                       const next = clampZoom(Number((z - 0.25).toFixed(2)))
@@ -556,74 +546,66 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   }
                 >
                   <ZoomOut className="h-3.5 w-3.5" />
-                </Button>
+                </button>
                 <span className="min-w-[44px] text-center font-mono text-[11px] text-zinc-200 tabular-nums">
                   {Math.round(zoom * 100)}%
                 </span>
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-zinc-300 hover:text-white hover:bg-zinc-800"
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-zinc-300 hover:bg-white/[0.1] hover:text-white cursor-pointer"
                   onClick={() =>
                     setZoom((z) => clampZoom(Number((z + 0.25).toFixed(2))))
                   }
                 >
                   <ZoomIn className="h-3.5 w-3.5" />
-                </Button>
+                </button>
                 <button
                   type="button"
                   onClick={() => applyZoomAndResetPan(zoom === 2 ? 1 : 2)}
                   className="px-1.5 text-[10px] font-mono text-zinc-400 hover:text-white cursor-pointer"
-                  title="快速切换 200% 细节放大与适配视图"
+                  title="切换 200% 视图"
                 >
                   2x
                 </button>
-                <Button
+                <button
                   type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="h-6 w-6 text-zinc-300 hover:text-white hover:bg-zinc-800"
+                  className="flex h-6 w-6 items-center justify-center rounded-full text-zinc-300 hover:bg-white/[0.1] hover:text-white cursor-pointer"
                   onClick={() => applyZoomAndResetPan(1)}
-                  title="复位视图 (快捷键 0)"
+                  title="复位 (0)"
                 >
                   <Maximize className="h-3 w-3" />
-                </Button>
+                </button>
               </div>
             )}
 
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="icon"
               onClick={() => onToggleStar(record)}
               className={cn(
-                "h-7 w-7 hover:bg-zinc-800",
+                "flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.08] transition-colors cursor-pointer",
                 record.starred
                   ? "text-amber-400"
                   : "text-zinc-400 hover:text-white"
               )}
-              title="星标收藏"
+              title="收藏"
             >
               <Star
                 className={cn("h-4 w-4", record.starred && "fill-amber-400")}
               />
-            </Button>
+            </button>
 
-            <Button
+            <button
               type="button"
-              variant="ghost"
-              size="icon"
               onClick={() => setInspectorOpen((p) => !p)}
-              className="hidden lg:inline-flex h-7 w-7 text-zinc-400 hover:text-white hover:bg-zinc-800"
-              title={inspectorOpen ? "收起右侧参数栏" : "展开右侧参数栏"}
+              className="hidden lg:inline-flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer"
+              title={inspectorOpen ? "收起详情" : "展开详情"}
             >
               {inspectorOpen ? (
                 <PanelRightClose className="h-4 w-4" />
               ) : (
                 <PanelRightOpen className="h-4 w-4" />
               )}
-            </Button>
+            </button>
           </div>
         </div>
 
@@ -631,31 +613,30 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
         <div
           className={cn(
             "grid grid-cols-1",
-            inspectorOpen ? "lg:grid-cols-[1fr_360px]" : "lg:grid-cols-1"
+            inspectorOpen ? "lg:grid-cols-[1fr_340px]" : "lg:grid-cols-1"
           )}
         >
           {/* Left Column: Stage + Filmstrip */}
           <div className="flex flex-col overflow-hidden">
-            {/* Reference Image Picker Strip when comparing multiple refs */}
             {viewMode !== "single" && validRefSources.length > 1 && (
-              <div className="flex items-center justify-center gap-2 border-b border-zinc-800/80 bg-zinc-900/70 px-3 py-1.5">
-                <span className="text-[11px] text-zinc-400">切换对比参考图:</span>
+              <div className="flex items-center justify-center gap-2 bg-white/[0.025] px-3 py-2">
+                <span className="text-[11px] text-zinc-400">参考图</span>
                 {validRefSources.map((ref, idx) => (
                   <button
                     key={idx}
                     type="button"
                     onClick={() => setActiveRefIdx(idx)}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-lg border px-2 py-0.5 text-[11px] transition-all cursor-pointer",
+                      "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] transition-all cursor-pointer",
                       idx === activeRefIdx
-                        ? "border-amber-500 bg-amber-500/15 text-amber-300 font-semibold"
-                        : "border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                        ? "bg-white text-zinc-950 font-medium"
+                        : "bg-white/[0.06] text-zinc-400 hover:text-zinc-200"
                     )}
                   >
                     <img
                       src={ref.src}
                       alt=""
-                      className="h-4 w-4 rounded-xs object-cover"
+                      className="h-4 w-4 rounded-full object-cover"
                     />
                     <span>@图{idx + 1}</span>
                   </button>
@@ -672,7 +653,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
               className={cn(
-                "relative flex h-[56vh] sm:h-[64vh] items-center justify-center overflow-hidden select-none transition-colors",
+                "relative flex h-[56vh] sm:h-[65vh] items-center justify-center overflow-hidden select-none transition-colors",
                 stageBgClass,
                 viewMode !== "curtain" && zoom > 1
                   ? dragging
@@ -685,7 +666,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                 ref={stageContentRef}
                 className="flex h-full w-full items-center justify-center"
               >
-                {/* MODE 1: Interactive Curtain Wipe Slider (Zero-Re-Render CSS Custom Property --curtain-pos) */}
+                {/* MODE 1: Interactive Luminous Frosted Curtain Wipe */}
                 {viewMode === "curtain" && activeRef ? (
                   <div
                     ref={curtainBoxRef}
@@ -706,12 +687,11 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     onPointerCancel={() => {
                       draggingCurtainRef.current = false
                     }}
-                    className="relative inline-flex max-h-[92%] max-w-[92%] items-center justify-center rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/15 cursor-ew-resize touch-none"
+                    className="relative inline-flex max-h-[92%] max-w-[92%] items-center justify-center rounded-2xl overflow-hidden shadow-2xl cursor-ew-resize touch-none"
                   >
-                    {/* Base Layer: Generated Artwork (AFTER) */}
                     <img
                       src={imgSrc}
-                      alt="生成成片"
+                      alt="成片"
                       draggable={false}
                       onLoad={(e) =>
                         setNaturalDim({
@@ -722,9 +702,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                       className="block max-h-[58vh] max-w-[86vw] lg:max-w-[62vw] w-auto h-auto object-contain select-none"
                     />
 
-                    {/* Clipped Top Layer: Reference Image (BEFORE) */}
                     <div
-                      className="absolute inset-0 overflow-hidden bg-zinc-950"
+                      className="absolute inset-0 overflow-hidden bg-[#070709]"
                       style={{
                         clipPath:
                           "inset(0 calc(100% - var(--curtain-pos, 50%)) 0 0)",
@@ -732,53 +711,52 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     >
                       <img
                         src={activeRef.src}
-                        alt="参考原图"
+                        alt="参考图"
                         draggable={false}
                         className="h-full w-full object-contain select-none"
                       />
                     </div>
 
-                    {/* Labels */}
-                    <span className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-zinc-200 backdrop-blur-xs border border-white/10">
-                      参考原图 (@图{activeRefIdx + 1})
+                    <span className="pointer-events-none absolute left-3 top-3 rounded-full bg-black/60 px-2.5 py-0.5 text-[10px] font-medium text-white backdrop-blur-xl">
+                      参考 @图{activeRefIdx + 1}
                     </span>
-                    <span className="pointer-events-none absolute right-3 top-3 rounded-md bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold tracking-wider text-zinc-950 shadow-sm">
-                      生成成片 (AFTER)
+                    <span className="pointer-events-none absolute right-3 top-3 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-medium text-zinc-950 backdrop-blur-xl">
+                      成片
                     </span>
 
-                    {/* Vertical Wipe Line & Handle */}
+                    {/* Luminous White Curtain Line & Handle */}
                     <div
-                      className="pointer-events-none absolute top-0 bottom-0 w-[2px] bg-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.8)]"
+                      className="pointer-events-none absolute top-0 bottom-0 w-[1.5px] bg-white/90 shadow-[0_0_14px_rgba(0,0,0,0.65)]"
                       style={{ left: "var(--curtain-pos, 50%)" }}
                     >
-                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-amber-500 text-zinc-950 shadow-xl ring-2 ring-white">
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-950 shadow-xl">
                         <MoveHorizontal className="h-4 w-4" />
                       </div>
                     </div>
                   </div>
                 ) : viewMode === "side_by_side" && activeRef ? (
-                  /* MODE 2: Synchronized Side-by-Side Dual View */
-                  <div className="grid grid-cols-2 h-full w-full divide-x divide-zinc-800/80">
-                    <div className="relative flex flex-col items-center justify-center p-4 overflow-hidden">
-                      <span className="absolute top-3 left-3 z-10 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-medium text-zinc-200 border border-zinc-700">
-                        参考图 @图{activeRefIdx + 1}
+                  /* MODE 2: Synchronized Dual View (Zero Dividing Line) */
+                  <div className="grid grid-cols-2 gap-4 h-full w-full p-5">
+                    <div className="relative flex flex-col items-center justify-center overflow-hidden rounded-2xl bg-white/[0.02]">
+                      <span className="absolute top-3 left-3 z-10 rounded-full bg-black/60 px-2.5 py-0.5 text-[10px] font-medium text-zinc-200 backdrop-blur-xl">
+                        参考 @图{activeRefIdx + 1}
                       </span>
                       <img
                         ref={sideRefImgRef}
                         src={activeRef.src}
                         alt="参考图"
                         draggable={false}
-                        className="max-h-full max-w-full object-contain rounded-md shadow-xl will-change-transform"
+                        className="max-h-full max-w-full object-contain rounded-xl shadow-xl will-change-transform"
                       />
                     </div>
-                    <div className="relative flex flex-col items-center justify-center p-4 overflow-hidden">
-                      <span className="absolute top-3 left-3 z-10 rounded-md bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold text-zinc-950">
-                        生成结果 ({displayW}×{displayH})
+                    <div className="relative flex flex-col items-center justify-center overflow-hidden rounded-2xl bg-white/[0.02]">
+                      <span className="absolute top-3 left-3 z-10 rounded-full bg-white/90 px-2.5 py-0.5 text-[10px] font-medium text-zinc-950 backdrop-blur-xl">
+                        成片 ({displayW}×{displayH})
                       </span>
                       <img
                         ref={sideGenImgRef}
                         src={imgSrc}
-                        alt="生成结果"
+                        alt="成片"
                         draggable={false}
                         onLoad={(e) =>
                           setNaturalDim({
@@ -786,7 +764,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                             h: e.currentTarget.naturalHeight,
                           })
                         }
-                        className="max-h-full max-w-full object-contain rounded-md shadow-xl will-change-transform"
+                        className="max-h-full max-w-full object-contain rounded-xl shadow-xl will-change-transform"
                       />
                     </div>
                   </div>
@@ -803,7 +781,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                         h: e.currentTarget.naturalHeight,
                       })
                     }
-                    className="max-h-[92%] max-w-[92%] object-contain rounded-md shadow-2xl will-change-transform"
+                    className="max-h-[92%] max-w-[92%] object-contain rounded-xl shadow-2xl will-change-transform"
                   />
                 )}
               </div>
@@ -818,7 +796,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                       if (imageIndex > 0) onChangeImageIndex(imageIndex - 1)
                       else if (onNavigateRecord) onNavigateRecord(-1)
                     }}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white border border-white/10 hover:bg-black/90 disabled:opacity-20 cursor-pointer transition-opacity"
+                    className="absolute left-4 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-xl hover:bg-black/80 disabled:opacity-20 cursor-pointer transition-opacity"
                     aria-label="上一张"
                   >
                     <ChevronLeft className="h-5 w-5" />
@@ -831,7 +809,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                         onChangeImageIndex(imageIndex + 1)
                       else if (onNavigateRecord) onNavigateRecord(1)
                     }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white border border-white/10 hover:bg-black/90 disabled:opacity-20 cursor-pointer transition-opacity"
+                    className="absolute right-4 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-xl hover:bg-black/80 disabled:opacity-20 cursor-pointer transition-opacity"
                     aria-label="下一张"
                   >
                     <ChevronRight className="h-5 w-5" />
@@ -840,9 +818,9 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
               )}
             </div>
 
-            {/* Bottom Filmstrip across galleryRecords */}
+            {/* Borderless Filmstrip */}
             {galleryRecords.length > 1 && onSelectRecord && (
-              <div className="flex items-center gap-1.5 overflow-x-auto border-t border-zinc-800/90 bg-zinc-950 px-4 py-2 studio-scroll">
+              <div className="flex items-center gap-2 overflow-x-auto px-5 py-3 studio-scroll">
                 {galleryRecords.slice(0, 40).map((item) => {
                   const thumb = item.images?.[0]
                   if (!thumb) return null
@@ -856,10 +834,10 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                       type="button"
                       onClick={() => onSelectRecord(item)}
                       className={cn(
-                        "relative h-12 w-12 shrink-0 rounded-lg overflow-hidden border transition-all cursor-pointer",
+                        "relative h-12 w-12 shrink-0 rounded-xl overflow-hidden transition-all cursor-pointer",
                         selected
-                          ? "border-amber-400 ring-2 ring-amber-400/50 scale-105"
-                          : "border-zinc-800 opacity-55 hover:opacity-100"
+                          ? "ring-2 ring-white opacity-100 scale-105"
+                          : "opacity-45 hover:opacity-85"
                       )}
                     >
                       <img
@@ -875,81 +853,72 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
             )}
           </div>
 
-          {/* Right Collapsible EXIF & Asset Inspector */}
+          {/* Right Tonal Inspector (Zero Hard Borders) */}
           {inspectorOpen && (
-            <div className="flex flex-col justify-between border-t lg:border-t-0 lg:border-l border-zinc-800/90 bg-zinc-900/95 p-4 max-h-[68vh] overflow-y-auto studio-scroll">
+            <div className="flex flex-col justify-between bg-white/[0.025] p-5 max-h-[70vh] overflow-y-auto studio-scroll">
               <div className="space-y-4">
-                {/* Primary Workflow Actions */}
                 <div className="grid grid-cols-2 gap-2">
-                  <Button
+                  <button
                     type="button"
-                    variant="studio"
-                    size="sm"
                     onClick={() => {
                       onReuseRecord(record, true)
                       onClose()
                     }}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-full bg-white text-zinc-950 text-xs font-medium hover:bg-white/90 transition-colors cursor-pointer"
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
-                    一键做同款
-                  </Button>
-                  <Button
+                    复用参数
+                  </button>
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
-                    className="border-zinc-700 bg-zinc-800/70 text-zinc-100 hover:bg-zinc-800"
                     onClick={() => {
                       onUseGeneratedAsRef(activeImg, record)
                       onClose()
                     }}
+                    className="inline-flex h-9 items-center justify-center gap-1.5 rounded-full bg-white/[0.08] text-zinc-100 text-xs font-medium hover:bg-white/[0.14] transition-colors cursor-pointer"
                   >
-                    <ImagePlus className="h-3.5 w-3.5 text-amber-400" />
-                    设为参考图
-                  </Button>
+                    <ImagePlus className="h-3.5 w-3.5" />
+                    设为参考
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
-                  <Button
+                  <button
                     type="button"
-                    variant="outline"
-                    size="sm"
                     disabled={copyingImg}
-                    className="border-zinc-700 bg-zinc-900 text-zinc-200 hover:bg-zinc-800"
                     onClick={handleCopyImage}
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-white/[0.05] text-zinc-200 text-xs font-medium hover:bg-white/[0.1] transition-colors cursor-pointer"
                   >
                     <Copy className="h-3.5 w-3.5" />
-                    {copyingImg ? "复制中..." : "复制图像"}
-                  </Button>
+                    {copyingImg ? "复制中" : "复制图像"}
+                  </button>
                   <a
                     href={imgSrc}
                     download={activeImg.file_name || `${record.id}.png`}
-                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 text-xs font-medium text-zinc-200 hover:bg-zinc-800 transition-colors"
+                    className="inline-flex h-8 items-center justify-center gap-1.5 rounded-full bg-white/[0.05] text-zinc-200 text-xs font-medium hover:bg-white/[0.1] transition-colors"
                   >
                     <Download className="h-3.5 w-3.5" />
-                    保存原图
+                    下载原图
                   </a>
                 </div>
 
-                {/* Project Album Assignment */}
+                {/* Album Assignment */}
                 {onOrganizeRecord && (
-                  <div className="space-y-1.5 rounded-xl border border-zinc-800 bg-zinc-950/60 p-2.5">
-                    <div className="flex items-center justify-between text-[11px] text-zinc-400">
-                      <span className="flex items-center gap-1.5 font-medium text-zinc-300">
-                        <FolderKanban className="h-3.5 w-3.5 text-amber-400" />
-                        归属项目画册
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                  <div className="space-y-2 rounded-2xl bg-white/[0.04] p-3.5">
+                    <span className="text-[11px] font-medium text-zinc-400">
+                      画册
+                    </span>
+                    <div className="flex flex-wrap gap-1.5">
                       <button
                         type="button"
                         onClick={() =>
                           onOrganizeRecord(record.id, { project_id: "" })
                         }
                         className={cn(
-                          "rounded-md border px-2 py-0.5 text-[11px] transition-colors cursor-pointer",
+                          "rounded-full px-2.5 py-1 text-[11px] transition-colors cursor-pointer",
                           !record.project_id
-                            ? "border-zinc-500 bg-zinc-800 text-white font-medium"
-                            : "border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                            ? "bg-white text-zinc-950 font-medium"
+                            : "bg-white/[0.05] text-zinc-400 hover:text-zinc-200"
                         )}
                       >
                         未归档
@@ -967,10 +936,10 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                               onOrganizeRecord(record.id, { project_id: p.id })
                             }
                             className={cn(
-                              "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] transition-colors cursor-pointer",
+                              "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] transition-colors cursor-pointer",
                               active
-                                ? "border-amber-500/60 bg-amber-500/15 text-amber-300 font-medium"
-                                : "border-zinc-800 text-zinc-400 hover:text-zinc-200"
+                                ? "bg-white text-zinc-950 font-medium"
+                                : "bg-white/[0.05] text-zinc-400 hover:text-zinc-200"
                             )}
                           >
                             <span
@@ -984,42 +953,42 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   </div>
                 )}
 
-                {/* Prompt Box */}
+                {/* Prompt Well */}
                 <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                      Prompt 画面描述词
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[11px] font-medium text-zinc-400">
+                      提示词
                     </span>
                     <button
                       type="button"
                       onClick={() => onCopyText(record.prompt, "已复制提示词")}
-                      className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center gap-1 cursor-pointer"
+                      className="text-[11px] text-zinc-300 hover:text-white flex items-center gap-1 cursor-pointer"
                     >
                       <Copy className="h-3 w-3" />
                       复制
                     </button>
                   </div>
-                  <div className="max-h-40 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-950/80 p-3 text-xs leading-relaxed text-zinc-200 whitespace-pre-wrap studio-scroll">
+                  <div className="max-h-40 overflow-y-auto rounded-2xl bg-white/[0.04] p-3.5 text-xs leading-relaxed text-zinc-200 whitespace-pre-wrap studio-scroll">
                     {record.prompt || "(无提示词)"}
                   </div>
                 </div>
 
-                {/* Creative Note */}
+                {/* Note Well */}
                 {onOrganizeRecord && (
                   <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">
-                        创作批注 / 选片备注
+                    <div className="flex items-center justify-between px-1">
+                      <span className="text-[11px] font-medium text-zinc-400">
+                        备注
                       </span>
                       {noteDraft.trim() !== (record.note || "").trim() && (
                         <button
                           type="button"
                           disabled={savingNote}
                           onClick={handleSaveNote}
-                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-400 hover:text-amber-300 cursor-pointer"
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-white hover:opacity-80 cursor-pointer"
                         >
                           <Check className="h-3 w-3" />
-                          保存备注
+                          保存
                         </button>
                       )}
                     </div>
@@ -1027,14 +996,14 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                       rows={2}
                       value={noteDraft}
                       onChange={(e) => setNoteDraft(e.target.value)}
-                      placeholder="记录本张选片亮点或微调想法..."
-                      className="w-full resize-none rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/50"
+                      placeholder="添加选片备注..."
+                      className="w-full resize-none rounded-2xl bg-white/[0.04] px-3.5 py-2.5 text-xs text-zinc-200 placeholder:text-zinc-500 focus:outline-none focus:bg-white/[0.06]"
                     />
                   </div>
                 )}
 
-                {/* EXIF Parameter Specs */}
-                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 space-y-1.5 text-xs">
+                {/* EXIF Specs */}
+                <div className="rounded-2xl bg-white/[0.04] p-3.5 space-y-2 text-xs">
                   <div className="flex justify-between">
                     <span className="text-zinc-500">请求尺寸</span>
                     <span className="font-mono text-zinc-200">
@@ -1042,29 +1011,29 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-zinc-500">实测像素</span>
+                    <span className="text-zinc-500">实际像素</span>
                     <span className="font-mono text-zinc-200 tabular-nums">
                       {displayW} × {displayH}
                     </span>
                   </div>
                   {record.duration_ms ? (
                     <div className="flex justify-between">
-                      <span className="text-zinc-500">生成耗时</span>
-                      <span className="font-mono text-emerald-400 tabular-nums">
+                      <span className="text-zinc-500">耗时</span>
+                      <span className="font-mono text-zinc-200 tabular-nums">
                         {formatDurationSeconds(record.duration_ms / 1000)}
                       </span>
                     </div>
                   ) : null}
                   {record.quality && (
                     <div className="flex justify-between">
-                      <span className="text-zinc-500">清晰质量</span>
+                      <span className="text-zinc-500">画质</span>
                       <span className="font-mono text-zinc-200">
                         {record.quality}
                       </span>
                     </div>
                   )}
                   <div className="flex justify-between">
-                    <span className="text-zinc-500">生成时间</span>
+                    <span className="text-zinc-500">时间</span>
                     <span className="font-mono text-zinc-300 tabular-nums">
                       {formatUnixTime(record.create_time)}
                     </span>
@@ -1074,7 +1043,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     <button
                       type="button"
                       onClick={() => onCopyText(record.id, "已复制任务 ID")}
-                      className="font-mono text-[11px] text-zinc-400 hover:text-amber-400 truncate cursor-pointer"
+                      className="font-mono text-[11px] text-zinc-400 hover:text-white truncate cursor-pointer"
                     >
                       {record.id}
                     </button>
@@ -1087,15 +1056,15 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     <button
                       type="button"
                       onClick={() => onOpenLocalFolder(activeImg.local_file)}
-                      className="w-full flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors cursor-pointer"
+                      className="w-full flex items-center justify-between rounded-2xl bg-white/[0.04] px-3.5 py-2.5 text-xs text-zinc-300 hover:bg-white/[0.08] hover:text-white transition-colors cursor-pointer"
                     >
-                      <span className="flex items-center gap-1.5 truncate">
-                        <FolderOpen className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+                      <span className="flex items-center gap-2 truncate">
+                        <FolderOpen className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                         <span className="truncate font-mono text-[11px]">
-                          duomi_data/images/{activeImg.local_file}
+                          {activeImg.local_file}
                         </span>
                       </span>
-                      <span className="text-[11px] text-amber-400 shrink-0 ml-2">
+                      <span className="text-[11px] text-zinc-400 shrink-0 ml-2">
                         定位
                       </span>
                     </button>
@@ -1106,29 +1075,28 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                       href={activeImg.remote_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="w-full flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                      className="w-full flex items-center justify-between rounded-2xl bg-white/[0.04] px-3.5 py-2.5 text-xs text-zinc-400 hover:bg-white/[0.08] hover:text-zinc-200 transition-colors"
                     >
-                      <span className="flex items-center gap-1.5">
+                      <span className="flex items-center gap-2">
                         <ExternalLink className="h-3.5 w-3.5" />
-                        打开远程 CDN 源链接
+                        源链接
                       </span>
-                      <span className="text-[10px]">新窗口</span>
+                      <span className="text-[10px]">打开</span>
                     </a>
                   )}
                 </div>
 
                 {record.raw_response && (
-                  <div className="space-y-1.5">
+                  <div className="space-y-1.5 px-1">
                     <button
                       type="button"
                       onClick={() => setShowRawJson((p) => !p)}
-                      className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                      className="text-[11px] text-zinc-500 hover:text-zinc-300 cursor-pointer"
                     >
-                      <Grid className="h-3 w-3" />
-                      {showRawJson ? "收起原始 API JSON" : "查看原始 API JSON 响应"}
+                      {showRawJson ? "收起 JSON" : "查看原始 JSON"}
                     </button>
                     {showRawJson && (
-                      <pre className="max-h-36 overflow-auto rounded-lg border border-zinc-800 bg-black p-2.5 text-[10px] font-mono text-zinc-300 studio-scroll">
+                      <pre className="max-h-36 overflow-auto rounded-2xl bg-black/70 p-3 text-[10px] font-mono text-zinc-300 studio-scroll">
                         {record.raw_response}
                       </pre>
                     )}

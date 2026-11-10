@@ -104,12 +104,12 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
       if (items.length === 0) return
       gsap.fromTo(
         items,
-        { autoAlpha: 0, x: -6 },
+        { autoAlpha: 0, y: 4 },
         {
           autoAlpha: 1,
-          x: 0,
-          duration: 0.22,
-          stagger: 0.014,
+          y: 0,
+          duration: 0.24,
+          stagger: 0.012,
           ease: STUDIO_EASE.out,
           clearProps: "transform,opacity,visibility",
         }
@@ -127,101 +127,89 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
     const base: CommandAction[] = [
       {
         id: "nav-imagine",
-        group: "工作区导航",
-        title: "前往 创作工作台 (Imagine)",
-        subtitle: "悬浮灵感舱 + 原生比例瀑布流画廊",
-        shortcut: "Alt+1",
+        group: "导航",
+        title: "创作",
+        shortcut: "⌥1",
         icon: Sparkles,
         run: closeAnd(() => onSelectTab("imagine")),
       },
       {
         id: "nav-gallery",
-        group: "工作区导航",
-        title: "前往 作品资产与项目画册 (Assets)",
-        subtitle: "按项目画册分类整理、筛选与批量导出",
-        shortcut: "Alt+2",
+        group: "导航",
+        title: "画册",
+        shortcut: "⌥2",
         icon: Images,
         run: closeAnd(() => onSelectTab("gallery")),
       },
       {
         id: "nav-recipes",
-        group: "工作区导航",
-        title: "前往 灵感配方广场 (Recipes)",
-        subtitle: "一键套用精选多人物写实、电商静物与 3D 贴纸配方",
-        shortcut: "Alt+3",
+        group: "导航",
+        title: "配方",
+        shortcut: "⌥3",
         icon: Compass,
         run: closeAnd(() => onSelectTab("recipes")),
       },
       {
         id: "nav-analytics",
-        group: "工作区导航",
-        title: "前往 队列监控与存储管家 (Telemetry)",
-        subtitle: "查看生成速度统计与 duomi_data 磁盘缓存清理",
-        shortcut: "Alt+4",
+        group: "导航",
+        title: "状态",
+        shortcut: "⌥4",
         icon: Activity,
         run: closeAnd(() => onSelectTab("analytics")),
       },
       {
         id: "tool-zen",
-        group: "专业创作工具",
-        title: "打开 结构化提示词工程台 (Prompt Architect)",
-        subtitle: "双栏大屏编写长提示词、插入镜头焦段与空间透视护栏",
+        group: "工具",
+        title: "沉浸长文工作台",
         icon: Wand2,
         run: closeAnd(onOpenZenWorkbench),
       },
       {
         id: "tool-layout",
-        group: "专业创作工具",
-        title:
-          layoutMode === "omnibar"
-            ? "切换为 专业双栏参数台模式 (Split Pro)"
-            : "切换为 沉浸式悬浮灵感舱模式 (Omnibar)",
-        subtitle: "随时在即梦式悬浮顶栏与固定左侧面板间切换",
+        group: "工具",
+        title: layoutMode === "omnibar" ? "切换为双栏视图" : "切换为沉浸视图",
         icon: layoutMode === "omnibar" ? LayoutPanelLeft : PanelTop,
         run: closeAnd(onToggleLayoutMode),
       },
       {
         id: "tool-theme",
-        group: "专业创作工具",
-        title:
-          theme === "dark"
-            ? "切换为 美术馆宣纸浅色外观 (Light)"
-            : "切换为 电影暗房深色外观 (Darkroom)",
+        group: "工具",
+        title: theme === "dark" ? "切换为浅色外观" : "切换为深色外观",
         icon: theme === "dark" ? Sun : Moon,
         run: closeAnd(onToggleTheme),
       },
       {
         id: "sys-key",
-        group: "系统与存储",
-        title: "配置 多米 API 密钥与参考图图床策略",
+        group: "系统",
+        title: "设置与 API 密钥",
         icon: KeyRound,
         run: closeAnd(() => onOpenSettings("api")),
       },
       {
         id: "sys-import",
-        group: "系统与存储",
-        title: "按 Task ID 查询并归档历史异步任务",
+        group: "系统",
+        title: "查询历史任务 ID",
         icon: Search,
         run: closeAnd(onOpenImportTask),
       },
       {
         id: "sys-dev",
-        group: "系统与存储",
-        title: "查看当前请求 JSON / cURL / CLI 命令预览",
+        group: "系统",
+        title: "查看请求代码预览",
         icon: Code2,
         run: closeAnd(onOpenDevPreview),
       },
       {
         id: "sys-folder",
-        group: "系统与存储",
-        title: "打开本地便携数据目录 (duomi_data/)",
+        group: "系统",
+        title: "打开本地数据目录",
         icon: FolderOpen,
         run: closeAnd(onOpenLocalFolder),
       },
       {
         id: "sys-zip",
-        group: "系统与存储",
-        title: "一键打包下载全部原图与元数据 (.zip)",
+        group: "系统",
+        title: "打包导出全部原图 (.zip)",
         icon: Archive,
         run: closeAnd(() => {
           window.location.href = "/api/records/export-zip"
@@ -231,8 +219,8 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
 
     const modelCmds: CommandAction[] = models.map((m) => ({
       id: `model-${m.id}`,
-      group: "快速切换模型",
-      title: `切换模型为 ${m.name}`,
+      group: "模型",
+      title: m.name,
       subtitle: `${m.badge} · ${m.price}`,
       icon: Sparkles,
       run: closeAnd(() => {
@@ -243,9 +231,9 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
 
     const recipeCmds: CommandAction[] = recipes.slice(0, 8).map((r) => ({
       id: `recipe-${r.id}`,
-      group: "快速装填配方",
-      title: `套用配方：${r.title}`,
-      subtitle: r.summary || r.category,
+      group: "配方",
+      title: r.title,
+      subtitle: r.category,
       icon: Compass,
       run: closeAnd(() => onUseRecipe(r)),
     }))
@@ -305,34 +293,33 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl p-0 overflow-hidden border-border bg-card shadow-2xl top-[42%]">
-        <DialogTitle className="sr-only">全局快捷命令面板</DialogTitle>
+      <DialogContent className="max-w-lg p-2.5 overflow-hidden top-[40%]">
+        <DialogTitle className="sr-only">搜索与快捷操作</DialogTitle>
         <DialogDescription className="sr-only">
-          搜索并快速执行页面跳转、模型切换、布局模式切换或配方套用
+          快速跳转页面、切换模型或套用配方
         </DialogDescription>
 
-        {/* Search Input */}
-        <div className="flex items-center gap-3 border-b border-border px-4 py-3 pr-12">
-          <Search className="h-4 w-4 text-amber-500 shrink-0" />
+        {/* Spotlight Search Input (Borderless) */}
+        <div className="flex items-center gap-3 rounded-2xl bg-foreground/[0.045] dark:bg-white/[0.06] px-3.5 py-2.5 mr-9">
+          <Search className="h-4 w-4 text-muted-foreground shrink-0" />
           <input
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="输入指令、模型名、配方或功能关键词..."
-            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            placeholder="搜索功能、模型或配方..."
+            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground/65 focus:outline-none"
           />
-          <span className="studio-kbd hidden sm:inline-flex">ESC</span>
         </div>
 
-        {/* Command Results */}
+        {/* Results */}
         <div
           ref={listRef}
-          className="max-h-[380px] overflow-y-auto p-2 studio-scroll"
+          className="max-h-[360px] overflow-y-auto pt-1 studio-scroll"
         >
           {filtered.length === 0 ? (
             <div className="py-10 text-center text-xs text-muted-foreground">
-              没有找到匹配的快捷指令
+              无匹配项
             </div>
           ) : (
             filtered.map((cmd, idx) => {
@@ -344,7 +331,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
               return (
                 <React.Fragment key={cmd.id}>
                   {showGroupHeader && (
-                    <div className="px-2.5 pt-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    <div className="px-3 pt-3 pb-1 text-[11px] font-medium text-muted-foreground">
                       {cmd.group}
                     </div>
                   )}
@@ -353,48 +340,45 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
                     onMouseEnter={() => setActiveIndex(idx)}
                     onClick={cmd.run}
                     className={cn(
-                      "cmd-palette-item flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors cursor-pointer",
+                      "cmd-palette-item flex w-full items-center justify-between gap-3 rounded-2xl px-3 py-2 text-left transition-colors cursor-pointer",
                       selected
-                        ? "bg-amber-500/15 text-foreground"
-                        : "text-foreground/85 hover:bg-secondary/60"
+                        ? "bg-foreground/[0.07] dark:bg-white/[0.1] text-foreground"
+                        : "text-foreground/85 hover:bg-foreground/[0.04]"
                     )}
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <div
                         className={cn(
-                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border",
+                          "flex h-7 w-7 shrink-0 items-center justify-center rounded-full transition-colors",
                           selected
-                            ? "border-amber-500/40 bg-amber-500 text-zinc-950"
-                            : "border-border bg-secondary/50 text-muted-foreground"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-foreground/[0.05] text-muted-foreground"
                         )}
                       >
                         <Icon className="h-3.5 w-3.5" />
                       </div>
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium truncate">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs font-medium truncate">
                           {cmd.title}
-                        </div>
+                        </span>
                         {cmd.subtitle && (
-                          <div className="text-[11px] text-muted-foreground truncate">
+                          <span className="text-[11px] text-muted-foreground truncate">
                             {cmd.subtitle}
-                          </div>
+                          </span>
                         )}
                       </div>
                     </div>
 
                     {cmd.shortcut && (
-                      <span className="studio-kbd shrink-0">{cmd.shortcut}</span>
+                      <span className="font-mono text-[11px] text-muted-foreground shrink-0">
+                        {cmd.shortcut}
+                      </span>
                     )}
                   </button>
                 </React.Fragment>
               )
             })
           )}
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border bg-secondary/30 px-4 py-2 text-[11px] text-muted-foreground">
-          <span>↑↓ 选择指令 · Enter 立即执行</span>
-          <span className="font-mono">Ctrl + K</span>
         </div>
       </DialogContent>
     </Dialog>

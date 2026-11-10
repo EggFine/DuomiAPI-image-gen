@@ -5,11 +5,8 @@ import {
   Check,
   Copy,
   Eraser,
-  History,
   Plus,
   Search,
-  Sparkles,
-  Wand2,
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -129,7 +126,7 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
       await onSaveCustomTemplate({
         id: `custom_${Date.now()}`,
         title: recipeTitle.trim(),
-        category: "我的私藏配方",
+        category: "个人收藏",
         summary: prompt.trim().slice(0, 68),
         prompt: prompt.trim(),
         model: currentModel,
@@ -148,98 +145,76 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[95vw] sm:max-w-5xl p-0 overflow-hidden border-border bg-card">
-        <DialogTitle className="sr-only">
-          沉浸式结构化提示词工程台 (Zen Prompt Architect)
-        </DialogTitle>
+      <DialogContent className="max-w-[95vw] sm:max-w-5xl p-0 overflow-hidden">
+        <DialogTitle className="sr-only">长文工作台</DialogTitle>
         <DialogDescription className="sr-only">
-          编写长篇结构化提示词，插入参考图编号、摄影镜头与空间透视护栏积木
+          编写结构化提示词并插入常用空间与摄影描述词条
         </DialogDescription>
 
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-3.5 pr-12">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/15 text-amber-500">
-              <Wand2 className="h-4 w-4" />
-            </div>
-            <div>
-              <h2 className="text-sm font-semibold tracking-tight">
-                结构化提示词工程台 (Prompt Architect)
-              </h2>
-              <p className="text-[11px] text-muted-foreground">
-                专为多人物身份锁定、严谨物理空间透视与精细商业摄影长提示词打造
-              </p>
-            </div>
-          </div>
+        {/* Minimalist Header */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-6 pt-5 pb-3 pr-14">
+          <h2 className="text-[16px] font-semibold tracking-tight text-foreground">
+            长文工作台
+          </h2>
 
-          <div className="flex items-center gap-2 text-[11px] font-mono text-muted-foreground tabular-nums">
+          <div className="flex items-center gap-2 text-xs font-mono text-muted-foreground tabular-nums">
             <span>{stats.lines} 行</span>
-            <span>·</span>
-            <span>{stats.chars} 字符</span>
-            <span>·</span>
+            <span className="opacity-40">·</span>
+            <span>{stats.chars} 字</span>
+            <span className="opacity-40">·</span>
             <span
               className={cn(
                 stats.utf8Bytes > 12000
-                  ? "text-amber-500 font-semibold"
+                  ? "text-amber-600 dark:text-amber-400 font-medium"
                   : "text-muted-foreground"
               )}
             >
-              {(stats.utf8Bytes / 1024).toFixed(2)} KB UTF-8
+              {(stats.utf8Bytes / 1024).toFixed(1)} KB
             </span>
           </div>
         </div>
 
-        {/* Main 2-Column Split */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] h-[68vh] min-h-[440px]">
-          {/* Left: Spacious Zen Editor */}
-          <div className="flex flex-col border-b lg:border-b-0 lg:border-r border-border overflow-hidden">
-            {/* Reference Tag & Utility Strip */}
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 bg-secondary/30 px-4 py-2">
+        {/* Main 2-Column Split — separated by tonal surface, zero dividing lines */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 px-6 h-[66vh] min-h-[420px]">
+          {/* Left: Zen Editor */}
+          <div className="flex flex-col rounded-2xl bg-foreground/[0.03] overflow-hidden">
+            {/* Quiet Utility Strip */}
+            <div className="flex flex-wrap items-center justify-between gap-2 px-4 pt-3 pb-1.5">
               <div className="flex flex-wrap items-center gap-1.5">
-                {referenceImages.length > 0 ? (
-                  referenceImages.map((r, i) => (
-                    <button
-                      key={r.id}
-                      type="button"
-                      onClick={() => insertAtCursor(`图${i + 1}`, false)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-background px-2 py-0.5 text-[11px] font-medium hover:border-amber-500/50 transition-colors cursor-pointer"
-                    >
-                      <img
-                        src={r.preview}
-                        alt=""
-                        className="h-4 w-4 rounded-xs object-cover"
-                      />
-                      <span className="font-mono text-amber-600 dark:text-amber-400">
-                        + @图{i + 1}
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <span className="text-[11px] text-muted-foreground">
-                    提示：点击右侧摄影与空间护栏积木即可追加至光标处
-                  </span>
-                )}
+                {referenceImages.map((r, i) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => insertAtCursor(`图${i + 1}`, false)}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-background/80 px-2.5 py-1 text-[11px] font-medium text-foreground shadow-2xs hover:bg-background transition-colors cursor-pointer"
+                  >
+                    <img
+                      src={r.preview}
+                      alt=""
+                      className="h-4 w-4 rounded-full object-cover"
+                    />
+                    <span className="font-mono">@图{i + 1}</span>
+                  </button>
+                ))}
               </div>
 
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5 ml-auto">
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-[11px]"
+                  size="xs"
                   onClick={handleSmartFormat}
                   title="清理多余空行与行尾空格"
                 >
                   <AlignLeft className="h-3.5 w-3.5" />
-                  整理排版
+                  排版
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-[11px]"
+                  size="xs"
                   disabled={!prompt}
-                  onClick={() => onCopyText(prompt, "已复制完整提示词")}
+                  onClick={() => onCopyText(prompt, "已复制提示词")}
                 >
                   <Copy className="h-3.5 w-3.5" />
                   复制
@@ -247,8 +222,8 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+                  size="xs"
+                  className="text-muted-foreground hover:text-destructive"
                   disabled={!prompt}
                   onClick={() => onChangePrompt("")}
                 >
@@ -258,31 +233,28 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
               </div>
             </div>
 
-            {/*Save as Recipe Inline Bar*/}
+            {/* Save as Recipe Inline Bar */}
             {showSaveBar && (
-              <div className="flex items-center gap-2 border-b border-amber-500/30 bg-amber-500/8 px-4 py-2">
+              <div className="mx-4 mt-1 flex items-center gap-2 rounded-2xl bg-background/85 p-2 shadow-xs">
                 <Input
                   value={recipeTitle}
                   onChange={(e) => setRecipeTitle(e.target.value)}
-                  placeholder="输入配方标题（如：高校机房三人实训自然抓拍）..."
-                  className="h-8 text-xs flex-1"
+                  placeholder="配方名称..."
+                  className="h-8 text-xs flex-1 bg-transparent"
                 />
                 <Button
                   type="button"
-                  variant="studio"
-                  size="sm"
-                  className="h-8 text-xs"
+                  size="xs"
                   disabled={!recipeTitle.trim() || savingRecipe}
                   onClick={handleConfirmSaveRecipe}
                 >
                   <Check className="h-3.5 w-3.5" />
-                  确认保存
+                  保存
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
-                  className="h-8 text-xs"
+                  size="xs"
                   onClick={() => setShowSaveBar(false)}
                 >
                   取消
@@ -290,52 +262,52 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
               </div>
             )}
 
-            {/* Large Clean Textarea */}
+            {/* Spacious Clean Textarea */}
             <textarea
               ref={textareaRef}
               value={prompt}
               onChange={(e) => onChangePrompt(e.target.value)}
-              placeholder={`建议按清晰层级组织复杂画面：\n一、人物身份与参考选择（保留特征、服装细节）\n二、场景环境与人物自然互动关系\n三、桌椅设备真实空间轴线与人体工学约束\n四、镜头焦段、自然光线与原生画质护栏...`}
-              className="flex-1 w-full resize-none bg-transparent p-5 text-sm leading-7 text-foreground placeholder:text-muted-foreground/55 focus:outline-none studio-scroll"
+              placeholder="从容撰写主体、空间结构与光影细节，点击右侧词条可插入光标处..."
+              className="flex-1 w-full resize-none bg-transparent px-5 py-4 text-[14px] leading-7 text-foreground placeholder:text-muted-foreground/45 focus:outline-none studio-scroll"
             />
           </div>
 
-          {/* Right: Structured Prompt Building Blocks & History */}
-          <div className="flex flex-col bg-secondary/20 overflow-hidden">
-            <div className="grid grid-cols-2 border-b border-border p-1.5 gap-1 bg-background/50">
-              <button
-                type="button"
-                onClick={() => setRightPane("blocks")}
-                className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-colors cursor-pointer",
-                  rightPane === "blocks"
-                    ? "bg-foreground text-background shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                专业护栏积木
-              </button>
-              <button
-                type="button"
-                onClick={() => setRightPane("history")}
-                className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium transition-colors cursor-pointer",
-                  rightPane === "history"
-                    ? "bg-foreground text-background shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground"
-                )}
-              >
-                <History className="h-3.5 w-3.5" />
-                历史记录 ({promptHistory.length})
-              </button>
+          {/* Right: Building Blocks & History */}
+          <div className="flex flex-col rounded-2xl bg-foreground/[0.03] overflow-hidden">
+            <div className="p-2.5 pb-1.5">
+              <div className="grid grid-cols-2 rounded-full bg-foreground/[0.05] p-1">
+                <button
+                  type="button"
+                  onClick={() => setRightPane("blocks")}
+                  className={cn(
+                    "rounded-full py-1 text-xs font-medium transition-all cursor-pointer",
+                    rightPane === "blocks"
+                      ? "bg-card text-foreground shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  词条
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRightPane("history")}
+                  className={cn(
+                    "rounded-full py-1 text-xs font-medium transition-all cursor-pointer",
+                    rightPane === "history"
+                      ? "bg-card text-foreground shadow-2xs"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  历史 ({promptHistory.length})
+                </button>
+              </div>
             </div>
 
             {rightPane === "blocks" ? (
-              <div className="flex-1 overflow-y-auto p-3.5 space-y-4 studio-scroll">
+              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-4 studio-scroll">
                 {PROMPT_ARCHITECT_GROUPS.map((grp) => (
-                  <div key={grp.category} className="space-y-2">
-                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  <div key={grp.category} className="space-y-1.5">
+                    <div className="px-1 text-[11px] font-medium text-muted-foreground">
                       {grp.category}
                     </div>
                     <div className="space-y-1.5">
@@ -344,13 +316,13 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                           key={item.label}
                           type="button"
                           onClick={() => insertAtCursor(item.snippet, true)}
-                          className="group w-full text-left rounded-xl border border-border bg-card p-2.5 hover:border-amber-500/50 transition-all cursor-pointer"
+                          className="group w-full text-left rounded-2xl bg-background/70 hover:bg-background p-3 transition-all cursor-pointer"
                         >
                           <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-xs font-medium text-foreground group-hover:text-amber-600 dark:group-hover:text-amber-400">
+                            <span className="text-xs font-medium text-foreground">
                               {item.label}
                             </span>
-                            <Plus className="h-3.5 w-3.5 text-muted-foreground group-hover:text-amber-500 shrink-0" />
+                            <Plus className="h-3.5 w-3.5 text-muted-foreground/60 group-hover:text-foreground transition-colors shrink-0" />
                           </div>
                           <p className="text-[11px] leading-relaxed text-muted-foreground line-clamp-2">
                             {item.snippet}
@@ -363,32 +335,32 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
               </div>
             ) : (
               <div className="flex-1 flex flex-col overflow-hidden">
-                <div className="p-2.5 border-b border-border/60">
+                <div className="px-3 py-1.5">
                   <div className="relative">
-                    <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       value={historySearch}
                       onChange={(e) => setHistorySearch(e.target.value)}
-                      placeholder="搜索历史提示词..."
-                      className="h-8 pl-8 text-xs"
+                      placeholder="搜索历史..."
+                      className="h-8 pl-8 text-xs rounded-full"
                     />
                   </div>
                 </div>
-                <div className="flex-1 overflow-y-auto p-3 space-y-2 studio-scroll">
+                <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 studio-scroll">
                   {filteredHistory.length === 0 ? (
                     <div className="py-12 text-center text-xs text-muted-foreground">
-                      暂无匹配的历史提示词记录
+                      暂无记录
                     </div>
                   ) : (
                     filteredHistory.map((h) => (
                       <div
                         key={h.id}
-                        className="rounded-xl border border-border bg-card p-2.5 space-y-1.5 hover:border-amber-500/40 transition-colors"
+                        className="rounded-2xl bg-background/70 hover:bg-background p-3 space-y-2 transition-colors"
                       >
                         <div className="flex items-center justify-between gap-1.5">
                           <Badge
-                            variant="outline"
-                            className="text-[10px] font-mono px-1.5 py-0"
+                            variant="secondary"
+                            className="text-[10px] font-mono px-2 py-0"
                           >
                             {h.model.replace("gpt-image-", "")} · {h.size}
                           </Badge>
@@ -399,24 +371,24 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                         <p className="text-xs text-foreground/90 line-clamp-3 leading-relaxed">
                           {h.prompt}
                         </p>
-                        <div className="flex justify-end gap-1.5 pt-0.5">
+                        <div className="flex justify-end gap-1.5">
                           <Button
                             type="button"
                             variant="outline"
-                            size="sm"
-                            className="h-6 px-2 text-[11px]"
+                            size="xs"
+                            className="h-6 px-2.5 text-[11px]"
                             onClick={() => onChangePrompt(h.prompt)}
                           >
-                            覆盖填入
+                            填入
                           </Button>
                           <Button
                             type="button"
                             variant="ghost"
-                            size="sm"
-                            className="h-6 px-2 text-[11px]"
+                            size="xs"
+                            className="h-6 px-2.5 text-[11px]"
                             onClick={() => insertAtCursor(h.prompt, true)}
                           >
-                            追加末尾
+                            追加
                           </Button>
                         </div>
                       </div>
@@ -428,8 +400,8 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
           </div>
         </div>
 
-        {/* Footer */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-card px-5 py-3">
+        {/* Minimalist Footer */}
+        <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-4">
           <Button
             type="button"
             variant="outline"
@@ -437,22 +409,21 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
             disabled={!prompt.trim()}
             onClick={() => setShowSaveBar((p) => !p)}
           >
-            <BookmarkPlus className="h-3.5 w-3.5 text-amber-500" />
-            存为灵感配方
+            <BookmarkPlus className="h-3.5 w-3.5" />
+            存为配方
           </Button>
 
           <div className="flex items-center gap-2">
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => onOpenChange(false)}
             >
-              完成编辑返回工作台
+              完成
             </Button>
             <Button
               type="button"
-              variant="studio"
               size="sm"
               disabled={!prompt.trim()}
               onClick={() => {
@@ -460,8 +431,7 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                 onSubmitGenerate()
               }}
             >
-              <Sparkles className="h-3.5 w-3.5" />
-              立即提交生成
+              生成
             </Button>
           </div>
         </div>

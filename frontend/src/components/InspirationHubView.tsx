@@ -1,18 +1,9 @@
 import React, { useMemo, useRef, useState } from "react"
-import {
-  BookmarkPlus,
-  Check,
-  Compass,
-  Copy,
-  Layers,
-  Plus,
-  Search,
-  Sparkles,
-  Trash2,
-} from "lucide-react"
+import { Check, Copy, Plus, Search, Trash2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Flip,
   gsap,
@@ -37,17 +28,6 @@ interface InspirationHubViewProps {
   onCopyText: (text: string, msg?: string) => void
 }
 
-const CATEGORY_ACCENTS: Record<string, string> = {
-  写实人文: "border-t-amber-500/70",
-  人像精修: "border-t-emerald-500/70",
-  电商视觉: "border-t-sky-500/70",
-  视觉设计: "border-t-rose-500/70",
-  概念插画: "border-t-cyan-500/70",
-  空间建筑: "border-t-orange-500/70",
-  "3D 潮玩": "border-t-teal-500/70",
-  我的私藏配方: "border-t-amber-400",
-}
-
 export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
   builtInTemplates,
   customTemplates,
@@ -66,7 +46,7 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [creating, setCreating] = useState<boolean>(false)
   const [newTitle, setNewTitle] = useState<string>("")
-  const [newCategory, setNewCategory] = useState<string>("我的私藏配方")
+  const [newCategory, setNewCategory] = useState<string>("自定义")
   const [newPrompt, setNewPrompt] = useState<string>("")
 
   const hubRootRef = useRef<HTMLDivElement | null>(null)
@@ -120,12 +100,12 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
     setSelectedCategory(cat)
   }
 
-  // Liquid sliding category pill
+  // Liquid Apple capsule glide across category filters
   useGSAP(
     () => {
       const pill = catPillRef.current
       const activeBtn = catBtnRefs.current[selectedCategory]
-      if (!pill || !activeBtn) return
+      if (!pill || !activeBtn || activeBtn.offsetWidth === 0) return
       const targetX = activeBtn.offsetLeft
       const targetY = activeBtn.offsetTop
       const targetW = activeBtn.offsetWidth
@@ -149,7 +129,7 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
         width: targetW,
         height: targetH,
         autoAlpha: 1,
-        duration: 0.3,
+        duration: 0.34,
         ease: STUDIO_EASE.expo,
         overwrite: "auto",
       })
@@ -157,7 +137,7 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
     { scope: hubRootRef, dependencies: [selectedCategory, categories.length] }
   )
 
-  // Staggered initial card entrance + real GSAP Flip reflow on category switch
+  // Calm staggered initial reveal + GSAP Flip reflow on category switch
   useGSAP(
     () => {
       const grid = gridRef.current
@@ -174,12 +154,12 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
         mountedGridRef.current = true
         gsap.fromTo(
           cards,
-          { autoAlpha: 0, y: 12 },
+          { autoAlpha: 0, y: 10 },
           {
             autoAlpha: 1,
             y: 0,
-            duration: 0.3,
-            stagger: { each: 0.025, amount: 0.2 },
+            duration: 0.34,
+            stagger: { each: 0.02, amount: 0.18 },
             ease: STUDIO_EASE.out,
             clearProps: "transform,opacity,visibility",
           }
@@ -190,21 +170,21 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
       if (flipState) {
         Flip.from(flipState, {
           targets: cards,
-          duration: 0.34,
+          duration: 0.36,
           ease: STUDIO_EASE.expo,
           simple: true,
           scale: false,
-          stagger: 0.014,
+          stagger: 0.012,
           onEnter: (els) =>
             gsap.fromTo(
               els,
-              { autoAlpha: 0, y: 10, scale: 0.97 },
+              { autoAlpha: 0, y: 8, scale: 0.985 },
               {
                 autoAlpha: 1,
                 y: 0,
                 scale: 1,
-                duration: 0.26,
-                stagger: 0.018,
+                duration: 0.28,
+                stagger: 0.015,
                 ease: STUDIO_EASE.out,
                 clearProps: "transform,opacity,visibility",
               }
@@ -216,18 +196,18 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
     { scope: hubRootRef, dependencies: [selectedCategory] }
   )
 
-  // Inline recipe creator drawer smooth reveal via scoped useGSAP
+  // Calm inline creator reveal
   useGSAP(
     () => {
       if (!creating || !creatorRef.current || prefersReducedMotion()) return
       gsap.fromTo(
         creatorRef.current,
-        { autoAlpha: 0, y: -10, scale: 0.985 },
+        { autoAlpha: 0, y: -8, scale: 0.99 },
         {
           autoAlpha: 1,
           y: 0,
           scale: 1,
-          duration: 0.26,
+          duration: 0.3,
           ease: STUDIO_EASE.expo,
           clearProps: "transform,visibility",
         }
@@ -246,7 +226,7 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
     await onSaveCustomTemplate({
       id: `custom_${Date.now()}`,
       title: newTitle.trim(),
-      category: newCategory.trim() || "我的私藏配方",
+      category: newCategory.trim() || "自定义",
       summary: newPrompt.trim().slice(0, 72),
       prompt: newPrompt.trim(),
       model: currentModel,
@@ -263,87 +243,74 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
   return (
     <div
       ref={hubRootRef}
-      className="h-full overflow-y-auto studio-scroll px-4 sm:px-7 py-6 pb-24"
+      className="h-full overflow-y-auto studio-scroll px-5 sm:px-8 lg:px-12 py-8 pb-28"
     >
-      <div className="mx-auto max-w-[1440px] space-y-6">
-        {/* Editorial Header */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-border pb-5">
-          <div className="space-y-1.5">
-            <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-amber-500">
-              <Compass className="h-3.5 w-3.5" />
-              Curated Studio Recipes
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              灵感配方广场
-            </h1>
-            <p className="text-xs text-muted-foreground max-w-2xl leading-relaxed">
-              精选高一致性多人物合影重绘、商业电商静物、透明背景 3D 贴纸、国风中英双语海报等全套出图配方。点击「一键做同款」即可自动装填模型、画幅尺寸、透明通道与完整结构化提示词。
-            </p>
-          </div>
+      <div className="mx-auto max-w-6xl space-y-7">
+        {/* Clean Minimalist Header — Zero Dividing Lines or Marketing Copy */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <h1 className="text-2xl font-semibold tracking-[-0.025em] text-foreground">
+            配方
+          </h1>
 
           <div className="flex flex-wrap items-center gap-2.5">
-            <div className="relative w-60">
-              <Search className="h-3.5 w-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <div className="relative w-56">
+              <Search className="h-3.5 w-3.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground/75" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="搜索风格、场景、标签..."
-                className="h-9 pl-8.5 text-xs"
+                placeholder="搜索配方"
+                className="h-9 rounded-full pl-9 text-xs"
               />
             </div>
             <Button
               type="button"
-              variant="studio"
               size="sm"
-              className="h-9 px-3.5"
+              className="h-9 px-4"
               onClick={handleOpenCreate}
             >
-              <BookmarkPlus className="h-4 w-4" />
-              新建私藏配方
+              <Plus className="h-3.5 w-3.5" />
+              新建配方
             </Button>
           </div>
         </div>
 
-        {/* Inline Recipe Creator Drawer */}
+        {/* Borderless Apple Surface Creator Card */}
         {creating && (
           <div
             ref={creatorRef}
-            className="rounded-2xl border border-amber-500/40 bg-card p-5 shadow-lg space-y-3"
+            className="apple-surface rounded-3xl p-6 space-y-4"
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold flex items-center gap-2">
-                <Plus className="h-4 w-4 text-amber-500" />
-                将当前工作台参数或自定义提示词保存为永久配方
-              </h3>
+              <h3 className="text-sm font-medium text-foreground">新建配方</h3>
               <span className="text-[11px] font-mono text-muted-foreground">
-                默认绑定: {currentModel} · {currentSize}
+                {currentModel} · {currentSize}
               </span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Input
                 value={newTitle}
                 onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="配方名称（如：极简护肤品岩石光影）"
+                placeholder="配方名称"
                 className="sm:col-span-2 h-9 text-xs"
               />
               <Input
                 value={newCategory}
                 onChange={(e) => setNewCategory(e.target.value)}
-                placeholder="分类名称"
+                placeholder="分类"
                 className="h-9 text-xs"
               />
             </div>
-            <textarea
+            <Textarea
               rows={4}
               value={newPrompt}
               onChange={(e) => setNewPrompt(e.target.value)}
-              placeholder="输入完整画面提示词..."
-              className="w-full rounded-xl border border-input bg-background p-3 text-xs leading-relaxed focus:outline-none focus:ring-2 focus:ring-ring"
+              placeholder="完整画面提示词..."
+              className="text-xs leading-relaxed"
             />
             <div className="flex justify-end gap-2">
               <Button
                 type="button"
-                variant="outline"
+                variant="secondary"
                 size="sm"
                 onClick={() => setCreating(false)}
               >
@@ -351,24 +318,23 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
               </Button>
               <Button
                 type="button"
-                variant="studio"
                 size="sm"
                 disabled={!newTitle.trim() || !newPrompt.trim()}
                 onClick={handleCreateSubmit}
               >
                 <Check className="h-3.5 w-3.5" />
-                保存至本地模板库
+                保存
               </Button>
             </div>
           </div>
         )}
 
-        {/* Category Filter Pills with Liquid Sliding GSAP Indicator */}
+        {/* Liquid Category Capsules */}
         <div className="relative flex flex-wrap items-center gap-1.5">
           <div
             ref={catPillRef}
             style={{ opacity: 0, visibility: "hidden" }}
-            className="pointer-events-none absolute left-0 top-0 rounded-full bg-foreground shadow-xs"
+            className="pointer-events-none absolute left-0 top-0 rounded-full bg-primary"
           />
           {categories.map((cat) => {
             const active = selectedCategory === cat
@@ -385,14 +351,14 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
                 type="button"
                 onClick={() => handleSelectCategory(cat)}
                 className={cn(
-                  "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors cursor-pointer active:scale-95",
+                  "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors cursor-pointer",
                   active
-                    ? "text-background font-semibold"
-                    : "bg-secondary/70 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    ? "text-primary-foreground"
+                    : "bg-foreground/[0.045] dark:bg-white/[0.055] text-muted-foreground hover:text-foreground"
                 )}
               >
-                <span>{cat === "all" ? "全部精选配方" : cat}</span>
-                <span className="font-mono text-[10px] opacity-70 tabular-nums">
+                <span>{cat === "all" ? "全部" : cat}</span>
+                <span className="font-mono text-[10px] opacity-65 tabular-nums">
                   {count}
                 </span>
               </button>
@@ -400,41 +366,29 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
           })}
         </div>
 
-        {/* Recipe Cards Grid */}
+        {/* Pure Borderless Apple Surface Recipe Cards */}
         <div
           ref={gridRef}
-          className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+          className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5"
         >
           {filtered.map((tpl) => {
             const expanded = expandedId === tpl.id
-            const accentClass =
-              CATEGORY_ACCENTS[tpl.category] || "border-t-zinc-500/60"
 
             return (
               <article
                 key={tpl.id}
                 data-flip-id={tpl.id}
-                className={cn(
-                  "recipe-card-anim group flex flex-col justify-between rounded-2xl border border-border border-t-2 bg-card p-5 transition-colors hover:border-foreground/25 hover:shadow-md",
-                  accentClass
-                )}
+                className="recipe-card-anim apple-surface group flex flex-col justify-between rounded-3xl p-6 transition-shadow duration-300 hover:shadow-[0_14px_36px_-10px_rgba(0,0,0,0.1)] dark:hover:shadow-[0_18px_42px_-12px_rgba(0,0,0,0.5)]"
               >
-                <div className="space-y-3">
-                  {/* Top Meta */}
-                  <div className="flex items-start justify-between gap-2">
+                <div className="space-y-3.5">
+                  <div className="flex items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <Badge variant="secondary" className="text-[10px]">
-                        {tpl.category}
-                      </Badge>
+                      <Badge variant="secondary">{tpl.category}</Badge>
                       {!tpl.built_in && (
-                        <Badge variant="amber" className="text-[10px]">
-                          私藏
-                        </Badge>
+                        <Badge variant="outline">自定义</Badge>
                       )}
                       {tpl.background === "transparent" && (
-                        <Badge variant="success" className="text-[10px]">
-                          透明 PNG 通道
-                        </Badge>
+                        <Badge variant="secondary">透明底</Badge>
                       )}
                     </div>
 
@@ -442,17 +396,16 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
                       <button
                         type="button"
                         onClick={() => onDeleteCustomTemplate(tpl.id)}
-                        className="text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
-                        title="删除自定义配方"
+                        className="rounded-full p-1 text-muted-foreground hover:text-destructive transition-colors cursor-pointer"
+                        title="删除配方"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     )}
                   </div>
 
-                  {/* Title & Summary */}
                   <div>
-                    <h3 className="text-base font-semibold tracking-tight text-foreground">
+                    <h3 className="text-base font-semibold tracking-[-0.015em] text-foreground">
                       {tpl.title}
                     </h3>
                     {tpl.summary && (
@@ -462,35 +415,28 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
                     )}
                   </div>
 
-                  {/* Spec Chips */}
-                  <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-muted-foreground">
-                    {tpl.model && (
-                      <span className="rounded-md border border-border bg-secondary/50 px-2 py-0.5">
-                        {tpl.model.replace("gpt-image-", "")}
-                      </span>
-                    )}
-                    {tpl.size && (
-                      <span className="rounded-md border border-border bg-secondary/50 px-2 py-0.5 tabular-nums">
-                        {tpl.size}
-                      </span>
-                    )}
-                    {tpl.quality && (
-                      <span className="rounded-md border border-border bg-secondary/50 px-2 py-0.5 uppercase">
-                        {tpl.quality}
-                      </span>
-                    )}
-                    {(tpl.tags || []).map((tag) => (
-                      <span
-                        key={tag}
-                        className="rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 font-sans"
-                      >
-                        #{tag}
-                      </span>
-                    ))}
-                  </div>
+                  {(tpl.model || tpl.size || tpl.quality) && (
+                    <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-muted-foreground/80">
+                      {tpl.model && (
+                        <span>{tpl.model.replace("gpt-image-", "")}</span>
+                      )}
+                      {tpl.size && (
+                        <>
+                          <span>·</span>
+                          <span className="tabular-nums">{tpl.size}</span>
+                        </>
+                      )}
+                      {tpl.quality && (
+                        <>
+                          <span>·</span>
+                          <span className="uppercase">{tpl.quality}</span>
+                        </>
+                      )}
+                    </div>
+                  )}
 
-                  {/* Prompt Excerpt */}
-                  <div className="rounded-xl border border-border/80 bg-background/60 p-3">
+                  {/* Soft Tonal Prompt Well */}
+                  <div className="rounded-2xl bg-foreground/[0.035] dark:bg-white/[0.04] p-3.5">
                     <p
                       className={cn(
                         "text-xs text-foreground/85 leading-relaxed whitespace-pre-wrap",
@@ -505,34 +451,31 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
                         onClick={() =>
                           setExpandedId(expanded ? null : tpl.id)
                         }
-                        className="mt-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:underline cursor-pointer"
+                        className="mt-2 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                       >
-                        {expanded ? "收起完整提示词" : "展开阅读完整结构化提示词"}
+                        {expanded ? "收起" : "展开全文"}
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* Card Actions */}
-                <div className="mt-4 flex items-center gap-2 pt-3 border-t border-border/60">
+                {/* Borderless Actions */}
+                <div className="mt-5 flex items-center gap-2">
                   <Button
                     type="button"
-                    variant="studio"
                     size="sm"
                     className="flex-1"
                     onClick={() => onUseRecipe(tpl, true)}
                   >
-                    <Sparkles className="h-3.5 w-3.5" />
-                    一键做同款
+                    应用配方
                   </Button>
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="secondary"
                     size="sm"
                     onClick={() => onUseRecipe(tpl, false)}
                     title="仅填入提示词，保留当前模型与尺寸"
                   >
-                    <Layers className="h-3.5 w-3.5" />
                     仅填词
                   </Button>
                   <Button
