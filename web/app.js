@@ -269,13 +269,36 @@
         continue;
       }
       try {
-        const result = await processLocalImageFile(file, autoCompress, 300000);
-        state.referenceImages.push({
+        const result = await processLocalImageFile(file, autoCompress);
+        const refEntry = {
           type: "base64",
-          value: result.dataUrl,
-          preview: result.dataUrl,
-          label: result.label,
-        });
+          value: result.compactDataUrl,
+          preview: result.previewDataUrl,
+          label: autoCompress ? "正在转直链..." : result.label,
+        };
+        state.referenceImages.push(refEntry);
+        renderRefThumbs();
+
+        if (autoCompress) {
+          try {
+            const upRes = await apiFetch("/api/upload-ref", {
+              method: "POST",
+              body: JSON.stringify({ data_uri: result.uploadDataUrl }),
+            });
+            if (upRes && upRes.url) {
+              refEntry.type = "url";
+              refEntry.value = upRes.url;
+              refEntry.label = "已转直链 URL";
+              renderRefThumbs();
+            } else {
+              refEntry.label = result.label;
+              renderRefThumbs();
+            }
+          } catch (_upErr) {
+            refEntry.label = result.label;
+            renderRefThumbs();
+          }
+        }
       } catch (err) {
         showToast(`读取图片失败 (${file.name}): ${err.message}`, "error");
       }
@@ -283,24 +306,37 @@
     renderRefThumbs();
   }
 
-  function processLocalImageFile(file, autoCompress, maxBytes) {
+  function processLocalImageFile(file, autoCompress) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(new Error("文件读取错误"));
       reader.onload = () => {
         const rawDataUrl = reader.result;
-        if (!autoCompress || file.size <= maxBytes) {
+        if (!autoCompress) {
           const kb = Math.round(file.size / 1024);
-          resolve({ dataUrl: rawDataUrl, label: `原图 ${kb}KB` });
+          resolve({
+            uploadDataUrl: rawDataUrl,
+            compactDataUrl: rawDataUrl,
+            previewDataUrl: rawDataUrl,
+            label: `原图 ${kb}KB`,
+          });
           return;
         }
-        // Compress using Canvas so base64 payload stays under limit
+        // Always normalize through Canvas to strip ICC_PROFILE / EXIF headers and produce:
+        // 1) uploadDataUrl (up to 1440px, <=220KB) for public URL upload
+        // 2) compactDataUrl (<=45KB binary / <60KB base64) as safe fallback for DuomiAPI task DB
         const img = new Image();
-        img.onerror = () => resolve({ dataUrl: rawDataUrl, label: `${Math.round(file.size / 1024)}KB` });
+        img.onerror = () => {
+          const kb = Math.round(file.size / 1024);
+          resolve({
+            uploadDataUrl: rawDataUrl,
+            compactDataUrl: rawDataUrl,
+            previewDataUrl: rawDataUrl,
+            label: `${kb}KB`,
+          });
+        };
         img.onload = () => {
-          const dims = [1280, 1024, 768, 512, 384];
-          const qualities = [0.88, 0.76, 0.62];
-          for (const maxDim of dims) {
+          const renderScaled = (maxDim, quality) => {
             let w = img.width;
             let h = img.height;
             if (w > maxDim || h > maxDim) {
@@ -316,21 +352,37 @@
             canvas.width = w;
             canvas.height = h;
             const ctx = canvas.getContext("2d");
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, w, h);
             ctx.drawImage(img, 0, 0, w, h);
+            return canvas.toDataURL("image/jpeg", quality);
+          };
 
+          const uploadDataUrl = renderScaled(1440, 0.86);
+
+          const dims = [1024, 896, 768, 640, 512, 384];
+          const qualities = [0.82, 0.72, 0.62, 0.52];
+          let compactDataUrl = uploadDataUrl;
+          let compactBytes = Math.round((compactDataUrl.length * 3) / 4);
+
+          outer: for (const maxDim of dims) {
             for (const q of qualities) {
-              const compressed = canvas.toDataURL("image/jpeg", q);
-              const approxBytes = Math.round((compressed.length * 3) / 4);
-              if (approxBytes <= maxBytes) {
-                resolve({
-                  dataUrl: compressed,
-                  label: `已优压 ${Math.round(approxBytes / 1024)}KB`,
-                });
-                return;
+              const candidate = renderScaled(maxDim, q);
+              const approxBytes = Math.round((candidate.length * 3) / 4);
+              compactDataUrl = candidate;
+              compactBytes = approxBytes;
+              if (approxBytes <= 45000) {
+                break outer;
               }
             }
           }
-          resolve({ dataUrl: rawDataUrl, label: `${Math.round(file.size / 1024)}KB` });
+
+          resolve({
+            uploadDataUrl,
+            compactDataUrl,
+            previewDataUrl: uploadDataUrl,
+            label: `sRGB优压 ${Math.max(1, Math.round(compactBytes / 1024))}KB`,
+          });
         };
         img.src = rawDataUrl;
       };
@@ -388,7 +440,7 @@
 
     const btn = el("btn-submit-generate");
     btn.disabled = true;
-    btn.textContent = "正在提交任务...";
+    btn.textContent = n > 1 ? `正在批量提交 ${n} 个任务...` : "正在提交任务...";
 
     try {
       const record = await apiFetch("/api/generate", {
@@ -404,7 +456,15 @@
           oversea,
         }),
       });
-      showToast(`任务已提交 (ID: ${record.id.slice(0, 8)}...)，正在后台自动轮询`, "success");
+      const count = record.submitted_count || 1;
+      if (count > 1) {
+        showToast(`已批量提交 ${count} 个异步生图任务，正在后台并发轮询`, "success");
+      } else {
+        showToast(`任务已提交 (ID: ${(record.id || "").slice(0, 8)}...)，正在后台自动轮询`, "success");
+      }
+      if (record.partial_error) {
+        showToast(`部分任务提示: ${record.partial_error}`, "error");
+      }
       await refreshRecords();
       ensureAutoRefreshLoop();
     } catch (err) {
@@ -635,9 +695,21 @@
     });
   }
 
+  function updatePromptCounter() {
+    const val = el("input-prompt").value || "";
+    const chars = Array.from(val).length;
+    const bytes = new TextEncoder().encode(val).length;
+    const countEl = el("prompt-char-count");
+    countEl.textContent =
+      bytes > chars
+        ? `${chars} / 5000 字符 (${bytes} UTF-8字节)`
+        : `${chars} / 5000`;
+    countEl.style.color = bytes > 5000 ? "var(--status-warning)" : "";
+  }
+
   function reuseRecordParams(rec) {
     el("input-prompt").value = rec.prompt || "";
-    el("prompt-char-count").textContent = `${(rec.prompt || "").length} / 5000`;
+    updatePromptCounter();
     const knownModel = state.models.some((m) => m.id === rec.model);
     if (knownModel) {
       state.selectedModel = rec.model;
@@ -703,22 +775,20 @@
   function bindEvents() {
     // Prompt counter & quick tags
     const promptInput = el("input-prompt");
-    promptInput.addEventListener("input", () => {
-      el("prompt-char-count").textContent = `${promptInput.value.length} / 5000`;
-    });
+    promptInput.addEventListener("input", updatePromptCounter);
 
     document.querySelectorAll(".quick-tag[data-snippet]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const snippet = btn.dataset.snippet;
         const cur = promptInput.value.trim();
         promptInput.value = cur ? `${cur}，${snippet}` : snippet;
-        el("prompt-char-count").textContent = `${promptInput.value.length} / 5000`;
+        updatePromptCounter();
       });
     });
 
     el("btn-clear-prompt").addEventListener("click", () => {
       promptInput.value = "";
-      el("prompt-char-count").textContent = "0 / 5000";
+      updatePromptCounter();
     });
 
     // Reference images upload & drag-drop

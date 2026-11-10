@@ -227,3 +227,55 @@ func TestDuomiClientCreateAndQueryFlow(t *testing.T) {
 		t.Fatalf("expected downloaded image file at %s, got err: %v", savedPath, err)
 	}
 }
+
+func TestCreateTaskFailToSubmitFallback(t *testing.T) {
+	attempts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+
+		// Verify `n` and `background: auto` are never sent
+		if _, hasN := body["n"]; hasN {
+			t.Errorf("expected `n` to be omitted from DuomiAPI payload, got %v", body["n"])
+		}
+		if bg, hasBG := body["background"]; hasBG && bg == "auto" {
+			t.Errorf("expected `background: auto` to be omitted, got %v", bg)
+		}
+
+		// Simulate upstream rejecting 3840x2160 with fail_to_submit_task, but succeeding on fallback "16:9"
+		if body["size"] == "3840x2160" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"invalid_request","message":"fail_to_submit_task","type":"invalid_request_error"}}`))
+			return
+		}
+		if body["size"] == "16:9" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"fallback-task-ok"}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	client := NewDuomiClient()
+	taskID, _, err := client.CreateTask(context.Background(), srv.URL, "test-key", CreateImageRequest{
+		Model:      "gpt-image-2.6-sunburst",
+		Prompt:     "test fallback",
+		Size:       "3840x2160",
+		Quality:    "high",
+		Background: "auto",
+		N:          4,
+	})
+	if err != nil {
+		t.Fatalf("expected fallback to succeed, got error: %v", err)
+	}
+	if taskID != "fallback-task-ok" {
+		t.Fatalf("expected taskID fallback-task-ok, got %q", taskID)
+	}
+	if attempts < 2 {
+		t.Fatalf("expected at least 2 attempts (initial + fallback), got %d", attempts)
+	}
+}
+

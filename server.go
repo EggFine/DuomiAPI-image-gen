@@ -209,6 +209,7 @@ func (s *AppServer) Handler() http.Handler {
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/records", s.handleRecords)
 	mux.HandleFunc("/api/records/download", s.handleDownloadRecord)
+	mux.HandleFunc("/api/upload-ref", s.handleUploadRef)
 	mux.HandleFunc("/api/generate", s.handleGenerate)
 	mux.HandleFunc("/api/tasks/query", s.handleQueryTask)
 
@@ -326,6 +327,31 @@ func (s *AppServer) handleRecords(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *AppServer) handleUploadRef(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 25<<20)
+	var body struct {
+		DataURI string `json:"data_uri"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.DataURI) == "" {
+		writeJSONError(w, http.StatusBadRequest, "缺少图片数据 data_uri")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	pubURL, err := s.client.UploadDataURIToPublicHost(ctx, body.DataURI)
+	if err != nil {
+		writeJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"url": pubURL,
+	})
+}
+
 type generateAPIRequest struct {
 	APIKey      string   `json:"api_key"`
 	Model       string   `json:"model"`
@@ -389,6 +415,13 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	batchCount := req.N
+	if batchCount < 1 {
+		batchCount = 1
+	} else if batchCount > 10 {
+		batchCount = 10
+	}
+
 	createReq := CreateImageRequest{
 		Model:       req.Model,
 		Prompt:      req.Prompt,
@@ -396,48 +429,69 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		Image:       cleanedImages,
 		Quality:     req.Quality,
 		Background:  req.Background,
-		N:           req.N,
+		N:           1,
 		Oversea:     oversea,
 		CallbackURL: req.CallbackURL,
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(60*batchCount)*time.Second)
 	defer cancel()
 
-	taskID, rawResp, err := s.client.CreateTask(ctx, cfg.BaseURL, apiKey, createReq)
-	if err != nil {
-		writeJSONError(w, http.StatusBadGateway, err.Error())
-		return
+	var createdRecords []*TaskRecord
+	var lastErr error
+	for i := 0; i < batchCount; i++ {
+		taskID, rawResp, err := s.client.CreateTask(ctx, cfg.BaseURL, apiKey, createReq)
+		if err != nil {
+			lastErr = err
+			if len(createdRecords) == 0 {
+				writeJSONError(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			break
+		}
+
+		now := time.Now().Unix()
+		rec := &TaskRecord{
+			ID:          taskID,
+			Model:       createReq.Model,
+			Prompt:      createReq.Prompt,
+			Size:        createReq.Size,
+			Quality:     createReq.Quality,
+			Background:  createReq.Background,
+			N:           1,
+			Oversea:     createReq.Oversea,
+			CallbackURL: createReq.CallbackURL,
+			RefCount:    len(cleanedImages),
+			RefPreviews: previews,
+			State:       "pending",
+			Progress:    0,
+			CreateTime:  now,
+			UpdateTime:  now,
+			RawResponse: rawResp,
+		}
+		if err := s.store.UpsertRecord(rec); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "保存任务记录失败: "+err.Error())
+			return
+		}
+		s.StartPolling(taskID)
+		createdRecords = append(createdRecords, rec)
 	}
 
-	now := time.Now().Unix()
-	rec := &TaskRecord{
-		ID:          taskID,
-		Model:       createReq.Model,
-		Prompt:      createReq.Prompt,
-		Size:        createReq.Size,
-		Quality:     createReq.Quality,
-		Background:  createReq.Background,
-		N:           createReq.N,
-		Oversea:     createReq.Oversea,
-		CallbackURL: createReq.CallbackURL,
-		RefCount:    len(cleanedImages),
-		RefPreviews: previews,
-		State:       "pending",
-		Progress:    0,
-		CreateTime:  now,
-		UpdateTime:  now,
-		RawResponse: rawResp,
+	first := createdRecords[0]
+	respPayload := map[string]any{
+		"id":              first.ID,
+		"model":           first.Model,
+		"prompt":          first.Prompt,
+		"size":            first.Size,
+		"state":           first.State,
+		"create_time":     first.CreateTime,
+		"submitted_count": len(createdRecords),
+		"records":         createdRecords,
 	}
-	if err := s.store.UpsertRecord(rec); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "保存任务记录失败: "+err.Error())
-		return
+	if lastErr != nil {
+		respPayload["partial_error"] = lastErr.Error()
 	}
-
-	// Start async polling in background
-	s.StartPolling(taskID)
-
-	writeJSON(w, http.StatusOK, rec)
+	writeJSON(w, http.StatusOK, respPayload)
 }
 
 func (s *AppServer) handleQueryTask(w http.ResponseWriter, r *http.Request) {

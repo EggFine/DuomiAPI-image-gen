@@ -94,7 +94,7 @@
           </div>
           <div class="checkbox-row">
             <label for="chk-compress-ref" class="section-hint" style="cursor:pointer;">
-              本地大图 (&gt;300KB) 自动缩图防 HTTP 400 超限
+              本地参考图自动转直链 / sRGB 净荷优压（防 fail_to_submit_task 报错）
             </label>
             <input id="chk-compress-ref" type="checkbox" checked />
           </div>
@@ -152,8 +152,8 @@
         </div>
         <div class="param-grid-2" style="margin-top:6px;">
           <div>
-            <label for="input-count-n" class="section-label">生成张数 (n)</label>
-            <input id="input-count-n" type="number" min="1" max="4" value="1" class="input-control" style="margin-top:5px;" />
+            <label for="input-count-n" class="section-label">批量生成张数 (并发任务数)</label>
+            <input id="input-count-n" type="number" min="1" max="10" value="1" class="input-control" style="margin-top:5px;" />
           </div>
           <div style="display:flex; flex-direction:column; justify-content:flex-end;">
             <div class="checkbox-row">

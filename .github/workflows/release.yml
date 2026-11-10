@@ -21,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -59,42 +61,75 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
-      - name: Create or Update GitHub Release
+      - name: Create or Update GitHub Release with Changelog
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_TAG: ${{ github.event.inputs.tag_name }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            TAG="${INPUT_TAG:-v1.0.0}"
+            TAG="${INPUT_TAG:-v1.0.2}"
           else
             TAG="${REF_NAME}"
           fi
 
-          echo "Publishing release for tag: ${TAG}"
+          echo "Generating changelog for tag: ${TAG}"
 
-          cat << 'EOF' > release_notes.md
-          ## 🎨 DuomiAPI Image Studio (多米API 图像生成单文件绿色版)
+          python3 - "${TAG}" << 'PYEOF' > release_notes.md
+          import re, subprocess, sys
 
-          ### ✨ 特性
-          - **纯单文件绿色运行**：使用 Go `embed.FS` 将 Web 创作台内嵌进单一可执行文件中，零外部依赖、**不写注册表**、不污染系统目录。
-          - **单一数据目录**：仅在程序运行目录下自动生成 `duomi_data/` 目录，统一保存：
-            - `duomi_data/config.json`（API Key 与默认参数）
-            - `duomi_data/records.json`（历史生成任务记录）
-            - `duomi_data/images/`（自动下载保存的高清生成原图）
-          - **Web 界面 + CLI 命令行双模式**：
-            - 直接双击或无参数运行：启动本地 Web 界面并自动打开浏览器。
-            - 传入 `-prompt` 或 `-query` 参数：作为命令行工具运行。
-          - **完整对接多米 API 异步生图接口**：
-            - 支持 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 及自定义模型。
-            - 支持文生图、多参考图图生图（支持直链 URL 与本地图片自动转 Base64 / 大图智能优压）。
-          EOF
+          tag = sys.argv[1]
+          notes = ""
+          try:
+              with open("CHANGELOG.md", "r", encoding="utf-8") as f:
+                  content = f.read()
+              pattern = rf"(## \[{re.escape(tag)}\].*?)(?=\n---\n|\n## \[|\Z)"
+              m = re.search(pattern, content, flags=re.S)
+              if m:
+                  notes = m.group(1).strip()
+          except Exception:
+              pass
+
+          prev_tag = ""
+          try:
+              tags = subprocess.check_output(
+                  ["git", "tag", "--sort=-creatordate"], text=True
+              ).splitlines()
+              tags = [t.strip() for t in tags if t.strip()]
+              if tag in tags:
+                  idx = tags.index(tag)
+                  if idx + 1 < len(tags):
+                      prev_tag = tags[idx + 1]
+              elif tags:
+                  prev_tag = tags[0]
+          except Exception:
+              pass
+
+          log_range = f"{prev_tag}..{tag}" if prev_tag else tag
+          try:
+              commits = subprocess.check_output(
+                  ["git", "log", log_range, "--pretty=format:- %h %s"], text=True
+              ).strip()
+          except Exception:
+              commits = ""
+
+          print(f"# 📋 {tag} 更新日志 (Changelog)\n")
+          if notes:
+              print(notes)
+              print("")
+          if commits:
+              print("### 📝 提交记录 (Commits)")
+              print(commits)
+          PYEOF
+
+          cat release_notes.md
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release upload "${TAG}" dist/* --clobber
-            gh release edit "${TAG}" --notes-file release_notes.md
+            gh release edit "${TAG}" --title "DuomiAPI Image Studio ${TAG}" --notes-file release_notes.md
           else
             gh release create "${TAG}" dist/* \
               --title "DuomiAPI Image Studio ${TAG}" \
               --notes-file release_notes.md
           fi
+
