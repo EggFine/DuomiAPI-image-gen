@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-//go:embed web/*
+//go:embed all:web
 var embeddedWebFS embed.FS
 
 // AppServer coordinates HTTP API requests, background task polling, and local storage.

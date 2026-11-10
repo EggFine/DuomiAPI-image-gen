@@ -6,3 +6,8 @@ dist/
 *.exe
 duomi-image-gen
 duomi-image-gen-*
+
+# Frontend dependencies & cache (compiled web/ bundle is committed for single-file go:embed)
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/

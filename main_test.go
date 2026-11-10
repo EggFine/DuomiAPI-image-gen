@@ -279,3 +279,36 @@ func TestCreateTaskFailToSubmitFallback(t *testing.T) {
 	}
 }
 
+func TestEmbeddedReactStaticAssets(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "duomi_data"))
+	if err != nil {
+		t.Fatalf("NewStore error: %v", err)
+	}
+	appSrv := NewAppServer(store, NewDuomiClient())
+	ts := httptest.NewServer(appSrv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("GET / failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for /, got %d", resp.StatusCode)
+	}
+
+	entries, err := embeddedWebFS.ReadDir("web/assets")
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected embedded web/assets files, got err=%v len=%d", err, len(entries))
+	}
+	for _, entry := range entries {
+		assetResp, err := http.Get(ts.URL + "/assets/" + entry.Name())
+		if err != nil {
+			t.Fatalf("GET /assets/%s failed: %v", entry.Name(), err)
+		}
+		assetResp.Body.Close()
+		if assetResp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK for /assets/%s, got %d", entry.Name(), assetResp.StatusCode)
+		}
+	}
+}
