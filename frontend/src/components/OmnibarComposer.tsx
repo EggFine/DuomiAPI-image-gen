@@ -448,7 +448,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
         }
       }}
       className={cn(
-        "relative mx-auto w-full rounded-[26px] p-4 sm:p-5 transition-colors duration-200",
+        "relative isolate mx-auto w-full rounded-[26px] p-4 sm:p-5 transition-colors duration-200",
         floating
           ? "studio-floating-popover max-w-[920px]"
           : "studio-omnibar-flat max-w-[1040px]",

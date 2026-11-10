@@ -151,7 +151,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
       <header
         ref={headerRef}
         aria-label="工作区导航"
-        className="studio-sticky-bar w-full shrink-0 select-none z-30"
+        className="studio-sticky-bar relative w-full shrink-0 select-none z-40"
       >
         <div className="studio-container flex h-14 items-center justify-between">
           {/* Left: Quiet Wordmark & Subtle Live Status */}

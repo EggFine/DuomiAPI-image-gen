@@ -410,7 +410,7 @@ func (s *AppServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.store.GetConfig()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":           "v3.2.1",
+		"version":           "v3.2.2",
 		"data_dir":          s.store.BaseDir(),
 		"images_dir":        s.store.ImagesDir(),
 		"has_key":           strings.TrimSpace(cfg.APIKey) != "",

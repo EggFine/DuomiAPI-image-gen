@@ -504,12 +504,15 @@ export function App() {
             const updated: TaskRecord = msg.payload
             setRecords((prev) => {
               const idx = prev.findIndex((r) => r.id === updated.id)
-              if (idx === -1) {
-                return [updated, ...prev]
-              }
-              const next = [...prev]
-              next[idx] = updated
-              return next
+              const next =
+                idx === -1
+                  ? [updated, ...prev]
+                  : prev.map((r, i) => (i === idx ? updated : r))
+              return next.sort((a, b) => {
+                const dt = (b.create_time || 0) - (a.create_time || 0)
+                if (dt !== 0) return dt
+                return b.id > a.id ? 1 : b.id < a.id ? -1 : 0
+              })
             })
           } else if (msg.type === "records_deleted" && msg.payload?.ids) {
             const delSet = new Set<string>(msg.payload.ids)
@@ -1234,6 +1237,7 @@ export function App() {
         submitted_count?: number
         warning_msg?: string
         partial_error?: string
+        records?: TaskRecord[]
       }>("/api/generate", {
         method: "POST",
         body: JSON.stringify({
@@ -1258,6 +1262,20 @@ export function App() {
           auto_compat_fallback: autoCompatFallback,
         }),
       })
+
+      if (res.records && res.records.length > 0) {
+        const createdList = res.records
+        setRecords((prev) => {
+          const map = new Map<string, TaskRecord>()
+          for (const r of prev) map.set(r.id, r)
+          for (const r of createdList) map.set(r.id, r)
+          return Array.from(map.values()).sort((a, b) => {
+            const dt = (b.create_time || 0) - (a.create_time || 0)
+            if (dt !== 0) return dt
+            return b.id > a.id ? 1 : b.id < a.id ? -1 : 0
+          })
+        })
+      }
 
       setPromptHistory(
         pushPromptHistory({
@@ -1859,7 +1877,7 @@ export function App() {
                   className="h-full overflow-y-auto studio-scroll"
                 >
                   {/* Shadowless Static Creation Canvas (Option A: max-w-[1040px] inside .studio-container) */}
-                  <div className="studio-container pt-5 pb-3">
+                  <div className="studio-container relative z-0 pt-5 pb-3">
                     {renderOmnibarComposer(false)}
                   </div>
 

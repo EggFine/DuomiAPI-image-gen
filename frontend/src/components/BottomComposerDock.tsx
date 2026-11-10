@@ -221,7 +221,7 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
     <div
       ref={dockScopeRef}
       className={cn(
-        "fixed inset-x-0 bottom-20 md:bottom-5 z-30 pointer-events-none",
+        "fixed inset-x-0 bottom-20 md:bottom-5 z-40 pointer-events-none",
         !visible && "pointer-events-none"
       )}
     >

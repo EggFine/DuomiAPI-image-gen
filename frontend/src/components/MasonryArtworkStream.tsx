@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import {
   AlertCircle,
   AlertTriangle,
@@ -57,6 +63,82 @@ import { cn } from "@/lib/utils"
 import type { ProjectFolder, SavedImage, TaskRecord } from "@/types"
 
 export type StreamDisplayMode = "masonry" | "showcase" | "list"
+
+function parseAspectHeightOverWidth(aspectStr: string): number {
+  const parts = aspectStr.split("/")
+  if (parts.length === 2) {
+    const w = parseFloat(parts[0])
+    const h = parseFloat(parts[1])
+    if (w > 0 && h > 0) return h / w
+  }
+  return 1
+}
+
+function estimateNormalizedCardHeight(
+  rec: TaskRecord,
+  displayMode: StreamDisplayMode
+): number {
+  const images = rec.images || []
+  const isSucceeded = rec.state === "succeeded" && images.length > 0
+  let hRatio = parseAspectHeightOverWidth(computeRecordAspectRatio(rec))
+
+  if (isSucceeded) {
+    if (images.length > 1) {
+      const rows = Math.ceil(images.length / 2)
+      const first = images[0]
+      const cellRatio =
+        first?.width && first?.height && first.width > 0 && first.height > 0
+          ? first.height / first.width
+          : hRatio
+      hRatio = rows * 0.5 * cellRatio
+    } else if (
+      images[0]?.width &&
+      images[0]?.height &&
+      images[0].width > 0 &&
+      images[0].height > 0
+    ) {
+      hRatio = images[0].height / images[0].width
+    }
+  } else {
+    hRatio = Math.max(0.62, hRatio)
+  }
+
+  const clamped = Math.max(0.45, Math.min(2.4, hRatio))
+  const captionExtra = displayMode === "showcase" ? 0.28 : 0
+  return clamped + captionExtra + 0.06
+}
+
+/**
+ * Distributes newest-first records horizontally across columns (left-to-right
+ * across Row 1 first, then always into the highest available column with
+ * strict left-to-right tie-breaking) so new batches never pile up on the left.
+ */
+function distributeIntoHorizontalColumns(
+  items: TaskRecord[],
+  colCount: number,
+  displayMode: StreamDisplayMode
+): TaskRecord[][] {
+  const safeCols = Math.max(1, colCount)
+  if (safeCols === 1) return [items]
+
+  const columns: TaskRecord[][] = Array.from({ length: safeCols }, () => [])
+  const colHeights = new Array<number>(safeCols).fill(0)
+
+  for (const rec of items) {
+    let bestCol = 0
+    let minH = colHeights[0]
+    for (let c = 1; c < safeCols; c++) {
+      if (colHeights[c] < minH - 0.02) {
+        minH = colHeights[c]
+        bestCol = c
+      }
+    }
+    columns[bestCol].push(rec)
+    colHeights[bestCol] += estimateNormalizedCardHeight(rec, displayMode)
+  }
+
+  return columns
+}
 
 /**
  * Calm Apple-grade image settle when an artwork finishes loading.
@@ -232,11 +314,28 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
 
   const { contextSafe } = useGSAP({ scope: streamRootRef })
 
+  const sortNodesVisualOrder = (nodes: HTMLElement[]): HTMLElement[] => {
+    if (nodes.length <= 1) return nodes
+    const rects = new Map<HTMLElement, { top: number; left: number }>()
+    for (const n of nodes) {
+      const r = n.getBoundingClientRect()
+      rects.set(n, { top: r.top, left: r.left })
+    }
+    return [...nodes].sort((a, b) => {
+      const ra = rects.get(a)!
+      const rb = rects.get(b)!
+      if (Math.abs(ra.top - rb.top) > 24) return ra.top - rb.top
+      return ra.left - rb.left
+    })
+  }
+
   const captureStreamFlip = () => {
     if (prefersReducedMotion() || !streamBodyRef.current) return
-    const visibleCards = gsap.utils
-      .toArray<HTMLElement>(".artwork-card-anim", streamBodyRef.current)
-      .slice(0, 28)
+    const allCards = gsap.utils.toArray<HTMLElement>(
+      ".artwork-card-anim",
+      streamBodyRef.current
+    )
+    const visibleCards = sortNodesVisualOrder(allCards).slice(0, 28)
     if (visibleCards.length > 0) {
       pendingFlipRef.current = Flip.getState(visibleCards)
     }
@@ -463,7 +562,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         if (id) seenCardIdsRef.current.add(id)
       }
 
-      const visibleCards = allCards.slice(0, 28)
+      const visibleCards = sortNodesVisualOrder(allCards).slice(0, 28)
       if (visibleCards.length === 0) return
 
       if (flipState) {
@@ -499,6 +598,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         {
           autoAlpha: 1,
           y: 0,
+          scale: 1,
           duration: 0.26,
           stagger: { each: 0.012, amount: 0.12 },
           ease: STUDIO_EASE.out,
@@ -538,7 +638,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         }
       }
       if (freshNodes.length === 0 || prefersReducedMotion()) return
-      const animatedSlice = freshNodes.slice(0, 24)
+      const animatedSlice = sortNodesVisualOrder(freshNodes).slice(0, 24)
       gsap.fromTo(
         animatedSlice,
         { autoAlpha: 0, y: 10, scale: 0.99 },
@@ -556,20 +656,35 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     { scope: streamRootRef, dependencies: [filteredRecords] }
   )
 
-  const masonryColumnClasses = useMemo(() => {
-    switch (columnCount) {
-      case 2:
-        return "columns-1 sm:columns-2"
-      case 3:
-        return "columns-1 sm:columns-2 lg:columns-3"
-      case 5:
-        return "columns-2 sm:columns-3 lg:columns-4 2xl:columns-5"
-      case 6:
-        return "columns-2 sm:columns-3 md:columns-4 xl:columns-5 2xl:columns-6"
-      default:
-        return "columns-1 sm:columns-2 lg:columns-3 2xl:columns-4"
+  const [containerWidth, setContainerWidth] = useState<number>(() =>
+    typeof window !== "undefined"
+      ? Math.min(Math.max(window.innerWidth - 64, 320), 1520)
+      : 1280
+  )
+
+  useLayoutEffect(() => {
+    const el = streamBodyRef.current
+    if (!el) return
+    const syncWidth = () => {
+      const w = el.clientWidth
+      if (w > 0) {
+        setContainerWidth((prev) => (Math.abs(prev - w) >= 4 ? w : prev))
+      }
     }
-  }, [columnCount])
+    syncWidth()
+    if (typeof ResizeObserver === "undefined") return
+    const ro = new ResizeObserver(() => syncWidth())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const effectiveCols = useMemo(() => {
+    if (containerWidth < 520) return 1
+    if (containerWidth < 800) return Math.min(columnCount, 2)
+    if (containerWidth < 1060) return Math.min(columnCount, 3)
+    if (containerWidth < 1320) return Math.min(columnCount, 4)
+    return columnCount
+  }, [containerWidth, columnCount])
 
   const renderRecordCard = (rec: TaskRecord) => {
     const images = rec.images || []
@@ -609,7 +724,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
           data-flip-id={rec.id}
           onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
           className={cn(
-            "artwork-card-anim apple-surface group flex flex-col sm:flex-row gap-4 rounded-3xl p-4 transition-all duration-200",
+            "artwork-card-anim apple-surface isolate group flex flex-col sm:flex-row gap-4 rounded-3xl p-4 transition-all duration-200",
             selectMode && "cursor-pointer",
             isChecked && "ring-2 ring-primary"
           )}
@@ -799,7 +914,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         data-flip-id={rec.id}
         onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
         className={cn(
-          "artwork-card-anim masonry-item group relative overflow-hidden rounded-2xl transition-shadow duration-300",
+          "artwork-card-anim group relative isolate overflow-hidden rounded-2xl transition-shadow duration-300",
           displayMode === "masonry"
             ? "bg-foreground/[0.03] hover:shadow-[0_16px_40px_-12px_rgba(0,0,0,0.16)] dark:hover:shadow-[0_20px_48px_-12px_rgba(0,0,0,0.55)]"
             : "apple-surface",
@@ -819,7 +934,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
           {/* Quiet Floating Top Badges */}
           <div
             onClick={(e) => e.stopPropagation()}
-            className="pointer-events-none absolute inset-x-3 top-3 z-20 flex items-start justify-between gap-2"
+            className="pointer-events-none absolute inset-x-3 top-3 z-10 flex items-start justify-between gap-2"
           >
             <div className="pointer-events-auto flex items-center gap-1.5">
               {(selectMode || isChecked) && (
@@ -1402,7 +1517,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         {/* High-Occlusion Sticky Filter Bar — Plumb-line Aligned */}
         <div
           className={cn(
-            "z-20 w-full",
+            "z-30 w-full",
             !embeddedScroll
               ? "sticky top-0 studio-sticky-bar"
               : isSplitRightPane
@@ -1499,7 +1614,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               {displayMode !== "list" && (
                 <div
                   className={cn(
-                    "hidden xl:flex items-center gap-2 px-3",
+                    "hidden lg:flex items-center gap-2 px-3",
                     tonalControlPill
                   )}
                   title="调节列数"
@@ -1664,6 +1779,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         <div
           ref={streamBodyRef}
           className={cn(
+            "relative z-0",
             !embeddedScroll
               ? "studio-container py-5 pb-32"
               : isSplitRightPane
@@ -1696,8 +1812,24 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       {group.items.map((rec) => renderRecordCard(rec))}
                     </div>
                   ) : (
-                    <div className={cn("gap-5", masonryColumnClasses)}>
-                      {group.items.map((rec) => renderRecordCard(rec))}
+                    <div
+                      className="grid gap-5 items-start"
+                      style={{
+                        gridTemplateColumns: `repeat(${effectiveCols}, minmax(0, 1fr))`,
+                      }}
+                    >
+                      {distributeIntoHorizontalColumns(
+                        group.items,
+                        effectiveCols,
+                        displayMode
+                      ).map((colItems, colIdx) => (
+                        <div
+                          key={colIdx}
+                          className="flex flex-col gap-5 min-w-0"
+                        >
+                          {colItems.map((rec) => renderRecordCard(rec))}
+                        </div>
+                      ))}
                     </div>
                   )}
                 </section>

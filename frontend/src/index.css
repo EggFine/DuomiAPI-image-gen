@@ -288,9 +288,3 @@ input[type="range"].studio-slider::-webkit-slider-thumb:hover {
   pointer-events: none;
 }
 
-/* Generous Masonry Card Breathing Space */
-.masonry-item {
-  break-inside: avoid;
-  page-break-inside: avoid;
-  margin-bottom: 1.25rem;
-}
