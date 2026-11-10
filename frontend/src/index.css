@@ -3,48 +3,64 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: hsl(40 18% 97.5%);
-  --foreground: hsl(240 10% 9%);
+  --background: hsl(38 22% 96.8%);
+  --foreground: hsl(240 10% 8.5%);
   --card: hsl(0 0% 100%);
-  --card-foreground: hsl(240 10% 9%);
+  --card-foreground: hsl(240 10% 8.5%);
   --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(240 10% 9%);
-  --primary: hsl(240 6% 11%);
+  --popover-foreground: hsl(240 10% 8.5%);
+  --primary: hsl(240 8% 10%);
   --primary-foreground: hsl(0 0% 98%);
-  --secondary: hsl(240 5% 93.5%);
-  --secondary-foreground: hsl(240 6% 14%);
-  --muted: hsl(240 5% 94%);
-  --muted-foreground: hsl(240 4% 40%);
-  --accent: hsl(240 5% 91.5%);
-  --accent-foreground: hsl(240 6% 10%);
-  --destructive: hsl(0 72% 50%);
+  --secondary: hsl(36 12% 92.5%);
+  --secondary-foreground: hsl(240 8% 12%);
+  --muted: hsl(36 10% 93.2%);
+  --muted-foreground: hsl(240 4% 41%);
+  --accent: hsl(36 12% 90.5%);
+  --accent-foreground: hsl(240 8% 10%);
+  --destructive: hsl(0 72% 49%);
   --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 6% 87%);
-  --input: hsl(240 6% 86%);
-  --ring: hsl(35 92% 46%);
-  --radius: 0.625rem;
+  --border: hsl(30 8% 85.5%);
+  --input: hsl(30 8% 84.5%);
+  --ring: hsl(36 92% 46%);
+  --radius: 0.75rem;
+
+  --rail-bg: hsl(38 18% 94.5%);
+  --glass-bg: rgba(255, 255, 255, 0.86);
+  --glass-border: rgba(24, 24, 27, 0.09);
+  --glass-shadow:
+    0 18px 42px -14px rgba(15, 15, 20, 0.12),
+    0 2px 6px rgba(15, 15, 20, 0.05),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
 }
 
 .dark {
-  --background: hsl(240 8% 6.5%);
-  --foreground: hsl(0 0% 95%);
-  --card: hsl(240 7% 9.5%);
-  --card-foreground: hsl(0 0% 95%);
-  --popover: hsl(240 7% 10%);
-  --popover-foreground: hsl(0 0% 95%);
-  --primary: hsl(0 0% 96%);
-  --primary-foreground: hsl(240 6% 9%);
-  --secondary: hsl(240 5% 14.5%);
+  --background: hsl(240 7% 4.5%);
+  --foreground: hsl(0 0% 95.5%);
+  --card: hsl(240 6% 7.8%);
+  --card-foreground: hsl(0 0% 95.5%);
+  --popover: hsl(240 6% 8.8%);
+  --popover-foreground: hsl(0 0% 95.5%);
+  --primary: hsl(0 0% 96.5%);
+  --primary-foreground: hsl(240 8% 7%);
+  --secondary: hsl(240 5% 13%);
   --secondary-foreground: hsl(0 0% 94%);
-  --muted: hsl(240 5% 13.5%);
-  --muted-foreground: hsl(240 5% 60%);
-  --accent: hsl(240 5% 16.5%);
+  --muted: hsl(240 5% 11.8%);
+  --muted-foreground: hsl(240 5% 58%);
+  --accent: hsl(240 5% 15.2%);
   --accent-foreground: hsl(0 0% 96%);
   --destructive: hsl(0 68% 54%);
   --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 5% 17%);
-  --input: hsl(240 5% 17%);
+  --border: hsl(240 5% 15.5%);
+  --input: hsl(240 5% 15.5%);
   --ring: hsl(37 95% 52%);
+
+  --rail-bg: hsl(240 7% 6%);
+  --glass-bg: rgba(18, 18, 22, 0.84);
+  --glass-border: rgba(255, 255, 255, 0.085);
+  --glass-shadow:
+    0 24px 54px -16px rgba(0, 0, 0, 0.72),
+    0 4px 14px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.055);
 }
 
 @theme inline {
@@ -68,19 +84,26 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
 
-  --font-sans: "Inter", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, monospace;
 }
 
 @layer base {
   * {
     border-color: var(--border);
   }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
   body {
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 }
 
@@ -88,7 +111,45 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Custom studio scrollbar */
+/* Studio Rail & Glassmorphic Omnibar Surfaces */
+.studio-rail {
+  background-color: var(--rail-bg);
+}
+
+.studio-omnibar {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(22px) saturate(165%);
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+}
+
+.studio-floating-popover {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+.studio-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.2rem;
+  padding: 0 0.32rem;
+  border-radius: 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  background-color: color-mix(in srgb, var(--foreground) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--foreground) 12%, transparent);
+  color: var(--muted-foreground);
+}
+
+/* Custom Studio Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -97,33 +158,88 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(240 5% 50% / 0.24);
+  background: hsl(240 5% 50% / 0.22);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(240 5% 50% / 0.44);
+  background: hsl(240 5% 50% / 0.42);
 }
 
-/* Checkerboard pattern for transparent PNG previews */
+/* Precision Range Slider */
+input[type="range"].studio-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--foreground) 15%, transparent);
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"].studio-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 9999px;
+  background: #f59e0b;
+  border: 2px solid var(--card);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s ease;
+}
+input[type="range"].studio-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+}
+
+/* Checkerboard pattern ONLY for explicit transparent PNG previews */
 .bg-checkerboard {
   background-image:
-    linear-gradient(45deg, rgba(128, 128, 128, 0.12) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(128, 128, 128, 0.12) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.12) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.12) 75%);
+    linear-gradient(45deg, rgba(128, 128, 128, 0.13) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128, 128, 128, 0.13) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.13) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.13) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
 
-@keyframes progress-indeterminate {
+/* Filmic Darkroom Developing Shimmer for Pending/Running Tasks */
+@keyframes filmic-sweep {
   0% {
-    transform: translateX(-100%);
+    transform: translateX(-120%) skewX(-16deg);
   }
   100% {
-    transform: translateX(250%);
+    transform: translateX(220%) skewX(-16deg);
   }
 }
 
-.animate-progress-shimmer {
-  animation: progress-indeterminate 1.8s ease-in-out infinite;
+.developing-canvas {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--card) 92%, #f59e0b 8%) 0%,
+    var(--secondary) 50%,
+    color-mix(in srgb, var(--card) 94%, #f59e0b 6%) 100%
+  );
+}
+.developing-canvas::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(245, 158, 11, 0.08) 45%,
+    rgba(255, 255, 255, 0.09) 50%,
+    rgba(245, 158, 11, 0.08) 55%,
+    transparent 100%
+  );
+  animation: filmic-sweep 2.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+/* Masonry Card break prevention */
+.masonry-item {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  margin-bottom: 1rem;
 }

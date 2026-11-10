@@ -325,10 +325,12 @@ func (s *AppServer) Handler() http.Handler {
 	mux.HandleFunc("/api/config/test", s.handleTestConfig)
 	mux.HandleFunc("/api/records", s.handleRecords)
 	mux.HandleFunc("/api/records/star", s.handleStarRecord)
+	mux.HandleFunc("/api/records/organize", s.handleOrganizeRecords)
 	mux.HandleFunc("/api/records/cancel", s.handleCancelRecord)
 	mux.HandleFunc("/api/records/batch-delete", s.handleBatchDeleteRecords)
 	mux.HandleFunc("/api/records/download", s.handleDownloadRecord)
 	mux.HandleFunc("/api/records/export-zip", s.handleExportZip)
+	mux.HandleFunc("/api/cache/clean-refs", s.handleCleanRefCache)
 	mux.HandleFunc("/api/upload-ref", s.handleUploadRef)
 	mux.HandleFunc("/api/open-folder", s.handleOpenFolder)
 	mux.HandleFunc("/api/generate", s.handleGenerate)
@@ -408,7 +410,7 @@ func (s *AppServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.store.GetConfig()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":           "v2.0.0",
+		"version":           "v3.0.0",
 		"data_dir":          s.store.BaseDir(),
 		"images_dir":        s.store.ImagesDir(),
 		"has_key":           strings.TrimSpace(cfg.APIKey) != "",
@@ -565,6 +567,55 @@ func (s *AppServer) handleStarRecord(w http.ResponseWriter, r *http.Request) {
 	}
 	s.broadcastSSE("record_updated", rec)
 	writeJSON(w, http.StatusOK, rec)
+}
+
+func (s *AppServer) handleOrganizeRecords(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	var body struct {
+		IDs       []string  `json:"ids"`
+		ProjectID *string   `json:"project_id"`
+		Starred   *bool     `json:"starred"`
+		Tags      *[]string `json:"tags"`
+		Note      *string   `json:"note"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.IDs) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "缺少任务 IDs")
+		return
+	}
+	updated, err := s.store.OrganizeRecords(body.IDs, body.ProjectID, body.Starred, body.Tags, body.Note)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, rec := range updated {
+		s.broadcastSSE("record_updated", rec)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"updated_count": len(updated),
+		"records":       updated,
+	})
+}
+
+func (s *AppServer) handleCleanRefCache(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	removed, freed, err := s.store.CleanOrphanRefCache()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "清理缓存失败: "+err.Error())
+		return
+	}
+	stats := s.store.DiskStats()
+	s.broadcastSSE("stats_updated", stats)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"removed_count": removed,
+		"freed_bytes":   freed,
+		"disk_stats":    stats,
+	})
 }
 
 func (s *AppServer) handleCancelRecord(w http.ResponseWriter, r *http.Request) {
@@ -859,19 +910,21 @@ type generateRefItemInput struct {
 }
 
 type generateAPIRequest struct {
-	APIKey                string                 `json:"api_key"`
-	Model                 string                 `json:"model"`
-	Prompt                string                 `json:"prompt"`
-	Size                  string                 `json:"size"`
-	Image                 []string               `json:"image"`
-	RefMode               string                 `json:"ref_mode"`
-	RefItems              []generateRefItemInput `json:"ref_items"`
-	Quality               string                 `json:"quality"`
-	Background            string                 `json:"background"`
-	N                     int                    `json:"n"`
-	Oversea               *bool                  `json:"oversea"`
-	AutoCompatFallback    *bool                  `json:"auto_compat_fallback"`
-	CallbackURL           string                 `json:"callback_url"`
+	APIKey             string                 `json:"api_key"`
+	ProjectID          string                 `json:"project_id"`
+	Tags               []string               `json:"tags"`
+	Model              string                 `json:"model"`
+	Prompt             string                 `json:"prompt"`
+	Size               string                 `json:"size"`
+	Image              []string               `json:"image"`
+	RefMode            string                 `json:"ref_mode"`
+	RefItems           []generateRefItemInput `json:"ref_items"`
+	Quality            string                 `json:"quality"`
+	Background         string                 `json:"background"`
+	N                  int                    `json:"n"`
+	Oversea            *bool                  `json:"oversea"`
+	AutoCompatFallback *bool                  `json:"auto_compat_fallback"`
+	CallbackURL        string                 `json:"callback_url"`
 }
 
 func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
@@ -898,7 +951,7 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if apiKey == "" {
-		writeJSONError(w, http.StatusBadRequest, "未配置 API Key，请先在右上角「设置」中填写多米 API 密钥")
+		writeJSONError(w, http.StatusBadRequest, "未配置 API Key，请先在设置中填写多米 API 密钥")
 		return
 	}
 
@@ -914,6 +967,7 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if refMode == "" {
 		refMode = cfg.RefImageMode
 	}
+	projectID := strings.TrimSpace(req.ProjectID)
 
 	var cleanedImages []string
 	var previews []string
@@ -1028,6 +1082,8 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			rec := &TaskRecord{
 				ID:          res.TaskID,
 				BatchID:     batchID,
+				ProjectID:   projectID,
+				Tags:        req.Tags,
 				Model:       createReq.Model,
 				Prompt:      createReq.Prompt,
 				Size:        actualSize,
@@ -1188,6 +1244,9 @@ func (s *AppServer) handleExportZip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	idsParam := strings.TrimSpace(r.URL.Query().Get("ids"))
+	projectFilter := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	starredOnly := r.URL.Query().Get("starred") == "true"
+
 	wanted := make(map[string]bool)
 	if idsParam != "" {
 		for _, part := range strings.Split(idsParam, ",") {
@@ -1204,9 +1263,18 @@ func (s *AppServer) handleExportZip(w http.ResponseWriter, r *http.Request) {
 			if wanted[rec.ID] {
 				selected = append(selected, rec)
 			}
-		} else if rec.State == "succeeded" && len(rec.Images) > 0 {
-			selected = append(selected, rec)
+			continue
 		}
+		if rec.State != "succeeded" || len(rec.Images) == 0 {
+			continue
+		}
+		if projectFilter != "" && rec.ProjectID != projectFilter {
+			continue
+		}
+		if starredOnly && !rec.Starred {
+			continue
+		}
+		selected = append(selected, rec)
 	}
 	if len(selected) == 0 {
 		writeJSONError(w, http.StatusBadRequest, "没有可导出的已完成图片记录")

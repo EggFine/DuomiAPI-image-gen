@@ -561,3 +561,100 @@ func TestStarBatchDeleteAndZipExport(t *testing.T) {
 	}
 }
 
+func TestOrganizeProjectAlbumsAndOrphanCacheCleanup(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "duomi_data"))
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+
+	pngBytes := makeSyntheticPNG(t, 64, 64)
+	_ = os.WriteFile(filepath.Join(store.ImagesDir(), "proj_art_1.png"), pngBytes, 0644)
+	_ = os.WriteFile(filepath.Join(store.ImagesDir(), "proj_art_2.png"), pngBytes, 0644)
+
+	// Create one referenced ref image and one orphan ref image in refs/
+	keptRefRel, err := store.SaveRefImageBytes(pngBytes, ".png")
+	if err != nil {
+		t.Fatalf("SaveRefImageBytes kept failed: %v", err)
+	}
+	orphanRefRel, err := store.SaveRefImageBytes(makeSyntheticPNG(t, 48, 48), ".png")
+	if err != nil {
+		t.Fatalf("SaveRefImageBytes orphan failed: %v", err)
+	}
+
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:       "rec-proj-a",
+		Model:    "gpt-image-2.6-sunburst",
+		Prompt:   "project alpha artwork",
+		State:    "succeeded",
+		RefItems: []SavedRefImage{{LocalRef: keptRefRel}},
+		Images:   []SavedImage{{LocalFile: "proj_art_1.png", Width: 64, Height: 64, SizeBytes: int64(len(pngBytes))}},
+	})
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:     "rec-proj-b",
+		Model:  "gpt-image-2.6-flare",
+		Prompt: "unassigned artwork",
+		State:  "succeeded",
+		Images: []SavedImage{{LocalFile: "proj_art_2.png", Width: 64, Height: 64, SizeBytes: int64(len(pngBytes))}},
+	})
+
+	appSrv := NewAppServer(store, NewDuomiClient())
+	ts := httptest.NewServer(appSrv.Handler())
+	defer ts.Close()
+
+	// 1. Verify /api/info reports v3.0.0 and built-in studio recipes
+	infoResp, err := http.Get(ts.URL + "/api/info")
+	if err != nil || infoResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/info failed: %v", err)
+	}
+	var infoBody map[string]any
+	_ = json.NewDecoder(infoResp.Body).Decode(&infoBody)
+	infoResp.Body.Close()
+	if infoBody["version"] != "v3.0.0" {
+		t.Fatalf("expected version v3.0.0, got %v", infoBody["version"])
+	}
+
+	// 2. Organize rec-proj-a into project "proj_alpha" with note & star
+	orgPayload := `{"ids":["rec-proj-a"],"project_id":"proj_alpha","starred":true,"note":"客户终稿选片"}`
+	orgResp, err := http.Post(ts.URL+"/api/records/organize", "application/json", strings.NewReader(orgPayload))
+	if err != nil || orgResp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/records/organize failed: err=%v status=%v", err, orgResp)
+	}
+	orgResp.Body.Close()
+
+	updatedRec, ok := store.GetRecord("rec-proj-a")
+	if !ok || updatedRec.ProjectID != "proj_alpha" || !updatedRec.Starred || updatedRec.Note != "客户终稿选片" {
+		t.Fatalf("unexpected organized record: %+v", updatedRec)
+	}
+
+	// 3. Export ZIP filtered by project_id=proj_alpha -> must contain only proj_art_1.png + manifest.json (2 files)
+	zipResp, err := http.Get(ts.URL + "/api/records/export-zip?project_id=proj_alpha")
+	if err != nil || zipResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/records/export-zip?project_id=proj_alpha failed: %v", err)
+	}
+	zipBytes, _ := io.ReadAll(zipResp.Body)
+	zipResp.Body.Close()
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil || len(zr.File) != 2 {
+		t.Fatalf("expected 2 entries in project-filtered zip, got err=%v count=%d", err, len(zr.File))
+	}
+
+	// 4. Clean orphan reference cache -> removes orphanRefRel, preserves keptRefRel
+	cleanResp, err := http.Post(ts.URL+"/api/cache/clean-refs", "application/json", strings.NewReader(`{}`))
+	if err != nil || cleanResp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/cache/clean-refs failed: %v", err)
+	}
+	var cleanData map[string]any
+	_ = json.NewDecoder(cleanResp.Body).Decode(&cleanData)
+	cleanResp.Body.Close()
+	if int(cleanData["removed_count"].(float64)) != 1 {
+		t.Fatalf("expected 1 orphan ref cleaned, got %v", cleanData)
+	}
+	if _, err := os.Stat(filepath.Join(store.ImagesDir(), filepath.FromSlash(orphanRefRel))); !os.IsNotExist(err) {
+		t.Fatalf("expected orphan ref file to be deleted")
+	}
+	if _, err := os.Stat(filepath.Join(store.ImagesDir(), filepath.FromSlash(keptRefRel))); err != nil {
+		t.Fatalf("expected referenced ref file to remain intact: %v", err)
+	}
+}
+
+

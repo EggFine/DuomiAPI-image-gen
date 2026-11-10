@@ -1,57 +1,62 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
-  BookMarked,
   CheckCircle2,
-  Code2,
+  Command,
   FolderOpen,
   Info,
   KeyRound,
-  Moon,
-  PanelLeftClose,
-  PanelLeftOpen,
+  LayoutPanelLeft,
+  PanelTop,
   Search,
-  Sparkles,
-  Sun,
 } from "lucide-react"
-import { GalleryPanel } from "@/components/GalleryPanel"
+import { AnalyticsQueueView } from "@/components/AnalyticsQueueView"
+import { CommandPaletteModal } from "@/components/CommandPaletteModal"
 import { ImageLightbox } from "@/components/ImageLightbox"
+import { InspirationHubView } from "@/components/InspirationHubView"
+import { MasonryArtworkStream } from "@/components/MasonryArtworkStream"
+import { OmnibarComposer } from "@/components/OmnibarComposer"
+import { PromptWorkbenchModal } from "@/components/PromptWorkbenchModal"
+import { RefImageAnnotatorModal } from "@/components/RefImageAnnotatorModal"
 import {
   DevPreviewDialog,
   ImportTaskDialog,
   SettingsDialog,
   TemplatesDialog,
 } from "@/components/StudioDialogs"
+import { StudioRail } from "@/components/StudioRail"
 import { StudioSidebar } from "@/components/StudioSidebar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   apiFetch,
   buildDeveloperPreview,
   convertCachedRefOnServer,
   formatBytes,
+  loadPromptHistory,
   maskKey,
+  organizeRecordsOnServer,
+  pushPromptHistory,
   uploadLocalRefFile,
 } from "@/lib/studio-utils"
 import { cn } from "@/lib/utils"
 import type {
   AppConfig,
+  ComposerLayoutMode,
   DiskUsageStats,
   ImageHostInfo,
   ImageHostProvider,
   ModelInfo,
+  ProjectFolder,
+  PromptHistoryItem,
   PromptTemplate,
   RatioPresetGroup,
   ReferenceImageEntry,
   RefImageMode,
   SavedImage,
   ServerInfoResponse,
+  StudioNavTab,
   TaskRecord,
 } from "@/types"
 
@@ -99,10 +104,24 @@ export function App() {
     [showToast]
   )
 
-  // Layout state
-  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
-  const [mobilePane, setMobilePane] = useState<"studio" | "gallery">("studio")
+  // Workspace Navigation & Layout Mode
+  const [activeTab, setActiveTab] = useState<StudioNavTab>("imagine")
+  const [layoutMode, setLayoutMode] = useState<ComposerLayoutMode>(() => {
+    const saved = localStorage.getItem("duomi_layout_mode")
+    return saved === "split" ? "split" : "omnibar"
+  })
+  const [splitMobilePane, setSplitMobilePane] = useState<"studio" | "gallery">(
+    "studio"
+  )
   const [sseConnected, setSseConnected] = useState<boolean>(false)
+
+  const toggleLayoutMode = useCallback(() => {
+    setLayoutMode((prev) => {
+      const next = prev === "omnibar" ? "split" : "omnibar"
+      localStorage.setItem("duomi_layout_mode", next)
+      return next
+    })
+  }, [])
 
   // Server data
   const [info, setInfo] = useState<ServerInfoResponse | null>(null)
@@ -115,9 +134,13 @@ export function App() {
   const [records, setRecords] = useState<TaskRecord[]>([])
 
   // Creation Studio state
-  const [selectedModel, setSelectedModel] = useState<string>("gpt-image-2.6-flare")
+  const [selectedModel, setSelectedModel] =
+    useState<string>("gpt-image-2.6-flare")
   const [customModel, setCustomModel] = useState<string>("")
   const [prompt, setPrompt] = useState<string>("")
+  const [promptHistory, setPromptHistory] = useState<PromptHistoryItem[]>(() =>
+    loadPromptHistory()
+  )
   const [selectedRatio, setSelectedRatio] = useState<string>("1:1")
   const [selectedSize, setSelectedSize] = useState<string>("1024x1024")
   const [preferredTier, setPreferredTier] = useState<string>("1k")
@@ -128,26 +151,63 @@ export function App() {
   const [batchCount, setBatchCount] = useState<number>(1)
   const [oversea, setOversea] = useState<boolean>(false)
   const [autoCompatFallback, setAutoCompatFallback] = useState<boolean>(true)
+  const [activeProjectId, setActiveProjectId] = useState<string>("")
 
-  // Reference Image Strategy state ("upload" default | "compress_base64" optional | "raw_base64" optional)
+  // Reference Image Strategy ("upload" default | "compress_base64" optional | "raw_base64" optional)
   const [refMode, setRefMode] = useState<RefImageMode>("upload")
   const [imageHostProvider, setImageHostProvider] =
     useState<ImageHostProvider>("auto")
   const [litterboxExpiry, setLitterboxExpiry] = useState<string>("12h")
   const [compressMaxDim, setCompressMaxDim] = useState<number>(1536)
   const [compressQuality, setCompressQuality] = useState<number>(85)
-  const [referenceImages, setReferenceImages] = useState<ReferenceImageEntry[]>([])
+  const [referenceImages, setReferenceImages] = useState<ReferenceImageEntry[]>(
+    []
+  )
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [refreshingIds, setRefreshingIds] = useState<Record<string, boolean>>({})
 
-  // Dialog states
+  // Modals & Lightbox states
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false)
   const [settingsTab, setSettingsTab] = useState<string>("api")
   const [templatesOpen, setTemplatesOpen] = useState<boolean>(false)
   const [devPreviewOpen, setDevPreviewOpen] = useState<boolean>(false)
   const [importTaskOpen, setImportTaskOpen] = useState<boolean>(false)
+  const [zenWorkbenchOpen, setZenWorkbenchOpen] = useState<boolean>(false)
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState<boolean>(false)
+  const [annotatingEntryId, setAnnotatingEntryId] = useState<string | null>(null)
+
   const [lightboxRecordId, setLightboxRecordId] = useState<string | null>(null)
   const [lightboxImgIdx, setLightboxImgIdx] = useState<number>(0)
+  const [lightboxInitialCompare, setLightboxInitialCompare] =
+    useState<boolean>(false)
+
+  // Global Keyboard Shortcuts: Ctrl/Cmd+K (Command Palette) & Alt+1..4 (Tabs)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault()
+        setCommandPaletteOpen((prev) => !prev)
+        return
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey) {
+        if (e.key === "1") {
+          e.preventDefault()
+          setActiveTab("imagine")
+        } else if (e.key === "2") {
+          e.preventDefault()
+          setActiveTab("gallery")
+        } else if (e.key === "3") {
+          e.preventDefault()
+          setActiveTab("recipes")
+        } else if (e.key === "4") {
+          e.preventDefault()
+          setActiveTab("analytics")
+        }
+      }
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [])
 
   // Keep latest ref options in a ref for async callbacks
   const refOptsRef = useRef({
@@ -338,7 +398,7 @@ export function App() {
     return () => clearInterval(timer)
   }, [activeCount, sseConnected, refreshRecords])
 
-  // Process local files according to current refMode ("upload" default | "compress_base64" | "raw_base64")
+  // Upload or locally convert reference image files
   const handleFilesSelected = useCallback(
     async (fileList: FileList | File[]) => {
       const files = Array.from(fileList)
@@ -364,6 +424,7 @@ export function App() {
             mode: opts.refMode,
             value: "",
             preview: objectPreview,
+            original_preview: objectPreview,
             label: pendingLabel,
             uploading: true,
           },
@@ -378,6 +439,7 @@ export function App() {
             compressQuality: opts.compressQuality,
           })
 
+          const finalPreview = res.preview_url || objectPreview
           setReferenceImages((prev) =>
             prev.map((item) =>
               item.id === entryId
@@ -385,7 +447,8 @@ export function App() {
                     ...item,
                     mode: res.mode,
                     value: res.value,
-                    preview: res.preview_url || objectPreview,
+                    preview: finalPreview,
+                    original_preview: finalPreview,
                     local_ref: res.local_ref,
                     remote_url: res.url,
                     provider: res.provider,
@@ -408,6 +471,7 @@ export function App() {
                 ? {
                     ...item,
                     preview: payload.preview_url || objectPreview,
+                    original_preview: payload.preview_url || objectPreview,
                     local_ref: payload.local_ref,
                     width: payload.width,
                     height: payload.height,
@@ -429,6 +493,84 @@ export function App() {
     [showToast]
   )
 
+  // Apply an annotated/cropped Reference Image from RefImageAnnotatorModal
+  const handleApplyAnnotatedFile = useCallback(
+    async (entry: ReferenceImageEntry, file: File) => {
+      const opts = refOptsRef.current
+      const editedPreview = URL.createObjectURL(file)
+      const preservedOriginal = entry.original_preview || entry.preview
+
+      setReferenceImages((prev) =>
+        prev.map((item) =>
+          item.id === entry.id
+            ? {
+                ...item,
+                preview: editedPreview,
+                original_preview: preservedOriginal,
+                annotated: true,
+                uploading: true,
+                error: undefined,
+                label:
+                  opts.refMode === "upload"
+                    ? "正在上传标注图..."
+                    : "正在编码标注图...",
+              }
+            : item
+        )
+      )
+
+      try {
+        const res = await uploadLocalRefFile(file, {
+          mode: opts.refMode,
+          provider: opts.imageHostProvider,
+          litterboxExpiry: opts.litterboxExpiry,
+          compressMaxDim: opts.compressMaxDim,
+          compressQuality: opts.compressQuality,
+        })
+        setReferenceImages((prev) =>
+          prev.map((item) =>
+            item.id === entry.id
+              ? {
+                  ...item,
+                  mode: res.mode,
+                  value: res.value,
+                  preview: res.preview_url || editedPreview,
+                  original_preview: preservedOriginal,
+                  annotated: true,
+                  local_ref: res.local_ref,
+                  remote_url: res.url,
+                  provider: res.provider,
+                  width: res.width,
+                  height: res.height,
+                  size_bytes: res.size_bytes,
+                  orig_bytes: res.orig_bytes,
+                  label: "已标注就绪",
+                  uploading: false,
+                  error: undefined,
+                }
+              : item
+          )
+        )
+        showToast("已更新裁剪/标注后的参考图", "success")
+      } catch (err: any) {
+        setReferenceImages((prev) =>
+          prev.map((item) =>
+            item.id === entry.id
+              ? {
+                  ...item,
+                  uploading: false,
+                  error: err.message,
+                  label: "标注同步失败",
+                }
+              : item
+          )
+        )
+        showToast("标注参考图上传失败: " + err.message, "error")
+      }
+    },
+    [showToast]
+  )
+
   // Global Ctrl+V / Cmd+V Clipboard Image Paste
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
@@ -444,6 +586,7 @@ export function App() {
       }
       if (imageFiles.length > 0) {
         e.preventDefault()
+        setActiveTab("imagine")
         handleFilesSelected(imageFiles)
         showToast(`已从剪贴板粘贴 ${imageFiles.length} 张参考图`, "info")
       }
@@ -465,7 +608,11 @@ export function App() {
         if (imgType) {
           const blob = await item.getType(imgType)
           const ext = imgType.split("/")[1] || "png"
-          files.push(new File([blob], `clipboard_${Date.now()}.${ext}`, { type: imgType }))
+          files.push(
+            new File([blob], `clipboard_${Date.now()}.${ext}`, {
+              type: imgType,
+            })
+          )
         }
       }
       if (files.length === 0) {
@@ -625,6 +772,7 @@ export function App() {
         mode: "url",
         value: trimmed,
         preview: trimmed,
+        original_preview: trimmed,
         remote_url: trimmed,
         label: "直链 URL",
       },
@@ -644,8 +792,8 @@ export function App() {
 
   // Use a generated gallery image directly as a Reference Image
   const handleUseGeneratedAsRef = async (img: SavedImage, _rec: TaskRecord) => {
-    setMobilePane("studio")
-    if (sidebarCollapsed) setSidebarCollapsed(false)
+    setActiveTab("imagine")
+    setSplitMobilePane("studio")
 
     if (img.local_file) {
       const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -657,6 +805,7 @@ export function App() {
           mode: refMode,
           value: "",
           preview,
+          original_preview: preview,
           label: refMode === "upload" ? "正在上传图床..." : "正在载入...",
           uploading: true,
         },
@@ -670,6 +819,7 @@ export function App() {
           compressMaxDim,
           compressQuality,
         })
+        const finalPreview = res.preview_url || preview
         setReferenceImages((prev) =>
           prev.map((cur) =>
             cur.id === entryId
@@ -677,7 +827,8 @@ export function App() {
                   ...cur,
                   mode: res.mode,
                   value: res.value,
-                  preview: res.preview_url || preview,
+                  preview: finalPreview,
+                  original_preview: finalPreview,
                   local_ref: res.local_ref,
                   remote_url: res.url,
                   provider: res.provider,
@@ -690,7 +841,7 @@ export function App() {
               : cur
           )
         )
-        showToast("已将该作品载入参考图栏，可继续微调生成", "success")
+        showToast("已将该作品载入参考图栏，可继续迭代微调", "success")
       } catch (err: any) {
         if (img.remote_url) {
           setReferenceImages((prev) =>
@@ -759,8 +910,11 @@ export function App() {
     showToast(`已对齐 16px 倍数并应用尺寸: ${w}x${h}`, "success")
   }
 
-  // Save Config
-  const handleSaveConfig = async (partial: Partial<AppConfig>) => {
+  // Save Config (persists API key, host settings, templates, and projects)
+  const handleSaveConfig = async (
+    partial: Partial<AppConfig>,
+    silent = false
+  ) => {
     const merged: AppConfig = {
       api_key: config?.api_key || "",
       base_url: config?.base_url || "https://duomiapi.com",
@@ -781,6 +935,7 @@ export function App() {
       compress_quality: compressQuality,
       auto_compat_fallback: autoCompatFallback,
       prompt_templates: config?.prompt_templates || [],
+      projects: config?.projects || [],
       ...partial,
     }
     const saved = await apiFetch<AppConfig>("/api/config", {
@@ -794,7 +949,89 @@ export function App() {
     setCompressMaxDim(saved.compress_max_dim || 1536)
     setCompressQuality(saved.compress_quality || 85)
     setAutoCompatFallback(saved.auto_compat_fallback !== false)
-    showToast("设置已持久化保存至 duomi_data/config.json", "success")
+    if (!silent) {
+      showToast("设置已持久化保存至 duomi_data/config.json", "success")
+    }
+  }
+
+  // Project Albums CRUD & Record Organization
+  const projects = useMemo<ProjectFolder[]>(
+    () => config?.projects || [],
+    [config?.projects]
+  )
+
+  const handleCreateProject = async (name: string, color: string) => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    const nextProj: ProjectFolder = {
+      id: `proj_${Date.now().toString(36)}`,
+      name: trimmed,
+      color: color || "amber",
+      created_at: Math.floor(Date.now() / 1000),
+    }
+    await handleSaveConfig({ projects: [...projects, nextProj] }, true)
+    showToast(`已新建项目画册「${trimmed}」`, "success")
+  }
+
+  const handleDeleteProject = async (projId: string) => {
+    await handleSaveConfig(
+      { projects: projects.filter((p) => p.id !== projId) },
+      true
+    )
+    if (activeProjectId === projId) setActiveProjectId("")
+    // Clear project_id on records belonging to deleted album
+    const affectedIds = records
+      .filter((r) => r.project_id === projId)
+      .map((r) => r.id)
+    if (affectedIds.length > 0) {
+      await organizeRecordsOnServer({ ids: affectedIds, project_id: "" }).catch(
+        () => {}
+      )
+    }
+    showToast("已删除该画册分组（作品文件本身完好保留）", "info")
+  }
+
+  const handleAssignProject = async (ids: string[], projectId: string) => {
+    if (ids.length === 0) return
+    try {
+      const res = await organizeRecordsOnServer({
+        ids,
+        project_id: projectId,
+      })
+      const map = new Map(res.records.map((r) => [r.id, r]))
+      setRecords((prev) => prev.map((r) => map.get(r.id) || r))
+      const targetName =
+        projects.find((p) => p.id === projectId)?.name || "未归档"
+      showToast(`已将 ${res.updated_count} 项作品移入「${targetName}」`, "success")
+    } catch (err: any) {
+      showToast(err.message, "error")
+    }
+  }
+
+  const handleBatchStar = async (ids: string[], starred: boolean) => {
+    if (ids.length === 0) return
+    try {
+      const res = await organizeRecordsOnServer({ ids, starred })
+      const map = new Map(res.records.map((r) => [r.id, r]))
+      setRecords((prev) => prev.map((r) => map.get(r.id) || r))
+      showToast(
+        starred
+          ? `已批量星标 ${res.updated_count} 项作品`
+          : `已取消星标 ${res.updated_count} 项作品`,
+        "success"
+      )
+    } catch (err: any) {
+      showToast(err.message, "error")
+    }
+  }
+
+  const handleOrganizeSingle = async (
+    recId: string,
+    patch: { project_id?: string; note?: string }
+  ) => {
+    const res = await organizeRecordsOnServer({ ids: [recId], ...patch })
+    const map = new Map(res.records.map((r) => [r.id, r]))
+    setRecords((prev) => prev.map((r) => map.get(r.id) || r))
   }
 
   // Submit Generation
@@ -820,7 +1057,8 @@ export function App() {
       return
     }
 
-    const finalModel = customModel.trim() || selectedModel || "gpt-image-2.6-flare"
+    const finalModel =
+      customModel.trim() || selectedModel || "gpt-image-2.6-flare"
     const finalQuality = quality === "default" ? "" : quality
     const n = Math.max(1, Math.min(10, Number(batchCount) || 1))
 
@@ -837,6 +1075,7 @@ export function App() {
           model: finalModel,
           prompt: trimmedPrompt,
           size: selectedSize,
+          project_id: activeProjectId,
           ref_mode: refMode,
           image: referenceImages.map((item) => item.value),
           ref_items: referenceImages.map((item) => ({
@@ -854,10 +1093,19 @@ export function App() {
           auto_compat_fallback: autoCompatFallback,
         }),
       })
+
+      setPromptHistory(
+        pushPromptHistory({
+          prompt: trimmedPrompt,
+          model: finalModel,
+          size: selectedSize,
+        })
+      )
+
       const count = res.submitted_count || 1
       showToast(
         count > 1
-          ? `已成功并发提交 ${count} 个生图任务，实时推送进度中`
+          ? `已并发提交 ${count} 张异步冲印任务，正在实时显影`
           : `生图任务已提交 (ID: ${(res.id || "").slice(0, 8)}...)`,
         "success"
       )
@@ -867,7 +1115,8 @@ export function App() {
       if (res.partial_error) {
         showToast(`部分任务提示: ${res.partial_error}`, "error")
       }
-      setMobilePane("gallery")
+      setActiveTab("imagine")
+      setSplitMobilePane("gallery")
       if (!sseConnected) {
         await refreshRecords()
       }
@@ -878,7 +1127,7 @@ export function App() {
     }
   }
 
-  // Reuse Record (including Reference Images!)
+  // Reuse Record (1-click Remix including Reference Images!)
   const handleReuseRecord = async (rec: TaskRecord, includeRefs: boolean) => {
     setPrompt(rec.prompt || "")
     const isKnown = models.some((m) => m.id === rec.model)
@@ -894,8 +1143,11 @@ export function App() {
     setQuality(rec.quality || "default")
     setBackground(rec.background || "auto")
     setOversea(!!rec.oversea)
-    setMobilePane("studio")
-    if (sidebarCollapsed) setSidebarCollapsed(false)
+    if (rec.project_id) {
+      setActiveProjectId(rec.project_id)
+    }
+    setActiveTab("imagine")
+    setSplitMobilePane("studio")
 
     if (includeRefs && rec.ref_items && rec.ref_items.length > 0) {
       const restored: ReferenceImageEntry[] = []
@@ -910,11 +1162,13 @@ export function App() {
               compressMaxDim,
               compressQuality,
             })
+            const previewUrl = conv.preview_url || `/images/${ri.local_ref}`
             restored.push({
               id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               mode: conv.mode,
               value: conv.value,
-              preview: conv.preview_url || `/images/${ri.local_ref}`,
+              preview: previewUrl,
+              original_preview: previewUrl,
               local_ref: conv.local_ref || ri.local_ref,
               remote_url: conv.url,
               provider: conv.provider,
@@ -925,7 +1179,7 @@ export function App() {
             })
             continue
           } catch {
-            // fallback to remote_url if available
+            // fallback to remote_url
           }
         }
         if (ri.remote_url) {
@@ -934,6 +1188,7 @@ export function App() {
             mode: "url",
             value: ri.remote_url,
             preview: ri.remote_url,
+            original_preview: ri.remote_url,
             remote_url: ri.remote_url,
             label: "直链 URL",
           })
@@ -942,12 +1197,12 @@ export function App() {
       setReferenceImages(restored)
       showToast(
         restored.length > 0
-          ? `已完整复用参数并恢复 ${restored.length} 张参考图`
-          : "已复用该任务参数",
+          ? `已完整载入同款参数并恢复 ${restored.length} 张参考图`
+          : "已将该作品参数装填至创作舱",
         "success"
       )
     } else {
-      showToast("已将该任务的参数填入左侧工作台", "success")
+      showToast("已将该作品参数装填至创作舱", "success")
     }
   }
 
@@ -1007,6 +1262,7 @@ export function App() {
           model: rec.model,
           prompt: rec.prompt,
           size: rec.size,
+          project_id: rec.project_id || "",
           ref_mode: refMode,
           image: restoredRefs.map((r) => r.value),
           ref_items: restoredRefs,
@@ -1052,10 +1308,11 @@ export function App() {
 
   const handleToggleStar = async (rec: TaskRecord) => {
     try {
-      await apiFetch("/api/records/star", {
+      const updated = await apiFetch<TaskRecord>("/api/records/star", {
         method: "POST",
         body: JSON.stringify({ id: rec.id, starred: !rec.starred }),
       })
+      setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
     } catch (err: any) {
       showToast(err.message, "error")
     }
@@ -1075,10 +1332,12 @@ export function App() {
 
   const handleDeleteSingle = async (rec: TaskRecord) => {
     try {
-      await apiFetch(
+      const res = await apiFetch<{ deleted: string; disk_stats?: DiskUsageStats }>(
         `/api/records?id=${encodeURIComponent(rec.id)}&delete_files=true`,
         { method: "DELETE" }
       )
+      setRecords((prev) => prev.filter((r) => r.id !== rec.id))
+      if (res.disk_stats) setDiskStats(res.disk_stats)
       if (lightboxRecordId === rec.id) {
         setLightboxRecordId(null)
       }
@@ -1090,13 +1349,16 @@ export function App() {
 
   const handleBatchDelete = async (ids: string[]) => {
     try {
-      const res = await apiFetch<{ deleted_count: number }>(
-        "/api/records/batch-delete",
-        {
-          method: "POST",
-          body: JSON.stringify({ ids, delete_files: true }),
-        }
-      )
+      const res = await apiFetch<{
+        deleted_count: number
+        disk_stats?: DiskUsageStats
+      }>("/api/records/batch-delete", {
+        method: "POST",
+        body: JSON.stringify({ ids, delete_files: true }),
+      })
+      const delSet = new Set(ids)
+      setRecords((prev) => prev.filter((r) => !delSet.has(r.id)))
+      if (res.disk_stats) setDiskStats(res.disk_stats)
       showToast(`已批量删除 ${res.deleted_count} 条记录`, "info")
     } catch (err: any) {
       showToast(err.message, "error")
@@ -1105,13 +1367,15 @@ export function App() {
 
   const handleClearFailed = async () => {
     try {
-      const res = await apiFetch<{ deleted_count: number }>(
-        "/api/records/batch-delete",
-        {
-          method: "POST",
-          body: JSON.stringify({ clear_failed: true, delete_files: true }),
-        }
-      )
+      const res = await apiFetch<{
+        deleted_count: number
+        disk_stats?: DiskUsageStats
+      }>("/api/records/batch-delete", {
+        method: "POST",
+        body: JSON.stringify({ clear_failed: true, delete_files: true }),
+      })
+      if (res.disk_stats) setDiskStats(res.disk_stats)
+      await refreshRecords()
       showToast(`已清理 ${res.deleted_count} 条失败/超时记录`, "success")
     } catch (err: any) {
       showToast(err.message, "error")
@@ -1138,7 +1402,7 @@ export function App() {
     }
   }
 
-  // Templates handlers
+  // Recipe / Template handlers
   const handleApplyTemplate = (tpl: PromptTemplate, withParams: boolean) => {
     setPrompt(tpl.prompt)
     if (withParams) {
@@ -1154,11 +1418,12 @@ export function App() {
       if (tpl.size) {
         selectSizeOrRatioFromValue(tpl.size, ratioPresets)
       }
-      if (tpl.quality) {
-        setQuality(tpl.quality)
-      }
+      setQuality(tpl.quality || "default")
+      setBackground(tpl.background || "auto")
     }
-    showToast(`已载入模板「${tpl.title}」`, "success")
+    setActiveTab("imagine")
+    setSplitMobilePane("studio")
+    showToast(`已装填灵感配方「${tpl.title}」`, "success")
   }
 
   const handleSaveCustomTemplate = async (tpl: PromptTemplate) => {
@@ -1175,7 +1440,7 @@ export function App() {
     })
   }
 
-  // Lightbox navigation across succeeded records
+  // Lightbox & Annotator memos
   const succeededRecords = useMemo(
     () => records.filter((r) => r.state === "succeeded" && r.images?.length),
     [records]
@@ -1188,6 +1453,15 @@ export function App() {
     () => succeededRecords.findIndex((r) => r.id === lightboxRecordId),
     [succeededRecords, lightboxRecordId]
   )
+
+  const annotatingRefInfo = useMemo(() => {
+    if (!annotatingEntryId) return { entry: null, index: 0 }
+    const idx = referenceImages.findIndex((r) => r.id === annotatingEntryId)
+    return {
+      entry: idx >= 0 ? referenceImages[idx] : null,
+      index: Math.max(0, idx),
+    }
+  }, [annotatingEntryId, referenceImages])
 
   const devPreview = useMemo(
     () =>
@@ -1219,373 +1493,556 @@ export function App() {
   )
 
   const hasApiKey = Boolean(config?.api_key && config.api_key.trim())
+  const allRecipes = useMemo(
+    () => [...(config?.prompt_templates || []), ...builtInTemplates],
+    [config?.prompt_templates, builtInTemplates]
+  )
 
   return (
-    <TooltipProvider delayDuration={180}>
-      <div className="min-h-screen flex flex-col bg-background text-foreground">
-        {/* Top Studio Navbar */}
-        <header className="sticky top-0 z-30 flex h-13 items-center justify-between border-b border-border bg-card/88 px-3.5 backdrop-blur-md lg:px-5 shrink-0">
-          <div className="flex items-center gap-2.5">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="hidden lg:inline-flex h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={() => setSidebarCollapsed((p) => !p)}
-                  aria-label="展开或收起左侧创作工作台"
-                >
-                  {sidebarCollapsed ? (
-                    <PanelLeftOpen className="h-4 w-4" />
-                  ) : (
-                    <PanelLeftClose className="h-4 w-4" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {sidebarCollapsed ? "展开左侧工作台" : "收起侧栏专注浏览图库"}
-              </TooltipContent>
-            </Tooltip>
+    <TooltipProvider delayDuration={160}>
+      <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+        {/* Left Vertical Studio Navigation Rail (Desktop) + Bottom Tab Bar (Mobile) */}
+        <StudioRail
+          activeTab={activeTab}
+          onSelectTab={setActiveTab}
+          layoutMode={layoutMode}
+          onToggleLayoutMode={toggleLayoutMode}
+          activeQueueCount={activeCount}
+          totalGalleryCount={records.length}
+          hasApiKey={hasApiKey}
+          sseConnected={sseConnected}
+          theme={theme}
+          onToggleTheme={() =>
+            setTheme((prev) => (prev === "dark" ? "light" : "dark"))
+          }
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+          onOpenLocalFolder={() => handleOpenLocalFolder()}
+          onOpenSettings={(tab = "api") => {
+            setSettingsTab(tab)
+            setSettingsOpen(true)
+          }}
+        />
 
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500 text-zinc-950 font-bold shadow-2xs shrink-0">
-              <Sparkles className="h-4 w-4" />
-            </div>
+        {/* Right Full-Viewport Studio Canvas */}
+        <div className="flex flex-1 flex-col min-w-0 h-full overflow-hidden">
+          {/* Sleek Studio Top Status Bar */}
+          <header className="flex h-11 shrink-0 items-center justify-between border-b border-border/75 bg-background/85 px-4 backdrop-blur-md z-20">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="text-xs font-semibold tracking-tight truncate">
+                {activeTab === "imagine" && "多米图像创作中心 · Imagine"}
+                {activeTab === "gallery" && "作品资产与项目画册 · Assets"}
+                {activeTab === "recipes" && "灵感配方广场 · Recipes"}
+                {activeTab === "analytics" && "异步队列与存储管家 · Telemetry"}
+              </span>
 
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h1 className="text-sm font-semibold tracking-tight truncate">
-                  多米 API 图像创作工作台
-                </h1>
+              <Badge
+                variant="outline"
+                className="hidden sm:inline-flex font-mono text-[10px] px-1.5 py-0 text-muted-foreground"
+              >
+                {info?.version || "v3.0.0"} 单文件便携版
+              </Badge>
+
+              {activeCount > 0 && (
                 <Badge
-                  variant="amber"
-                  className="hidden sm:inline-flex text-[10px] px-1.5 py-0"
+                  variant="warning"
+                  className="text-[10px] px-1.5 py-0 tabular-nums"
                 >
-                  绿色单文件 v2.0
+                  显影中 {activeCount}
                 </Badge>
-                {activeCount > 0 && (
-                  <Badge
-                    variant="warning"
-                    className="text-[10px] px-1.5 py-0 animate-pulse tabular-nums"
-                  >
-                    进行中 {activeCount}
-                  </Badge>
-                )}
-              </div>
+              )}
             </div>
-          </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Portable Directory & Disk Usage Badge */}
-            <Tooltip>
-              <TooltipTrigger asChild>
+            <div className="flex items-center gap-1.5">
+              {/* Quick Ctrl+K Search Pill */}
+              <button
+                type="button"
+                onClick={() => setCommandPaletteOpen(true)}
+                className="hidden md:inline-flex items-center gap-2 rounded-lg border border-border bg-secondary/45 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+              >
+                <Command className="h-3 w-3 text-amber-500" />
+                <span>快捷指令...</span>
+                <span className="studio-kbd">⌘K</span>
+              </button>
+
+              {/* Layout Switcher when in Imagine tab */}
+              {activeTab === "imagine" && (
                 <button
-                  id="badge-portable-data-dir"
                   type="button"
-                  onClick={() => handleOpenLocalFolder()}
-                  className="hidden xl:flex items-center gap-1.5 rounded-lg border border-border bg-secondary/55 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer"
+                  onClick={toggleLayoutMode}
+                  className="hidden lg:inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/45 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                  title="切换悬浮灵感舱或双栏专业参数台"
                 >
-                  <FolderOpen className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                  <span className="font-mono text-[11px] max-w-[150px] truncate">
-                    {info?.data_dir?.split(/[\\/]/).pop() || "duomi_data"}
-                  </span>
-                  {diskStats && (
-                    <span className="border-l border-border pl-1.5 font-mono text-[10px] tabular-nums">
-                      {diskStats.generated_count}张 ·{" "}
-                      {formatBytes(diskStats.total_bytes)}
-                    </span>
+                  {layoutMode === "omnibar" ? (
+                    <>
+                      <LayoutPanelLeft className="h-3 w-3 text-amber-500" />
+                      <span>切换双栏</span>
+                    </>
+                  ) : (
+                    <>
+                      <PanelTop className="h-3 w-3 text-amber-500" />
+                      <span>切换悬浮舱</span>
+                    </>
                   )}
                 </button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs space-y-1">
-                <p className="font-medium text-foreground">
-                  点击打开本地绿色数据目录 ({info?.data_dir || "./duomi_data"})
-                </p>
-                <p className="text-muted-foreground">
-                  所有配置、记录与原图均保存在此单一目录，绝不写注册表或系统盘。
-                </p>
-              </TooltipContent>
-            </Tooltip>
-
-            {/* Templates Quick Trigger */}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 px-2.5 text-xs hidden md:inline-flex"
-              onClick={() => setTemplatesOpen(true)}
-            >
-              <BookMarked className="h-3.5 w-3.5 text-amber-500" />
-              <span>模板库</span>
-            </Button>
-
-            {/* API JSON / CLI Preview */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 hidden sm:inline-flex"
-                  onClick={() => setDevPreviewOpen(true)}
-                  aria-label="请求参数 JSON 与 CLI 预览"
-                >
-                  <Code2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>查看当前请求 JSON / cURL / CLI 命令</TooltipContent>
-            </Tooltip>
-
-            {/* Query Task by ID */}
-            <Button
-              id="btn-open-query-modal"
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 px-2.5 text-xs"
-              onClick={() => setImportTaskOpen(true)}
-            >
-              <Search className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">查任务ID</span>
-            </Button>
-
-            {/* Theme Switcher */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  id="btn-toggle-theme"
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8"
-                  onClick={() =>
-                    setTheme((prev) => (prev === "dark" ? "light" : "dark"))
-                  }
-                  aria-label="切换深浅色外观"
-                >
-                  {theme === "dark" ? (
-                    <Sun className="h-4 w-4 text-amber-400" />
-                  ) : (
-                    <Moon className="h-4 w-4 text-zinc-700" />
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                切换为{theme === "dark" ? "浅色" : "深色"}主题
-              </TooltipContent>
-            </Tooltip>
-
-            {/* Settings / API Key Trigger */}
-            <Button
-              id="btn-open-config-modal"
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setSettingsTab("api")
-                setSettingsOpen(true)
-              }}
-              className={cn(
-                "h-8 gap-1.5 px-2.5",
-                !hasApiKey && "border-amber-500/60 text-amber-500"
               )}
-            >
-              <span
-                title={sseConnected ? "实时推送已连接" : "轮询模式"}
-                className={cn(
-                  "h-2 w-2 rounded-full shrink-0",
-                  hasApiKey
-                    ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.55)]"
-                    : "bg-amber-500 animate-pulse"
-                )}
-              />
-              <KeyRound className="h-3.5 w-3.5" />
-              <span className="text-xs">
-                {hasApiKey ? maskKey(config?.api_key) : "配置密钥"}
-              </span>
-            </Button>
-          </div>
-        </header>
 
-        {/* Mobile Workspace Tab Bar (< lg) */}
-        <div className="flex lg:hidden border-b border-border bg-card/60 p-1.5 gap-1.5">
-          <button
-            type="button"
-            onClick={() => setMobilePane("studio")}
-            className={cn(
-              "flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors cursor-pointer",
-              mobilePane === "studio"
-                ? "bg-amber-500 text-zinc-950"
-                : "text-muted-foreground hover:text-foreground"
+              {/* Portable Data Dir Pill */}
+              <button
+                type="button"
+                onClick={() => handleOpenLocalFolder()}
+                className="hidden xl:inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/45 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                title="点击打开本地绿色便携目录 duomi_data"
+              >
+                <FolderOpen className="h-3 w-3 text-amber-500" />
+                <span className="font-mono">
+                  {diskStats
+                    ? `${diskStats.generated_count}张 · ${formatBytes(
+                        diskStats.total_bytes
+                      )}`
+                    : "duomi_data"}
+                </span>
+              </button>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => setImportTaskOpen(true)}
+              >
+                <Search className="h-3 w-3" />
+                <span className="hidden sm:inline">查任务ID</span>
+              </Button>
+
+              <button
+                id="btn-open-config-modal"
+                type="button"
+                onClick={() => {
+                  setSettingsTab("api")
+                  setSettingsOpen(true)
+                }}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer",
+                  hasApiKey
+                    ? "border-border bg-secondary/45 text-foreground hover:bg-secondary"
+                    : "border-amber-500/60 bg-amber-500/10 text-amber-500"
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    hasApiKey ? "bg-emerald-500" : "bg-amber-500 animate-pulse"
+                  )}
+                />
+                <KeyRound className="h-3 w-3" />
+                <span className="font-mono">
+                  {hasApiKey ? maskKey(config?.api_key) : "配置密钥"}
+                </span>
+              </button>
+            </div>
+          </header>
+
+          {/* Active Workspace Body */}
+          <main className="relative flex-1 min-h-0 overflow-hidden">
+            {/* TAB 1: IMAGINE WORKSPACE (Floating Omnibar OR Pro Split Mode) */}
+            {activeTab === "imagine" &&
+              (layoutMode === "omnibar" ? (
+                <div className="flex h-full flex-col overflow-y-auto studio-scroll pb-20 md:pb-6">
+                  {/* Sticky Floating Omnibar Creation Dock */}
+                  <div className="sticky top-0 z-20 px-3 sm:px-6 pt-3.5 pb-2 bg-gradient-to-b from-background via-background/92 to-transparent">
+                    <OmnibarComposer
+                      models={models}
+                      selectedModel={selectedModel}
+                      onSelectModel={setSelectedModel}
+                      customModel={customModel}
+                      onChangeCustomModel={setCustomModel}
+                      prompt={prompt}
+                      onChangePrompt={setPrompt}
+                      promptHistory={promptHistory}
+                      onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
+                      onOpenRecipes={() => setActiveTab("recipes")}
+                      onSaveAsTemplate={() => setTemplatesOpen(true)}
+                      refMode={refMode}
+                      onChangeRefMode={handleChangeRefMode}
+                      imageHosts={imageHosts}
+                      imageHostProvider={imageHostProvider}
+                      onChangeImageHostProvider={(p) => {
+                        setImageHostProvider(p)
+                        if (refMode === "upload") {
+                          reconvertLocalRefs("upload", p, litterboxExpiry)
+                        }
+                      }}
+                      litterboxExpiry={litterboxExpiry}
+                      onChangeLitterboxExpiry={(exp) => {
+                        setLitterboxExpiry(exp)
+                        if (refMode === "upload") {
+                          reconvertLocalRefs("upload", imageHostProvider, exp)
+                        }
+                      }}
+                      compressMaxDim={compressMaxDim}
+                      onChangeCompressMaxDim={(dim) => {
+                        setCompressMaxDim(dim)
+                        if (refMode === "compress_base64") {
+                          reconvertLocalRefs(
+                            "compress_base64",
+                            imageHostProvider,
+                            litterboxExpiry,
+                            dim,
+                            compressQuality
+                          )
+                        }
+                      }}
+                      compressQuality={compressQuality}
+                      onChangeCompressQuality={(q) => {
+                        setCompressQuality(q)
+                        if (refMode === "compress_base64") {
+                          reconvertLocalRefs(
+                            "compress_base64",
+                            imageHostProvider,
+                            litterboxExpiry,
+                            compressMaxDim,
+                            q
+                          )
+                        }
+                      }}
+                      referenceImages={referenceImages}
+                      onFilesSelected={handleFilesSelected}
+                      onAddRefUrl={handleAddRefUrl}
+                      onRemoveRef={(id) =>
+                        setReferenceImages((prev) =>
+                          prev.filter((r) => r.id !== id)
+                        )
+                      }
+                      onMoveRef={handleMoveRef}
+                      onRetryRef={handleRetrySingleRef}
+                      onAnnotateRef={(entry) => setAnnotatingEntryId(entry.id)}
+                      onPasteFromClipboardButton={handlePasteFromClipboardButton}
+                      onOpenSettingsTab={(t) => {
+                        setSettingsTab(t)
+                        setSettingsOpen(true)
+                      }}
+                      ratioPresets={ratioPresets}
+                      selectedRatio={selectedRatio}
+                      selectedSize={selectedSize}
+                      onSelectRatio={handleSelectRatio}
+                      onSelectPresetSize={(val, tier) => {
+                        setSelectedSize(val)
+                        if (tier && tier !== "auto") {
+                          setPreferredTier(tier)
+                        }
+                      }}
+                      onSelectCustomRatioMode={() => setSelectedRatio("custom")}
+                      customW={customW}
+                      customH={customH}
+                      onChangeCustomW={setCustomW}
+                      onChangeCustomH={setCustomH}
+                      onApplyCustomSize={handleApplyCustomSize}
+                      quality={quality}
+                      onChangeQuality={setQuality}
+                      background={background}
+                      onChangeBackground={setBackground}
+                      oversea={oversea}
+                      onChangeOversea={setOversea}
+                      autoCompatFallback={autoCompatFallback}
+                      onChangeAutoCompatFallback={setAutoCompatFallback}
+                      projects={projects}
+                      activeProjectId={activeProjectId}
+                      onChangeActiveProjectId={setActiveProjectId}
+                      batchCount={batchCount}
+                      onChangeBatchCount={setBatchCount}
+                      isSubmitting={isSubmitting}
+                      onSubmitGenerate={handleSubmitGenerate}
+                      onOpenDevPreview={() => setDevPreviewOpen(true)}
+                    />
+                  </div>
+
+                  {/* Native Aspect-Ratio Masonry Stream */}
+                  <div className="flex-1 px-1 sm:px-3">
+                    <MasonryArtworkStream
+                      mode="imagine"
+                      records={records}
+                      projects={projects}
+                      onCreateProject={handleCreateProject}
+                      onDeleteProject={handleDeleteProject}
+                      onAssignProject={handleAssignProject}
+                      onBatchStar={handleBatchStar}
+                      refreshingIds={refreshingIds}
+                      onRefreshAll={async () => {
+                        await refreshRecords()
+                        showToast("已同步最新记录列表", "info")
+                      }}
+                      onRefreshSingle={handleRefreshSingle}
+                      onCancelPolling={handleCancelPolling}
+                      onToggleStar={handleToggleStar}
+                      onOpenLightbox={(rec, idx, openCompare = false) => {
+                        setLightboxInitialCompare(openCompare)
+                        setLightboxRecordId(rec.id)
+                        setLightboxImgIdx(idx)
+                      }}
+                      onUseGeneratedAsRef={handleUseGeneratedAsRef}
+                      onReuseRecord={handleReuseRecord}
+                      onRetryRecord={handleRetryRecord}
+                      onDownloadMissingLocal={handleDownloadMissingLocal}
+                      onDeleteSingle={handleDeleteSingle}
+                      onBatchDelete={handleBatchDelete}
+                      onClearFailed={handleClearFailed}
+                      onOpenImportTask={() => setImportTaskOpen(true)}
+                      onCopyText={copyText}
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* Pro Split 2-Column Mode */
+                <div className="flex flex-col lg:grid lg:grid-cols-[440px_1fr] xl:grid-cols-[465px_1fr] h-full overflow-hidden">
+                  <div className="flex lg:hidden border-b border-border bg-card/60 p-1.5 gap-1.5 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setSplitMobilePane("studio")}
+                      className={cn(
+                        "flex-1 rounded-lg py-1.5 text-xs font-semibold cursor-pointer",
+                        splitMobilePane === "studio"
+                          ? "bg-amber-500 text-zinc-950"
+                          : "text-muted-foreground"
+                      )}
+                    >
+                      参数工作台
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSplitMobilePane("gallery")}
+                      className={cn(
+                        "flex-1 rounded-lg py-1.5 text-xs font-semibold cursor-pointer",
+                        splitMobilePane === "gallery"
+                          ? "bg-amber-500 text-zinc-950"
+                          : "text-muted-foreground"
+                      )}
+                    >
+                      瀑布流画廊 ({records.length})
+                    </button>
+                  </div>
+
+                  <div
+                    className={cn(
+                      "h-full overflow-hidden",
+                      splitMobilePane !== "studio" && "hidden lg:block"
+                    )}
+                  >
+                    <StudioSidebar
+                      models={models}
+                      selectedModel={selectedModel}
+                      onSelectModel={setSelectedModel}
+                      customModel={customModel}
+                      onChangeCustomModel={setCustomModel}
+                      prompt={prompt}
+                      onChangePrompt={setPrompt}
+                      onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
+                      onOpenTemplates={() => setActiveTab("recipes")}
+                      onSaveAsTemplate={() => setTemplatesOpen(true)}
+                      refMode={refMode}
+                      onChangeRefMode={handleChangeRefMode}
+                      imageHosts={imageHosts}
+                      imageHostProvider={imageHostProvider}
+                      onChangeImageHostProvider={(p) => {
+                        setImageHostProvider(p)
+                        if (refMode === "upload") {
+                          reconvertLocalRefs("upload", p, litterboxExpiry)
+                        }
+                      }}
+                      litterboxExpiry={litterboxExpiry}
+                      onChangeLitterboxExpiry={(exp) => {
+                        setLitterboxExpiry(exp)
+                        if (refMode === "upload") {
+                          reconvertLocalRefs("upload", imageHostProvider, exp)
+                        }
+                      }}
+                      compressMaxDim={compressMaxDim}
+                      onChangeCompressMaxDim={(dim) => {
+                        setCompressMaxDim(dim)
+                        if (refMode === "compress_base64") {
+                          reconvertLocalRefs(
+                            "compress_base64",
+                            imageHostProvider,
+                            litterboxExpiry,
+                            dim,
+                            compressQuality
+                          )
+                        }
+                      }}
+                      compressQuality={compressQuality}
+                      onChangeCompressQuality={(q) => {
+                        setCompressQuality(q)
+                        if (refMode === "compress_base64") {
+                          reconvertLocalRefs(
+                            "compress_base64",
+                            imageHostProvider,
+                            litterboxExpiry,
+                            compressMaxDim,
+                            q
+                          )
+                        }
+                      }}
+                      referenceImages={referenceImages}
+                      onFilesSelected={handleFilesSelected}
+                      onAddRefUrl={handleAddRefUrl}
+                      onRemoveRef={(id) =>
+                        setReferenceImages((prev) =>
+                          prev.filter((r) => r.id !== id)
+                        )
+                      }
+                      onMoveRef={handleMoveRef}
+                      onRetryRef={handleRetrySingleRef}
+                      onAnnotateRef={(entry) => setAnnotatingEntryId(entry.id)}
+                      onPasteFromClipboardButton={handlePasteFromClipboardButton}
+                      onCopyText={copyText}
+                      onOpenSettingsTab={(t) => {
+                        setSettingsTab(t)
+                        setSettingsOpen(true)
+                      }}
+                      ratioPresets={ratioPresets}
+                      selectedRatio={selectedRatio}
+                      selectedSize={selectedSize}
+                      onSelectRatio={handleSelectRatio}
+                      onSelectPresetSize={(val, tier) => {
+                        setSelectedSize(val)
+                        if (tier && tier !== "auto") {
+                          setPreferredTier(tier)
+                        }
+                      }}
+                      onSelectCustomRatioMode={() => setSelectedRatio("custom")}
+                      customW={customW}
+                      customH={customH}
+                      onChangeCustomW={setCustomW}
+                      onChangeCustomH={setCustomH}
+                      onApplyCustomSize={handleApplyCustomSize}
+                      quality={quality}
+                      onChangeQuality={setQuality}
+                      background={background}
+                      onChangeBackground={setBackground}
+                      oversea={oversea}
+                      onChangeOversea={setOversea}
+                      autoCompatFallback={autoCompatFallback}
+                      onChangeAutoCompatFallback={setAutoCompatFallback}
+                      batchCount={batchCount}
+                      onChangeBatchCount={setBatchCount}
+                      isSubmitting={isSubmitting}
+                      onSubmitGenerate={handleSubmitGenerate}
+                      onOpenDevPreview={() => setDevPreviewOpen(true)}
+                    />
+                  </div>
+
+                  <div
+                    className={cn(
+                      "h-full overflow-y-auto studio-scroll pb-20 lg:pb-6",
+                      splitMobilePane !== "gallery" && "hidden lg:block"
+                    )}
+                  >
+                    <MasonryArtworkStream
+                      mode="imagine"
+                      records={records}
+                      projects={projects}
+                      onCreateProject={handleCreateProject}
+                      onDeleteProject={handleDeleteProject}
+                      onAssignProject={handleAssignProject}
+                      onBatchStar={handleBatchStar}
+                      refreshingIds={refreshingIds}
+                      onRefreshAll={refreshRecords}
+                      onRefreshSingle={handleRefreshSingle}
+                      onCancelPolling={handleCancelPolling}
+                      onToggleStar={handleToggleStar}
+                      onOpenLightbox={(rec, idx, openCompare = false) => {
+                        setLightboxInitialCompare(openCompare)
+                        setLightboxRecordId(rec.id)
+                        setLightboxImgIdx(idx)
+                      }}
+                      onUseGeneratedAsRef={handleUseGeneratedAsRef}
+                      onReuseRecord={handleReuseRecord}
+                      onRetryRecord={handleRetryRecord}
+                      onDownloadMissingLocal={handleDownloadMissingLocal}
+                      onDeleteSingle={handleDeleteSingle}
+                      onBatchDelete={handleBatchDelete}
+                      onClearFailed={handleClearFailed}
+                      onOpenImportTask={() => setImportTaskOpen(true)}
+                      onCopyText={copyText}
+                    />
+                  </div>
+                </div>
+              ))}
+
+            {/* TAB 2: DEDICATED ASSETS & PROJECT ALBUMS */}
+            {activeTab === "gallery" && (
+              <div className="h-full overflow-y-auto studio-scroll pb-20 md:pb-6">
+                <MasonryArtworkStream
+                  mode="gallery"
+                  records={records}
+                  projects={projects}
+                  onCreateProject={handleCreateProject}
+                  onDeleteProject={handleDeleteProject}
+                  onAssignProject={handleAssignProject}
+                  onBatchStar={handleBatchStar}
+                  refreshingIds={refreshingIds}
+                  onRefreshAll={async () => {
+                    await refreshRecords()
+                    showToast("已刷新全部作品资产", "info")
+                  }}
+                  onRefreshSingle={handleRefreshSingle}
+                  onCancelPolling={handleCancelPolling}
+                  onToggleStar={handleToggleStar}
+                  onOpenLightbox={(rec, idx, openCompare = false) => {
+                    setLightboxInitialCompare(openCompare)
+                    setLightboxRecordId(rec.id)
+                    setLightboxImgIdx(idx)
+                  }}
+                  onUseGeneratedAsRef={handleUseGeneratedAsRef}
+                  onReuseRecord={handleReuseRecord}
+                  onRetryRecord={handleRetryRecord}
+                  onDownloadMissingLocal={handleDownloadMissingLocal}
+                  onDeleteSingle={handleDeleteSingle}
+                  onBatchDelete={handleBatchDelete}
+                  onClearFailed={handleClearFailed}
+                  onOpenImportTask={() => setImportTaskOpen(true)}
+                  onCopyText={copyText}
+                />
+              </div>
             )}
-          >
-            创作参数工作台
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobilePane("gallery")}
-            className={cn(
-              "flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors cursor-pointer tabular-nums",
-              mobilePane === "gallery"
-                ? "bg-amber-500 text-zinc-950"
-                : "text-muted-foreground hover:text-foreground"
+
+            {/* TAB 3: INSPIRATION & CURATED RECIPES HUB */}
+            {activeTab === "recipes" && (
+              <InspirationHubView
+                builtInTemplates={builtInTemplates}
+                customTemplates={config?.prompt_templates || []}
+                currentPrompt={prompt}
+                currentModel={customModel.trim() || selectedModel}
+                currentSize={selectedSize}
+                currentQuality={quality}
+                currentBackground={background}
+                onUseRecipe={handleApplyTemplate}
+                onSaveCustomTemplate={handleSaveCustomTemplate}
+                onDeleteCustomTemplate={handleDeleteCustomTemplate}
+                onCopyText={copyText}
+              />
             )}
-          >
-            作品画廊 ({records.length}
-            {activeCount > 0 ? ` · 进行中${activeCount}` : ""})
-          </button>
+
+            {/* TAB 4: TELEMETRY, QUEUE & PORTABLE STORAGE STEWARD */}
+            {activeTab === "analytics" && (
+              <AnalyticsQueueView
+                records={records}
+                diskStats={diskStats}
+                dataDir={info?.data_dir || "./duomi_data"}
+                sseConnected={sseConnected}
+                refreshingIds={refreshingIds}
+                onUpdateDiskStats={setDiskStats}
+                onRefreshSingle={handleRefreshSingle}
+                onCancelPolling={handleCancelPolling}
+                onClearFailed={handleClearFailed}
+                onOpenLocalFolder={() => handleOpenLocalFolder()}
+                onCopyText={copyText}
+                onToast={showToast}
+              />
+            )}
+          </main>
         </div>
 
-        {/* Main Split Studio Workspace */}
-        <main
-          className={cn(
-            "flex-1 grid grid-cols-1 lg:h-[calc(100vh-3.25rem)] lg:overflow-hidden transition-all",
-            sidebarCollapsed
-              ? "lg:grid-cols-[0px_1fr]"
-              : "lg:grid-cols-[435px_1fr] xl:grid-cols-[465px_1fr]"
-          )}
-        >
-          {/* Left Studio Sidebar */}
-          <div
-            className={cn(
-              "lg:h-full lg:overflow-hidden",
-              sidebarCollapsed && "lg:hidden",
-              mobilePane !== "studio" && "hidden lg:block"
-            )}
-          >
-            <StudioSidebar
-              models={models}
-              selectedModel={selectedModel}
-              onSelectModel={setSelectedModel}
-              customModel={customModel}
-              onChangeCustomModel={setCustomModel}
-              prompt={prompt}
-              onChangePrompt={setPrompt}
-              onOpenTemplates={() => setTemplatesOpen(true)}
-              onSaveAsTemplate={() => setTemplatesOpen(true)}
-              refMode={refMode}
-              onChangeRefMode={handleChangeRefMode}
-              imageHosts={imageHosts}
-              imageHostProvider={imageHostProvider}
-              onChangeImageHostProvider={(p) => {
-                setImageHostProvider(p)
-                if (refMode === "upload") {
-                  reconvertLocalRefs("upload", p, litterboxExpiry)
-                }
-              }}
-              litterboxExpiry={litterboxExpiry}
-              onChangeLitterboxExpiry={(exp) => {
-                setLitterboxExpiry(exp)
-                if (refMode === "upload") {
-                  reconvertLocalRefs("upload", imageHostProvider, exp)
-                }
-              }}
-              compressMaxDim={compressMaxDim}
-              onChangeCompressMaxDim={(dim) => {
-                setCompressMaxDim(dim)
-                if (refMode === "compress_base64") {
-                  reconvertLocalRefs(
-                    "compress_base64",
-                    imageHostProvider,
-                    litterboxExpiry,
-                    dim,
-                    compressQuality
-                  )
-                }
-              }}
-              compressQuality={compressQuality}
-              onChangeCompressQuality={(q) => {
-                setCompressQuality(q)
-                if (refMode === "compress_base64") {
-                  reconvertLocalRefs(
-                    "compress_base64",
-                    imageHostProvider,
-                    litterboxExpiry,
-                    compressMaxDim,
-                    q
-                  )
-                }
-              }}
-              referenceImages={referenceImages}
-              onFilesSelected={handleFilesSelected}
-              onAddRefUrl={handleAddRefUrl}
-              onRemoveRef={(id) =>
-                setReferenceImages((prev) => prev.filter((r) => r.id !== id))
-              }
-              onMoveRef={handleMoveRef}
-              onRetryRef={handleRetrySingleRef}
-              onPasteFromClipboardButton={handlePasteFromClipboardButton}
-              onCopyText={copyText}
-              onOpenSettingsTab={(t) => {
-                setSettingsTab(t)
-                setSettingsOpen(true)
-              }}
-              ratioPresets={ratioPresets}
-              selectedRatio={selectedRatio}
-              selectedSize={selectedSize}
-              onSelectRatio={handleSelectRatio}
-              onSelectPresetSize={(val, tier) => {
-                setSelectedSize(val)
-                if (tier && tier !== "auto") {
-                  setPreferredTier(tier)
-                }
-              }}
-              onSelectCustomRatioMode={() => setSelectedRatio("custom")}
-              customW={customW}
-              customH={customH}
-              onChangeCustomW={setCustomW}
-              onChangeCustomH={setCustomH}
-              onApplyCustomSize={handleApplyCustomSize}
-              quality={quality}
-              onChangeQuality={setQuality}
-              background={background}
-              onChangeBackground={setBackground}
-              oversea={oversea}
-              onChangeOversea={setOversea}
-              autoCompatFallback={autoCompatFallback}
-              onChangeAutoCompatFallback={setAutoCompatFallback}
-              batchCount={batchCount}
-              onChangeBatchCount={setBatchCount}
-              isSubmitting={isSubmitting}
-              onSubmitGenerate={handleSubmitGenerate}
-              onOpenDevPreview={() => setDevPreviewOpen(true)}
-            />
-          </div>
-
-          {/* Right Artwork Gallery */}
-          <div
-            className={cn(
-              "lg:h-full lg:overflow-hidden",
-              mobilePane !== "gallery" && "hidden lg:block"
-            )}
-          >
-            <GalleryPanel
-              records={records}
-              refreshingIds={refreshingIds}
-              onRefreshAll={async () => {
-                await refreshRecords()
-                showToast("已刷新记录列表", "info")
-              }}
-              onRefreshSingle={handleRefreshSingle}
-              onCancelPolling={handleCancelPolling}
-              onToggleStar={handleToggleStar}
-              onOpenLightbox={(rec, idx) => {
-                setLightboxRecordId(rec.id)
-                setLightboxImgIdx(idx)
-              }}
-              onUseGeneratedAsRef={handleUseGeneratedAsRef}
-              onReuseRecord={handleReuseRecord}
-              onRetryRecord={handleRetryRecord}
-              onDownloadMissingLocal={handleDownloadMissingLocal}
-              onDeleteSingle={handleDeleteSingle}
-              onBatchDelete={handleBatchDelete}
-              onClearFailed={handleClearFailed}
-              onCopyText={copyText}
-            />
-          </div>
-        </main>
-
-        {/* Dialogs & Lightbox */}
+        {/* Modals & Cinema Darkroom Lightbox */}
         <SettingsDialog
           open={settingsOpen}
           onOpenChange={setSettingsOpen}
@@ -1593,7 +2050,7 @@ export function App() {
           config={config}
           imageHosts={imageHosts}
           diskStats={diskStats}
-          onSaveConfig={handleSaveConfig}
+          onSaveConfig={(p) => handleSaveConfig(p, false)}
           onOpenLocalFolder={() => handleOpenLocalFolder()}
           onCopyText={copyText}
         />
@@ -1632,11 +2089,68 @@ export function App() {
           }}
         />
 
+        <PromptWorkbenchModal
+          open={zenWorkbenchOpen}
+          onOpenChange={setZenWorkbenchOpen}
+          prompt={prompt}
+          onChangePrompt={setPrompt}
+          referenceImages={referenceImages}
+          promptHistory={promptHistory}
+          currentModel={customModel.trim() || selectedModel}
+          currentSize={selectedSize}
+          currentQuality={quality}
+          currentBackground={background}
+          onSaveCustomTemplate={handleSaveCustomTemplate}
+          onCopyText={copyText}
+          onSubmitGenerate={handleSubmitGenerate}
+        />
+
+        <RefImageAnnotatorModal
+          entry={annotatingRefInfo.entry}
+          refIndex={annotatingRefInfo.index}
+          onClose={() => setAnnotatingEntryId(null)}
+          onApplyAnnotatedFile={handleApplyAnnotatedFile}
+        />
+
+        <CommandPaletteModal
+          open={commandPaletteOpen}
+          onOpenChange={setCommandPaletteOpen}
+          onSelectTab={setActiveTab}
+          layoutMode={layoutMode}
+          onToggleLayoutMode={toggleLayoutMode}
+          theme={theme}
+          onToggleTheme={() =>
+            setTheme((prev) => (prev === "dark" ? "light" : "dark"))
+          }
+          models={models}
+          onSelectModel={setSelectedModel}
+          recipes={allRecipes}
+          onUseRecipe={(tpl) => handleApplyTemplate(tpl, true)}
+          onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
+          onOpenSettings={(tab = "api") => {
+            setSettingsTab(tab)
+            setSettingsOpen(true)
+          }}
+          onOpenImportTask={() => setImportTaskOpen(true)}
+          onOpenDevPreview={() => setDevPreviewOpen(true)}
+          onOpenLocalFolder={() => handleOpenLocalFolder()}
+        />
+
         <ImageLightbox
           record={lightboxRecord}
+          initialCompare={lightboxInitialCompare}
+          galleryRecords={succeededRecords}
+          projects={projects}
           imageIndex={lightboxImgIdx}
           onChangeImageIndex={setLightboxImgIdx}
-          onClose={() => setLightboxRecordId(null)}
+          onSelectRecord={(rec) => {
+            setLightboxRecordId(rec.id)
+            setLightboxImgIdx(0)
+          }}
+          onClose={() => {
+            setLightboxRecordId(null)
+            setLightboxInitialCompare(false)
+          }}
           hasPrevRecord={lightboxSeqIdx > 0}
           hasNextRecord={
             lightboxSeqIdx !== -1 &&
@@ -1650,6 +2164,7 @@ export function App() {
             }
           }}
           onToggleStar={handleToggleStar}
+          onOrganizeRecord={handleOrganizeSingle}
           onUseGeneratedAsRef={handleUseGeneratedAsRef}
           onReuseRecord={handleReuseRecord}
           onOpenLocalFolder={handleOpenLocalFolder}
@@ -1660,7 +2175,7 @@ export function App() {
         {/* Theme-Aware Floating Toasts */}
         <div
           id="toast-container"
-          className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"
+          className="fixed bottom-16 md:bottom-5 right-4 z-50 flex flex-col gap-2 max-w-sm pointer-events-none"
         >
           {toasts.map((t) => (
             <div

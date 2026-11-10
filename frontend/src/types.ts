@@ -9,6 +9,10 @@ export type ImageHostProvider =
   | "0x0"
   | "custom"
 
+export type StudioNavTab = "imagine" | "gallery" | "recipes" | "analytics"
+
+export type ComposerLayoutMode = "omnibar" | "split"
+
 export interface SizePresetItem {
   value: string
   tier: string
@@ -43,11 +47,21 @@ export interface PromptTemplate {
   id: string
   title: string
   category: string
+  summary?: string
   prompt: string
   model?: string
   size?: string
   quality?: string
+  background?: string
+  tags?: string[]
   built_in?: boolean
+  created_at?: number
+}
+
+export interface ProjectFolder {
+  id: string
+  name: string
+  color?: string
   created_at?: number
 }
 
@@ -55,7 +69,9 @@ export interface DiskUsageStats {
   data_dir: string
   images_dir: string
   generated_count: number
+  generated_bytes?: number
   ref_cache_count: number
+  ref_cache_bytes?: number
   record_count: number
   total_bytes: number
 }
@@ -92,6 +108,7 @@ export interface AppConfig {
   compress_quality: number
   auto_compat_fallback: boolean
   prompt_templates?: PromptTemplate[]
+  projects?: ProjectFolder[]
 }
 
 export interface SavedImage {
@@ -114,6 +131,9 @@ export interface SavedRefImage {
 export interface TaskRecord {
   id: string
   batch_id?: string
+  project_id?: string
+  tags?: string[]
+  note?: string
   model: string
   prompt: string
   size: string
@@ -152,10 +172,12 @@ export interface ReferenceImageEntry {
   mode: RefImageMode | "url"
   value: string // URL or data:image/...;base64,...
   preview: string
+  original_preview?: string // preserved unannotated preview so user can re-edit
   local_ref?: string // e.g. "refs/ref_xxxx.jpg"
   remote_url?: string
   provider?: string
   label: string
+  annotated?: boolean
   width?: number
   height?: number
   size_bytes?: number
@@ -184,4 +206,12 @@ export interface ConnectivityTestResult {
   latency_ms: number
   status?: number
   message: string
+}
+
+export interface PromptHistoryItem {
+  id: string
+  prompt: string
+  model: string
+  size: string
+  timestamp: number
 }

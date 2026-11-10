@@ -16,6 +16,8 @@ import {
   FileCode2,
   Link2,
   Loader2,
+  Maximize2,
+  PencilRuler,
   Plus,
   RefreshCw,
   Settings2,
@@ -94,6 +96,7 @@ interface StudioSidebarProps {
 
   prompt: string
   onChangePrompt: (v: string) => void
+  onOpenZenWorkbench?: () => void
   onOpenTemplates: () => void
   onSaveAsTemplate: () => void
 
@@ -115,6 +118,7 @@ interface StudioSidebarProps {
   onRemoveRef: (id: string) => void
   onMoveRef: (index: number, direction: -1 | 1) => void
   onRetryRef: (entry: ReferenceImageEntry) => void
+  onAnnotateRef?: (entry: ReferenceImageEntry) => void
   onPasteFromClipboardButton: () => void
   onCopyText: (text: string, label?: string) => void
   onOpenSettingsTab: (tab: string) => void
@@ -155,6 +159,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   onChangeCustomModel,
   prompt,
   onChangePrompt,
+  onOpenZenWorkbench,
   onOpenTemplates,
   onSaveAsTemplate,
   refMode,
@@ -174,6 +179,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   onRemoveRef,
   onMoveRef,
   onRetryRef,
+  onAnnotateRef,
   onPasteFromClipboardButton,
   onCopyText,
   onOpenSettingsTab,
@@ -343,6 +349,17 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
               画面描述词 (Prompt)
             </Label>
             <div className="flex items-center gap-1.5">
+              {onOpenZenWorkbench && (
+                <button
+                  type="button"
+                  onClick={onOpenZenWorkbench}
+                  className="inline-flex items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent transition-colors cursor-pointer"
+                  title="打开大屏结构化提示词工程台"
+                >
+                  <Maximize2 className="h-3 w-3 text-amber-500" />
+                  工程台
+                </button>
+              )}
               <button
                 id="btn-open-templates"
                 type="button"
@@ -350,7 +367,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
                 className="inline-flex items-center gap-1 rounded-md border border-border bg-background/70 px-2 py-0.5 text-[11px] font-medium text-foreground hover:bg-accent transition-colors cursor-pointer"
               >
                 <BookMarked className="h-3 w-3 text-amber-500" />
-                模板库
+                灵感库
               </button>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -772,10 +789,21 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
                       className="h-full w-full object-cover"
                     />
 
-                    {/* Top Left Order Badge ("图1", "图2") */}
-                    <span className="absolute left-1 top-1 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-amber-400">
-                      图{idx + 1}
-                    </span>
+                    {/* Top Left Clickable Order Badge ("@图1") */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onChangePrompt(
+                          prompt.trim()
+                            ? `${prompt} 图${idx + 1}`
+                            : `图${idx + 1}`
+                        )
+                      }
+                      title="点击在提示词中插入 图N 引用"
+                      className="absolute left-1 top-1 rounded bg-black/75 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-amber-400 hover:bg-amber-500 hover:text-zinc-950 transition-colors cursor-pointer"
+                    >
+                      @图{idx + 1}
+                    </button>
 
                     {/* Top Right Remove Button */}
                     <button
@@ -787,7 +815,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
                       <X className="h-3 w-3" />
                     </button>
 
-                    {/* Hover Reorder & Copy URL Controls */}
+                    {/* Hover Reorder, Annotate & Copy URL Controls */}
                     <div className="absolute inset-x-1 top-7 flex items-center justify-between opacity-0 group-hover:opacity-100 transition-opacity">
                       <div className="flex gap-0.5">
                         {idx > 0 && (
@@ -811,18 +839,30 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
                           </button>
                         )}
                       </div>
-                      {item.remote_url && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            onCopyText(item.remote_url!, "已复制图床直链 URL")
-                          }
-                          title="复制图床直链 URL"
-                          className="flex h-5 w-5 items-center justify-center rounded bg-black/75 text-emerald-300 hover:bg-emerald-600 hover:text-white cursor-pointer"
-                        >
-                          <Copy className="h-2.5 w-2.5" />
-                        </button>
-                      )}
+                      <div className="flex gap-0.5">
+                        {onAnnotateRef && !item.uploading && (
+                          <button
+                            type="button"
+                            onClick={() => onAnnotateRef(item)}
+                            title="打开裁剪与画笔框选标注画板"
+                            className="flex h-5 w-5 items-center justify-center rounded bg-black/75 text-amber-300 hover:bg-amber-500 hover:text-zinc-950 cursor-pointer"
+                          >
+                            <PencilRuler className="h-2.5 w-2.5" />
+                          </button>
+                        )}
+                        {item.remote_url && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onCopyText(item.remote_url!, "已复制图床直链 URL")
+                            }
+                            title="复制图床直链 URL"
+                            className="flex h-5 w-5 items-center justify-center rounded bg-black/75 text-emerald-300 hover:bg-emerald-600 hover:text-white cursor-pointer"
+                          >
+                            <Copy className="h-2.5 w-2.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Upload Error Overlay with Retry or Switch Option */}

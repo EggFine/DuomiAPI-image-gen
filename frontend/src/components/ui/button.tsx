@@ -12,6 +12,8 @@ const buttonVariants = cva(
           "bg-primary text-primary-foreground shadow-sm hover:opacity-92",
         brand:
           "bg-amber-500 text-zinc-950 font-semibold shadow-sm hover:bg-amber-400 dark:bg-amber-500 dark:text-zinc-950 dark:hover:bg-amber-400",
+        studio:
+          "bg-amber-500 text-zinc-950 font-semibold shadow-sm hover:bg-amber-400 dark:bg-amber-500 dark:text-zinc-950 dark:hover:bg-amber-400",
         destructive:
           "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
         outline:
