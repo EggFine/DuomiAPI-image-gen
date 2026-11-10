@@ -230,9 +230,9 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
   return (
     <div
       ref={rootRef}
-      className="h-full overflow-y-auto studio-scroll px-5 sm:px-8 lg:px-12 py-8 pb-28"
+      className="h-full overflow-y-auto studio-scroll"
     >
-      <div className="mx-auto max-w-6xl space-y-7">
+      <div className="studio-container py-7 pb-28 space-y-7">
         {/* Minimalist Header */}
         <div className="flex items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold tracking-[-0.025em] text-foreground">

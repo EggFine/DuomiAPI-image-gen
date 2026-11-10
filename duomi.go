@@ -178,7 +178,7 @@ func GetRatioPresets() []RatioPresetGroup {
 				{Value: "1024x1024", Tier: "1k", Label: "1K 标准", Detail: "1024×1024 · 105万像素"},
 				{Value: "1536x1536", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1536×1536 · 236万像素"},
 				{Value: "2048x2048", Tier: "2k", Label: "2K 高清", Detail: "2048×2048 · 419万像素"},
-				{Value: "2880x2880", Tier: "4k", Label: "4K 极限", Detail: "2880×2880 · 829万像素(预算上限)"},
+				{Value: "2880x2880", Tier: "4k", Label: "4K 极限", Detail: "2880×2880 · 829万像素"},
 				{Value: "1:1", Tier: "ratio", Label: "仅传比例 (1:1)", Detail: "直接传 1:1 由服务端匹配默认尺寸"},
 			},
 		},

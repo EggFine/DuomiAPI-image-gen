@@ -230,6 +230,7 @@ export function PopoverContent({
   return createPortal(
     <div
       ref={contentRef}
+      data-studio-popover-portal="true"
       style={{
         position: "fixed",
         top: `${coords.top}px`,

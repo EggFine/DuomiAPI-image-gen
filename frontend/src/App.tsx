@@ -7,6 +7,7 @@ import {
 } from "react"
 import { AlertCircle, CheckCircle2, Info } from "lucide-react"
 import { AnalyticsQueueView } from "@/components/AnalyticsQueueView"
+import { BottomComposerDock } from "@/components/BottomComposerDock"
 import { CommandPaletteModal } from "@/components/CommandPaletteModal"
 import { ImageLightbox } from "@/components/ImageLightbox"
 import { InspirationHubView } from "@/components/InspirationHubView"
@@ -245,118 +246,46 @@ export function App() {
   const [lightboxInitialCompare, setLightboxInitialCompare] =
     useState<boolean>(false)
 
-  // Unified Imagine Scroll & On-Demand Quick Composer Overlay State
+  // Unified Imagine Scroll & Bottom Compact Composer Dock State
   const imagineScrollRef = useRef<HTMLDivElement | null>(null)
   const [isScrolledPastComposer, setIsScrolledPastComposer] =
     useState<boolean>(false)
-  const [quickComposerOpen, setQuickComposerOpen] = useState<boolean>(false)
-  const [quickOverlayRendered, setQuickOverlayRendered] =
-    useState<boolean>(false)
-  const quickBackdropRef = useRef<HTMLDivElement | null>(null)
-  const quickCardRef = useRef<HTMLDivElement | null>(null)
-  const prevQuickOpenAnimRef = useRef<boolean>(false)
+  const [bottomDockExpanded, setBottomDockExpanded] = useState<boolean>(false)
+  const [isBatchSelecting, setIsBatchSelecting] = useState<boolean>(false)
 
-  useEffect(() => {
-    if (quickComposerOpen) {
-      setQuickOverlayRendered(true)
+  const animateScrollToTop = contextSafe((el: HTMLDivElement | null) => {
+    if (!el) return
+    if (prefersReducedMotion()) {
+      el.scrollTop = 0
+      return
     }
-  }, [quickComposerOpen])
-
-  const finishQuickOverlayClose = contextSafe(() => {
-    setQuickOverlayRendered(false)
+    gsap.to(el, {
+      scrollTo: { y: 0, autoKill: true },
+      duration: 0.46,
+      ease: STUDIO_EASE.expo,
+      overwrite: "auto",
+    })
   })
 
-  // Calm Apple fluid entrance & exit choreography for Quick Composer Overlay
-  useGSAP(
-    () => {
-      if (quickComposerOpen && !prevQuickOpenAnimRef.current) {
-        prevQuickOpenAnimRef.current = true
-        if (prefersReducedMotion()) return
-        const backdrop = quickBackdropRef.current
-        const card = quickCardRef.current
-        const tl = gsap.timeline({
-          defaults: { ease: STUDIO_EASE.expo, overwrite: "auto" },
-        })
-        if (backdrop) {
-          tl.fromTo(
-            backdrop,
-            { autoAlpha: 0 },
-            {
-              autoAlpha: 1,
-              duration: 0.24,
-              ease: STUDIO_EASE.out,
-              clearProps: "visibility",
-            },
-            0
-          )
-        }
-        if (card) {
-          tl.fromTo(
-            card,
-            { autoAlpha: 0, y: -8, scale: 0.985 },
-            {
-              autoAlpha: 1,
-              y: 0,
-              scale: 1,
-              duration: 0.34,
-              clearProps: "transform,visibility",
-            },
-            0
-          )
-        }
-      } else if (!quickComposerOpen && prevQuickOpenAnimRef.current) {
-        prevQuickOpenAnimRef.current = false
-        const backdrop = quickBackdropRef.current
-        const card = quickCardRef.current
-        if (prefersReducedMotion() || !backdrop || !card) {
-          setQuickOverlayRendered(false)
-          return
-        }
-        gsap
-          .timeline({
-            defaults: {
-              duration: 0.2,
-              ease: STUDIO_EASE.inOut,
-              overwrite: "auto",
-            },
-            onComplete: finishQuickOverlayClose,
-          })
-          .to(card, { autoAlpha: 0, y: -6, scale: 0.988 }, 0)
-          .to(backdrop, { autoAlpha: 0 }, "<")
-      }
-    },
-    { scope: appRootRef, dependencies: [quickComposerOpen] }
-  )
-
-  // Smooth exponential scroll-to-top powered by GSAP ScrollToPlugin (autoKill: true respects user wheel interruption)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const scrollToImagineTop = useCallback(
-    contextSafe(() => {
-      setQuickComposerOpen(false)
-      const el = imagineScrollRef.current
-      if (!el) return
-      if (prefersReducedMotion()) {
-        el.scrollTop = 0
-        return
-      }
-      gsap.to(el, {
-        scrollTo: { y: 0, autoKill: true },
-        duration: 0.46,
-        ease: STUDIO_EASE.expo,
-        overwrite: "auto",
-      })
-    }),
-    [contextSafe]
-  )
+  const scrollToImagineTop = useCallback(() => {
+    setBottomDockExpanded(false)
+    animateScrollToTop(imagineScrollRef.current)
+  }, [animateScrollToTop])
 
   useEffect(() => {
     if (activeTab !== "imagine" || layoutMode !== "omnibar") {
-      setQuickComposerOpen(false)
-      setQuickOverlayRendered(false)
+      setBottomDockExpanded(false)
+      setIsBatchSelecting(false)
     }
   }, [activeTab, layoutMode])
 
-  // Global Keyboard Shortcuts: Ctrl/Cmd+K (Command Palette), Ctrl/Cmd+J (Quick Composer), Esc & Alt+1..4 (Tabs)
+  useEffect(() => {
+    if (isBatchSelecting) {
+      setBottomDockExpanded(false)
+    }
+  }, [isBatchSelecting])
+
+  // Global Keyboard Shortcuts: Ctrl/Cmd+K (Command Palette), Ctrl/Cmd+J (Composer / Bottom Dock), Esc & Alt+1..4 (Tabs)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -374,7 +303,15 @@ export function App() {
           return
         }
         if (layoutMode === "omnibar" && isScrolledPastComposer) {
-          setQuickComposerOpen((prev) => !prev)
+          setBottomDockExpanded((prev) => {
+            const next = !prev
+            if (!next) {
+              requestAnimationFrame(() => {
+                document.getElementById("bottom-dock-prompt-input")?.focus()
+              })
+            }
+            return next
+          })
         } else {
           scrollToImagineTop()
           requestAnimationFrame(() => {
@@ -385,14 +322,14 @@ export function App() {
       }
       if (
         e.key === "Escape" &&
-        quickComposerOpen &&
+        bottomDockExpanded &&
         !zenWorkbenchOpen &&
         !annotatingEntryId &&
         !lightboxRecordId &&
         !settingsOpen &&
         !commandPaletteOpen
       ) {
-        setQuickComposerOpen(false)
+        setBottomDockExpanded(false)
         return
       }
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
@@ -417,7 +354,7 @@ export function App() {
     activeTab,
     layoutMode,
     isScrolledPastComposer,
-    quickComposerOpen,
+    bottomDockExpanded,
     zenWorkbenchOpen,
     annotatingEntryId,
     lightboxRecordId,
@@ -804,16 +741,13 @@ export function App() {
       if (imageFiles.length > 0) {
         e.preventDefault()
         setActiveTab("imagine")
-        if (layoutMode === "omnibar" && isScrolledPastComposer) {
-          setQuickComposerOpen(true)
-        }
         handleFilesSelected(imageFiles)
         showToast(`已从剪贴板粘贴 ${imageFiles.length} 张参考图`, "info")
       }
     }
     window.addEventListener("paste", onPaste)
     return () => window.removeEventListener("paste", onPaste)
-  }, [handleFilesSelected, showToast, layoutMode, isScrolledPastComposer])
+  }, [handleFilesSelected, showToast])
 
   const handlePasteFromClipboardButton = async () => {
     if (!navigator.clipboard?.read) {
@@ -1012,9 +946,19 @@ export function App() {
 
   // Use a generated gallery image directly as a Reference Image
   const handleUseGeneratedAsRef = async (img: SavedImage, _rec: TaskRecord) => {
+    const stayInBottomDock =
+      activeTab === "imagine" &&
+      layoutMode === "omnibar" &&
+      isScrolledPastComposer
     setActiveTab("imagine")
     setSplitMobilePane("studio")
-    scrollToImagineTop()
+    if (!stayInBottomDock) {
+      scrollToImagineTop()
+    } else if (!lightboxRecordId) {
+      requestAnimationFrame(() => {
+        document.getElementById("bottom-dock-prompt-input")?.focus()
+      })
+    }
 
     if (img.local_file) {
       const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -1368,9 +1312,19 @@ export function App() {
     if (rec.project_id) {
       setActiveProjectId(rec.project_id)
     }
+    const stayInBottomDock =
+      activeTab === "imagine" &&
+      layoutMode === "omnibar" &&
+      isScrolledPastComposer
     setActiveTab("imagine")
     setSplitMobilePane("studio")
-    scrollToImagineTop()
+    if (!stayInBottomDock) {
+      scrollToImagineTop()
+    } else if (!lightboxRecordId) {
+      requestAnimationFrame(() => {
+        document.getElementById("bottom-dock-prompt-input")?.focus()
+      })
+    }
 
     if (includeRefs && rec.ref_items && rec.ref_items.length > 0) {
       const restored: ReferenceImageEntry[] = []
@@ -1722,7 +1676,32 @@ export function App() {
     [config?.prompt_templates, builtInTemplates]
   )
 
-  const renderOmnibarComposer = (onCollapseOverlay?: () => void) => (
+  const dockShortModelLabel = useMemo(() => {
+    if (customModel.trim()) return customModel.trim()
+    const found = models.find((m) => m.id === selectedModel)
+    return found?.name || selectedModel
+  }, [customModel, models, selectedModel])
+
+  const dockTierShortLabel = useMemo(() => {
+    if (selectedRatio === "auto") return "Auto"
+    if (selectedRatio === "custom") return selectedSize
+    const grp =
+      ratioPresets.find((g) => g.ratio === selectedRatio) || ratioPresets[0]
+    const found = grp?.sizes.find((s) => s.value === selectedSize)
+    if (found?.tier === "ratio") return `${selectedRatio}·比例`
+    if (found?.tier) return `${selectedRatio}·${found.tier.toUpperCase()}`
+    return `${selectedRatio}`
+  }, [selectedRatio, selectedSize, ratioPresets])
+
+  const anyUploadingRef = useMemo(
+    () => referenceImages.some((r) => r.uploading),
+    [referenceImages]
+  )
+
+  const renderOmnibarComposer = (
+    floating = false,
+    onCollapseOverlay?: () => void
+  ) => (
     <OmnibarComposer
       models={models}
       selectedModel={selectedModel}
@@ -1825,6 +1804,7 @@ export function App() {
       onSubmitGenerate={handleSubmitGenerate}
       onOpenDevPreview={() => setDevPreviewOpen(true)}
       onCollapseOverlay={onCollapseOverlay}
+      floating={floating}
     />
   )
 
@@ -1868,31 +1848,26 @@ export function App() {
                 <div
                   ref={imagineScrollRef}
                   onScroll={(e) => {
-                    const past = e.currentTarget.scrollTop > 180
+                    const past = e.currentTarget.scrollTop > 160
                     setIsScrolledPastComposer((prev) =>
                       prev === past ? prev : past
                     )
-                    if (!past && quickComposerOpen) {
-                      setQuickComposerOpen(false)
+                    if (!past && bottomDockExpanded) {
+                      setBottomDockExpanded(false)
                     }
                   }}
                   className="h-full overflow-y-auto studio-scroll"
                 >
-                  {/* Generous Borderless Creation Canvas — scrolls away cleanly */}
-                  <div className="px-4 sm:px-8 lg:px-12 pt-5 pb-4">
-                    {renderOmnibarComposer()}
+                  {/* Shadowless Static Creation Canvas (Option A: max-w-[1040px] inside .studio-container) */}
+                  <div className="studio-container pt-5 pb-3">
+                    {renderOmnibarComposer(false)}
                   </div>
 
-                  {/* Unified Full-Width Sticky Filter Bar + Native Aspect-Ratio Masonry Stream */}
+                  {/* Unified Plumb-Line Sticky Filter Bar + Native Aspect-Ratio Masonry Stream */}
                   <MasonryArtworkStream
                     mode="imagine"
                     embeddedScroll={false}
-                    showQuickCreateTrigger={isScrolledPastComposer}
-                    hasDraftOrRefs={Boolean(
-                      prompt.trim() || referenceImages.length > 0
-                    )}
-                    onOpenQuickComposer={() => setQuickComposerOpen(true)}
-                    onScrollToTop={scrollToImagineTop}
+                    onSelectModeChange={setIsBatchSelecting}
                     records={records}
                     projects={projects}
                     onCreateProject={handleCreateProject}
@@ -1924,31 +1899,33 @@ export function App() {
                   />
                 </div>
 
-                {/* On-Demand Contextual Quick Composer Overlay (Ctrl+J) */}
-                {(quickComposerOpen || quickOverlayRendered) && (
-                  <div
-                    ref={quickBackdropRef}
-                    onClick={(e) => {
-                      if (e.target === e.currentTarget) {
-                        setQuickComposerOpen(false)
-                      }
-                    }}
-                    className={cn(
-                      "absolute inset-0 z-30 flex items-start justify-center bg-black/25 dark:bg-black/55 backdrop-blur-md px-4 sm:px-8 pt-6 pb-8 overflow-y-auto",
-                      !quickComposerOpen && "pointer-events-none"
-                    )}
-                  >
-                    <div
-                      ref={quickCardRef}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-full max-w-3xl"
-                    >
-                      {renderOmnibarComposer(() =>
-                        setQuickComposerOpen(false)
-                      )}
-                    </div>
-                  </div>
-                )}
+                {/* Scrolled-Down Bottom Compact Input Pill + In-Place Upward Expansion */}
+                <BottomComposerDock
+                  visible={isScrolledPastComposer && !isBatchSelecting}
+                  expanded={bottomDockExpanded}
+                  onChangeExpanded={setBottomDockExpanded}
+                  prompt={prompt}
+                  onChangePrompt={setPrompt}
+                  referenceImages={referenceImages}
+                  onFilesSelected={handleFilesSelected}
+                  onRemoveRef={(id) =>
+                    setReferenceImages((prev) =>
+                      prev.filter((r) => r.id !== id)
+                    )
+                  }
+                  shortModelLabel={dockShortModelLabel}
+                  tierShortLabel={dockTierShortLabel}
+                  batchCount={batchCount}
+                  isSubmitting={isSubmitting}
+                  anyUploadingRef={anyUploadingRef}
+                  onSubmitGenerate={handleSubmitGenerate}
+                  onScrollToTop={scrollToImagineTop}
+                  renderExpandedComposer={() =>
+                    renderOmnibarComposer(true, () =>
+                      setBottomDockExpanded(false)
+                    )
+                  }
+                />
               </>
             ) : (
               /* Pro Split 2-Column Mode */

@@ -3,20 +3,20 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: hsl(240 5% 96.6%);
-  --foreground: hsl(240 6% 11%);
+  --background: hsl(240 5% 96.5%);
+  --foreground: hsl(240 6% 10%);
   --card: hsl(0 0% 100%);
-  --card-foreground: hsl(240 6% 11%);
+  --card-foreground: hsl(240 6% 10%);
   --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(240 6% 11%);
+  --popover-foreground: hsl(240 6% 10%);
   --primary: hsl(240 6% 11%);
   --primary-foreground: hsl(0 0% 100%);
   --secondary: hsl(240 5% 92.8%);
-  --secondary-foreground: hsl(240 6% 13%);
+  --secondary-foreground: hsl(240 6% 12%);
   --muted: hsl(240 5% 93.5%);
-  --muted-foreground: hsl(240 4% 48%);
-  --accent: hsl(240 5% 91.2%);
-  --accent-foreground: hsl(240 6% 11%);
+  --muted-foreground: hsl(240 4% 46%);
+  --accent: hsl(240 5% 91%);
+  --accent-foreground: hsl(240 6% 10%);
   --destructive: hsl(3 78% 54%);
   --destructive-foreground: hsl(0 0% 100%);
   --border: hsl(240 6% 10% / 0.055);
@@ -24,23 +24,28 @@
   --ring: hsl(240 6% 11% / 0.16);
   --radius: 1rem;
 
-  --glass-bg: rgba(255, 255, 255, 0.82);
-  --glass-border: rgba(0, 0, 0, 0.045);
+  /* Tier 1: Solid inner tiles inside Popovers & Dialogs (0% photo bleed-through) */
+  --tile-bg: #f3f3f6;
+  --tile-hover: #e9e9ee;
+  --tile-active: #dfdfe6;
+
+  /* Tier 2: Sticky Chrome Bars (94% occlusion) */
+  --sticky-bg: rgba(245, 245, 247, 0.94);
+
+  /* Tier 3: Floating Overlays & Bottom Dock (97.5% high-solidity acrylic) */
+  --glass-bg: rgba(255, 255, 255, 0.975);
+  --glass-border: rgba(0, 0, 0, 0.065);
   --glass-shadow:
-    0 20px 52px -14px rgba(0, 0, 0, 0.075),
-    0 2px 10px -2px rgba(0, 0, 0, 0.03),
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.95);
-  --surface-shadow:
-    0 4px 24px -4px rgba(0, 0, 0, 0.038),
-    0 1px 2px rgba(0, 0, 0, 0.02);
+    0 20px 48px -12px rgba(0, 0, 0, 0.13),
+    0 4px 14px -2px rgba(0, 0, 0, 0.05);
 }
 
 .dark {
   --background: hsl(240 6% 4%);
   --foreground: hsl(240 5% 96%);
-  --card: hsl(240 5% 8.6%);
+  --card: hsl(240 5% 8.8%);
   --card-foreground: hsl(240 5% 96%);
-  --popover: hsl(240 5% 10%);
+  --popover: hsl(240 5% 10.5%);
   --popover-foreground: hsl(240 5% 96%);
   --primary: hsl(240 5% 96%);
   --primary-foreground: hsl(240 6% 6%);
@@ -56,15 +61,21 @@
   --input: hsl(0 0% 100% / 0.08);
   --ring: hsl(0 0% 100% / 0.2);
 
-  --glass-bg: rgba(22, 22, 25, 0.78);
-  --glass-border: rgba(255, 255, 255, 0.07);
+  /* Tier 1: Solid inner tiles inside Popovers & Dialogs */
+  --tile-bg: #222226;
+  --tile-hover: #2b2b31;
+  --tile-active: #34343c;
+
+  /* Tier 2: Sticky Chrome Bars (94% occlusion) */
+  --sticky-bg: rgba(10, 10, 12, 0.94);
+
+  /* Tier 3: Floating Overlays & Bottom Dock (97% high-solidity acrylic) */
+  --glass-bg: rgba(24, 24, 28, 0.97);
+  --glass-border: rgba(255, 255, 255, 0.09);
   --glass-shadow:
-    0 28px 64px -16px rgba(0, 0, 0, 0.68),
-    0 4px 16px rgba(0, 0, 0, 0.34),
+    0 24px 60px -12px rgba(0, 0, 0, 0.72),
+    0 4px 16px rgba(0, 0, 0, 0.42),
     inset 0 0.5px 0 rgba(255, 255, 255, 0.09);
-  --surface-shadow:
-    0 12px 32px -12px rgba(0, 0, 0, 0.45),
-    inset 0 0.5px 0 rgba(255, 255, 255, 0.055);
 }
 
 @theme inline {
@@ -116,26 +127,68 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Borderless Apple Elevated Surface & Vibrancy Capsules */
+/* Unified Global Grid Container — Locks Left & Right Plumb Lines Across All Views */
+.studio-container {
+  width: 100%;
+  max-width: 1600px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1.5rem;
+  padding-right: 1.5rem;
+}
+@media (min-width: 640px) {
+  .studio-container {
+    padding-left: 2.5rem;
+    padding-right: 2.5rem;
+  }
+}
+
+/* Tier 1: Pure Solid Static Surfaces (Zero Shadow Halo in Static Flow) */
 .apple-surface {
   background: var(--card);
-  box-shadow: var(--surface-shadow);
+  border: 1px solid var(--border);
 }
 
-.studio-omnibar {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(32px) saturate(185%);
-  -webkit-backdrop-filter: blur(32px) saturate(185%);
+.studio-omnibar-flat {
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: none;
+  transition: border-color 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.studio-omnibar-flat:focus-within {
+  border-color: color-mix(in srgb, var(--foreground) 14%, transparent);
 }
 
+/* Solid Tiles Inside Floating Popovers & Dialogs (Prevents Photo Bleed-Through) */
+.popover-tile {
+  background-color: var(--tile-bg);
+}
+.popover-tile-interactive {
+  background-color: var(--tile-bg);
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+.popover-tile-interactive:hover {
+  background-color: var(--tile-hover);
+}
+.popover-tile-active {
+  background-color: var(--tile-active);
+}
+
+/* Tier 2: High-Occlusion Sticky Chrome Bars (94% Opacity) */
+.studio-sticky-bar {
+  background: var(--sticky-bg);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+}
+
+/* Tier 3: High-Solidity Floating Overlays & Bottom Dock (97.5% Opacity + Elevation Shadow) */
+.studio-omnibar,
 .studio-floating-popover {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
-  backdrop-filter: blur(36px) saturate(190%);
-  -webkit-backdrop-filter: blur(36px) saturate(190%);
+  backdrop-filter: blur(44px) saturate(185%);
+  -webkit-backdrop-filter: blur(44px) saturate(185%);
 }
 
 .studio-kbd {
@@ -150,7 +203,7 @@
   font-size: 10px;
   font-weight: 500;
   line-height: 1;
-  background-color: color-mix(in srgb, var(--foreground) 6%, transparent);
+  background-color: var(--tile-bg);
   color: var(--muted-foreground);
 }
 
@@ -176,7 +229,7 @@ input[type="range"].studio-slider {
   appearance: none;
   height: 3px;
   border-radius: 9999px;
-  background: color-mix(in srgb, var(--foreground) 12%, transparent);
+  background: color-mix(in srgb, var(--foreground) 14%, transparent);
   outline: none;
   cursor: pointer;
 }

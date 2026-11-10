@@ -299,8 +299,8 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
           快速跳转页面、切换模型或套用配方
         </DialogDescription>
 
-        {/* Spotlight Search Input (Borderless) */}
-        <div className="flex items-center gap-3 rounded-2xl bg-foreground/[0.045] dark:bg-white/[0.06] px-3.5 py-2.5 mr-9">
+        {/* Spotlight Search Input (Solid Tile) */}
+        <div className="flex items-center gap-3 rounded-2xl popover-tile px-3.5 py-2.5 mr-9">
           <Search className="h-4 w-4 text-muted-foreground shrink-0" />
           <input
             ref={inputRef}

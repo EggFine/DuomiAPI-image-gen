@@ -3,7 +3,6 @@ import {
   AlertCircle,
   AlertTriangle,
   Archive,
-  ArrowUp,
   CheckSquare,
   Columns2,
   Copy,
@@ -126,10 +125,7 @@ const ArtworkImageReveal: React.FC<
 interface MasonryArtworkStreamProps {
   mode: "imagine" | "gallery"
   embeddedScroll?: boolean
-  showQuickCreateTrigger?: boolean
-  hasDraftOrRefs?: boolean
-  onOpenQuickComposer?: () => void
-  onScrollToTop?: () => void
+  onSelectModeChange?: (selecting: boolean) => void
 
   records: TaskRecord[]
   projects: ProjectFolder[]
@@ -162,10 +158,7 @@ interface MasonryArtworkStreamProps {
 export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   mode,
   embeddedScroll = true,
-  showQuickCreateTrigger = false,
-  hasDraftOrRefs = false,
-  onOpenQuickComposer,
-  onScrollToTop,
+  onSelectModeChange,
   records,
   projects,
   onCreateProject,
@@ -222,11 +215,20 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   const statusPillRef = useRef<HTMLDivElement | null>(null)
   const statusBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const statusPillInitRef = useRef<boolean>(false)
-  const quickCapsuleRef = useRef<HTMLDivElement | null>(null)
   const batchDockRef = useRef<HTMLDivElement | null>(null)
   const seenCardIdsRef = useRef<Set<string>>(new Set())
   const filterChangeInitRef = useRef<boolean>(false)
   const pendingFlipRef = useRef<Flip.FlipState | null>(null)
+
+  useEffect(() => {
+    onSelectModeChange?.(selectMode)
+  }, [selectMode, onSelectModeChange])
+
+  useEffect(() => {
+    return () => {
+      onSelectModeChange?.(false)
+    }
+  }, [onSelectModeChange])
 
   const { contextSafe } = useGSAP({ scope: streamRootRef })
 
@@ -420,33 +422,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     }
   )
 
-  // 2. Quick Create Capsule calm entrance when scrolling past top composer
-  useGSAP(
-    () => {
-      if (
-        !showQuickCreateTrigger ||
-        !quickCapsuleRef.current ||
-        prefersReducedMotion()
-      ) {
-        return
-      }
-      gsap.fromTo(
-        quickCapsuleRef.current,
-        { autoAlpha: 0, x: -6, scale: 0.96 },
-        {
-          autoAlpha: 1,
-          x: 0,
-          scale: 1,
-          duration: 0.28,
-          ease: STUDIO_EASE.expo,
-          clearProps: "transform,visibility",
-        }
-      )
-    },
-    { scope: streamRootRef, dependencies: [showQuickCreateTrigger] }
-  )
-
-  // 3. Floating Batch Action Dock calm entrance
+  // 2. Floating Batch Action Dock calm entrance
   useGSAP(
     () => {
       if (!selectMode || !batchDockRef.current || prefersReducedMotion()) return
@@ -1206,14 +1182,23 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   const tonalControlPill =
     "h-8 rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] text-xs text-muted-foreground hover:text-foreground transition-colors"
 
+  const isGalleryTwoPane = embeddedScroll && mode === "gallery"
+  const isSplitRightPane = embeddedScroll && mode === "imagine"
+
   return (
     <div
       ref={streamRootRef}
-      className={cn("w-full", embeddedScroll && "flex h-full overflow-hidden")}
+      className={cn(
+        isGalleryTwoPane
+          ? "studio-container flex h-full gap-8 overflow-hidden"
+          : embeddedScroll
+          ? "flex h-full w-full overflow-hidden"
+          : "w-full"
+      )}
     >
-      {/* Borderless Floating Album Column in Gallery View */}
+      {/* Borderless Floating Album Column in Gallery View — 0px aligned with left plumb-line */}
       {mode === "gallery" && (
-        <aside className="hidden lg:flex w-56 shrink-0 flex-col justify-between pl-6 sm:pl-8 pr-2 py-5 select-none">
+        <aside className="hidden lg:flex w-52 shrink-0 flex-col justify-between py-5 select-none">
           <div className="space-y-6 overflow-y-auto studio-scroll">
             <div>
               <h2 className="px-3 text-[11px] font-medium text-muted-foreground">
@@ -1410,295 +1395,280 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       {/* Main Stream Column */}
       <div
         className={cn(
-          "flex flex-col relative w-full",
-          embeddedScroll && "flex-1 overflow-hidden"
+          "flex flex-col relative min-w-0",
+          embeddedScroll ? "flex-1 h-full overflow-hidden" : "w-full"
         )}
       >
-        {/* Borderless Apple Vibrancy Filter Bar */}
+        {/* High-Occlusion Sticky Filter Bar — Plumb-line Aligned */}
         <div
           className={cn(
-            "flex flex-wrap items-center justify-between gap-2.5 bg-background/80 backdrop-blur-2xl px-5 sm:px-8 lg:px-12 py-3 z-20",
-            !embeddedScroll ? "sticky top-0" : "shrink-0"
+            "z-20 w-full",
+            !embeddedScroll
+              ? "sticky top-0 studio-sticky-bar"
+              : isSplitRightPane
+              ? "shrink-0 studio-sticky-bar"
+              : "shrink-0"
           )}
         >
-          {/* Left: Quick Create Capsule + Segmented Filter Pill */}
-          <div className="flex items-center gap-2 overflow-x-auto">
-            {showQuickCreateTrigger && (
-              <div
-                ref={quickCapsuleRef}
-                className="flex items-center gap-1.5 shrink-0"
-              >
-                {onOpenQuickComposer && (
+          <div
+            className={cn(
+              "flex flex-wrap items-center justify-between gap-2.5 py-3",
+              !embeddedScroll
+                ? "studio-container"
+                : isSplitRightPane
+                ? "px-6"
+                : ""
+            )}
+          >
+            {/* Left: Segmented Status Filter Pill */}
+            <div className="flex items-center gap-2 overflow-x-auto">
+              <div className="relative flex items-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] p-1 shrink-0">
+                <div
+                  ref={statusPillRef}
+                  style={{ opacity: 0, visibility: "hidden" }}
+                  className="pointer-events-none absolute top-1 bottom-1 left-0 rounded-full bg-card shadow-[0_1px_4px_rgba(0,0,0,0.08)] dark:bg-white/[0.15]"
+                />
+                {[
+                  { id: "all", label: "全部", c: counts.all },
+                  { id: "active", label: "生成中", c: counts.active },
+                  { id: "succeeded", label: "已完成", c: counts.succeeded },
+                  { id: "starred", label: "收藏", c: counts.starred },
+                  { id: "failed", label: "异常", c: counts.failed },
+                ].map((tab) => (
                   <button
+                    key={tab.id}
+                    ref={(el) => {
+                      statusBtnRefs.current[tab.id] = el
+                    }}
                     type="button"
-                    onClick={onOpenQuickComposer}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-full bg-primary px-3.5 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 cursor-pointer"
-                    title="唤起创作框 (Ctrl+J)"
+                    onClick={() => {
+                      if (statusFilter !== tab.id) captureStreamFlip()
+                      setStatusFilter(tab.id)
+                    }}
+                    className={cn(
+                      "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0",
+                      statusFilter === tab.id
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
                   >
-                    <span>创作</span>
-                    {hasDraftOrRefs && (
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary-foreground/75" />
+                    <span>{tab.label}</span>
+                    {tab.c > 0 && (
+                      <span className="font-mono text-[10px] opacity-60 tabular-nums">
+                        {tab.c}
+                      </span>
                     )}
                   </button>
-                )}
-                {onScrollToTop && (
-                  <Tooltip>
+                ))}
+              </div>
+            </div>
+
+            {/* Right: Quiet Tonal Controls */}
+            <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+              <div className="relative w-36 sm:w-48">
+                <Search className="pointer-events-none absolute left-3 top-2.25 h-3.5 w-3.5 text-muted-foreground/75" />
+                <Input
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="搜索"
+                  className="h-8 rounded-full pl-8 text-xs"
+                />
+              </div>
+
+              {distinctModels.length > 1 && (
+                <select
+                  value={modelFilter}
+                  onChange={(e) => {
+                    captureStreamFlip()
+                    setModelFilter(e.target.value)
+                  }}
+                  className={cn(
+                    tonalControlPill,
+                    "px-3 focus:outline-none cursor-pointer"
+                  )}
+                >
+                  <option value="all">全部模型</option>
+                  {distinctModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m.replace("gpt-image-", "")}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {displayMode !== "list" && (
+                <div
+                  className={cn(
+                    "hidden xl:flex items-center gap-2 px-3",
+                    tonalControlPill
+                  )}
+                  title="调节列数"
+                >
+                  <span className="text-[11px] font-mono tabular-nums">
+                    {columnCount}列
+                  </span>
+                  <input
+                    type="range"
+                    min={2}
+                    max={6}
+                    step={1}
+                    value={columnCount}
+                    onChange={(e) => {
+                      captureStreamFlip()
+                      setColumnCount(Number(e.target.value))
+                    }}
+                    className="w-16 studio-slider"
+                  />
+                </div>
+              )}
+
+              {/* Monochrome Segmented View Switcher */}
+              <div className="inline-flex items-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] p-1">
+                {(
+                  [
+                    { m: "masonry", icon: LayoutGrid, tip: "纯享瀑布流" },
+                    { m: "showcase", icon: Grid2X2, tip: "卡片视图" },
+                    { m: "list", icon: LayoutList, tip: "列表视图" },
+                  ] as const
+                ).map(({ m, icon: Icon, tip }) => (
+                  <Tooltip key={m}>
                     <TooltipTrigger asChild>
                       <button
                         type="button"
-                        onClick={onScrollToTop}
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
-                        aria-label="回到顶部"
+                        onClick={() => {
+                          if (displayMode !== m) captureStreamFlip()
+                          setDisplayMode(m)
+                        }}
+                        className={cn(
+                          "flex h-6 w-7 items-center justify-center rounded-full transition-all cursor-pointer",
+                          displayMode === m
+                            ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.16]"
+                            : "text-muted-foreground hover:text-foreground"
+                        )}
                       >
-                        <ArrowUp className="h-3.5 w-3.5" />
+                        <Icon className="h-3.5 w-3.5" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>回到顶部</TooltipContent>
+                    <TooltipContent>{tip}</TooltipContent>
                   </Tooltip>
-                )}
-              </div>
-            )}
-
-            <div className="relative flex items-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] p-1 shrink-0">
-              <div
-                ref={statusPillRef}
-                style={{ opacity: 0, visibility: "hidden" }}
-                className="pointer-events-none absolute top-1 bottom-1 left-0 rounded-full bg-card shadow-[0_1px_4px_rgba(0,0,0,0.08)] dark:bg-white/[0.15]"
-              />
-              {[
-                { id: "all", label: "全部", c: counts.all },
-                { id: "active", label: "生成中", c: counts.active },
-                { id: "succeeded", label: "已完成", c: counts.succeeded },
-                { id: "starred", label: "收藏", c: counts.starred },
-                { id: "failed", label: "异常", c: counts.failed },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  ref={(el) => {
-                    statusBtnRefs.current[tab.id] = el
-                  }}
-                  type="button"
-                  onClick={() => {
-                    if (statusFilter !== tab.id) captureStreamFlip()
-                    setStatusFilter(tab.id)
-                  }}
-                  className={cn(
-                    "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0",
-                    statusFilter === tab.id
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  <span>{tab.label}</span>
-                  {tab.c > 0 && (
-                    <span className="font-mono text-[10px] opacity-60 tabular-nums">
-                      {tab.c}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Right: Quiet Tonal Controls */}
-          <div className="flex flex-wrap items-center gap-1.5 ml-auto">
-            <div className="relative w-36 sm:w-48">
-              <Search className="pointer-events-none absolute left-3 top-2.25 h-3.5 w-3.5 text-muted-foreground/75" />
-              <Input
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索"
-                className="h-8 rounded-full pl-8 text-xs"
-              />
-            </div>
-
-            {distinctModels.length > 1 && (
-              <select
-                value={modelFilter}
-                onChange={(e) => {
-                  captureStreamFlip()
-                  setModelFilter(e.target.value)
-                }}
-                className={cn(tonalControlPill, "px-3 focus:outline-none cursor-pointer")}
-              >
-                <option value="all">全部模型</option>
-                {distinctModels.map((m) => (
-                  <option key={m} value={m}>
-                    {m.replace("gpt-image-", "")}
-                  </option>
                 ))}
-              </select>
-            )}
-
-            {displayMode !== "list" && (
-              <div
-                className={cn(
-                  "hidden xl:flex items-center gap-2 px-3",
-                  tonalControlPill
-                )}
-                title="调节列数"
-              >
-                <span className="text-[11px] font-mono tabular-nums">
-                  {columnCount}列
-                </span>
-                <input
-                  type="range"
-                  min={2}
-                  max={6}
-                  step={1}
-                  value={columnCount}
-                  onChange={(e) => {
-                    captureStreamFlip()
-                    setColumnCount(Number(e.target.value))
-                  }}
-                  className="w-16 studio-slider"
-                />
               </div>
-            )}
 
-            {/* Monochrome Segmented View Switcher */}
-            <div className="inline-flex items-center rounded-full bg-foreground/[0.045] dark:bg-white/[0.055] p-1">
-              {(
-                [
-                  { m: "masonry", icon: LayoutGrid, tip: "纯享瀑布流" },
-                  { m: "showcase", icon: Grid2X2, tip: "卡片视图" },
-                  { m: "list", icon: LayoutList, tip: "列表视图" },
-                ] as const
-              ).map(({ m, icon: Icon, tip }) => (
-                <Tooltip key={m}>
-                  <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => {
+                  captureStreamFlip()
+                  setGroupByDate((v) => !v)
+                }}
+                className={cn(
+                  "hidden sm:inline-flex h-8 items-center rounded-full px-3 text-xs font-medium transition-colors cursor-pointer",
+                  groupByDate
+                    ? "bg-foreground/[0.09] dark:bg-white/[0.12] text-foreground"
+                    : tonalControlPill
+                )}
+              >
+                时间轴
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectMode((v) => !v)
+                  if (selectMode) clearSelection()
+                }}
+                className={cn(
+                  "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors cursor-pointer",
+                  selectMode
+                    ? "bg-primary text-primary-foreground"
+                    : tonalControlPill
+                )}
+              >
+                <span>多选</span>
+              </button>
+
+              {counts.failed > 0 &&
+                !selectMode &&
+                (confirmClearFailed ? (
+                  <div className="inline-flex h-8 items-center gap-1.5 rounded-full bg-destructive/10 px-3 text-xs">
+                    <span className="text-destructive">
+                      清理 {counts.failed} 条？
+                    </span>
                     <button
                       type="button"
                       onClick={() => {
-                        if (displayMode !== m) captureStreamFlip()
-                        setDisplayMode(m)
+                        onClearFailed()
+                        setConfirmClearFailed(false)
                       }}
-                      className={cn(
-                        "flex h-6 w-7 items-center justify-center rounded-full transition-all cursor-pointer",
-                        displayMode === m
-                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.16]"
-                          : "text-muted-foreground hover:text-foreground"
-                      )}
+                      className="font-medium text-destructive underline cursor-pointer"
                     >
-                      <Icon className="h-3.5 w-3.5" />
+                      确认
                     </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{tip}</TooltipContent>
-                </Tooltip>
-              ))}
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClearFailed(false)}
+                      className="text-muted-foreground cursor-pointer"
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearFailed(true)}
+                    className={cn(
+                      "inline-flex items-center gap-1 px-3 hover:text-destructive cursor-pointer",
+                      tonalControlPill
+                    )}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                    <span className="hidden md:inline">清异常</span>
+                  </button>
+                ))}
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={onOpenImportTask}
+                    className={cn(
+                      "inline-flex w-8 items-center justify-center cursor-pointer",
+                      tonalControlPill
+                    )}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>查询或导入任务 ID</TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={onRefreshAll}
+                    className={cn(
+                      "inline-flex w-8 items-center justify-center cursor-pointer",
+                      tonalControlPill
+                    )}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>刷新</TooltipContent>
+              </Tooltip>
             </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                captureStreamFlip()
-                setGroupByDate((v) => !v)
-              }}
-              className={cn(
-                "hidden sm:inline-flex h-8 items-center rounded-full px-3 text-xs font-medium transition-colors cursor-pointer",
-                groupByDate
-                  ? "bg-foreground/[0.09] dark:bg-white/[0.12] text-foreground"
-                  : tonalControlPill
-              )}
-            >
-              时间轴
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setSelectMode((v) => !v)
-                if (selectMode) clearSelection()
-              }}
-              className={cn(
-                "inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition-colors cursor-pointer",
-                selectMode
-                  ? "bg-primary text-primary-foreground"
-                  : tonalControlPill
-              )}
-            >
-              <span>多选</span>
-            </button>
-
-            {counts.failed > 0 &&
-              !selectMode &&
-              (confirmClearFailed ? (
-                <div className="inline-flex h-8 items-center gap-1.5 rounded-full bg-destructive/10 px-3 text-xs">
-                  <span className="text-destructive">
-                    清理 {counts.failed} 条？
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClearFailed()
-                      setConfirmClearFailed(false)
-                    }}
-                    className="font-medium text-destructive underline cursor-pointer"
-                  >
-                    确认
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setConfirmClearFailed(false)}
-                    className="text-muted-foreground cursor-pointer"
-                  >
-                    取消
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => setConfirmClearFailed(true)}
-                  className={cn(
-                    "inline-flex items-center gap-1 px-3 hover:text-destructive cursor-pointer",
-                    tonalControlPill
-                  )}
-                >
-                  <Trash2 className="h-3 w-3" />
-                  <span className="hidden md:inline">清异常</span>
-                </button>
-              ))}
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={onOpenImportTask}
-                  className={cn(
-                    "inline-flex w-8 items-center justify-center cursor-pointer",
-                    tonalControlPill
-                  )}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>查询或导入任务 ID</TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={onRefreshAll}
-                  className={cn(
-                    "inline-flex w-8 items-center justify-center cursor-pointer",
-                    tonalControlPill
-                  )}
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>刷新</TooltipContent>
-            </Tooltip>
           </div>
         </div>
 
-        {/* Generous Whitespace Artwork Stream Body */}
+        {/* Generous Whitespace Artwork Stream Body — Plumb-line Aligned */}
         <div
           ref={streamBodyRef}
           className={cn(
-            "px-5 sm:px-8 lg:px-12 py-6 pb-28",
-            embeddedScroll && "flex-1 overflow-y-auto studio-scroll"
+            !embeddedScroll
+              ? "studio-container py-5 pb-32"
+              : isSplitRightPane
+              ? "px-6 py-5 pb-28 flex-1 overflow-y-auto studio-scroll"
+              : "py-4 pb-28 flex-1 overflow-y-auto studio-scroll"
           )}
         >
           {filteredRecords.length === 0 ? (
@@ -1752,7 +1722,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 for (const r of filteredRecords) next[r.id] = true
                 setSelectedIds(next)
               }}
-              className="rounded-full bg-foreground/[0.06] px-2.5 py-1 text-[11px] font-medium text-foreground hover:bg-foreground/[0.1] cursor-pointer"
+              className="rounded-full popover-tile-interactive px-2.5 py-1 text-[11px] font-medium text-foreground cursor-pointer"
             >
               全选 ({filteredRecords.length})
             </button>
@@ -1781,7 +1751,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         onAssignProject(selectedIdList, "")
                         clearSelection()
                       }}
-                      className="flex w-full items-center rounded-xl px-2.5 py-1.5 text-xs hover:bg-foreground/[0.05] cursor-pointer"
+                      className="flex w-full items-center rounded-xl px-2.5 py-1.5 text-xs hover:bg-[var(--tile-bg)] cursor-pointer"
                     >
                       移出画册
                     </button>
@@ -1793,7 +1763,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                           onAssignProject(selectedIdList, p.id)
                           clearSelection()
                         }}
-                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs hover:bg-foreground/[0.05] cursor-pointer"
+                        className="flex w-full items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs hover:bg-[var(--tile-bg)] cursor-pointer"
                       >
                         <span
                           className={cn(

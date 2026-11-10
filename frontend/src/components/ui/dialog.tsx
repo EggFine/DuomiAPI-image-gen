@@ -97,7 +97,7 @@ const DialogContent = React.forwardRef<
           assignRef(ref, node)
         }}
         className={cn(
-          "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-5 studio-floating-popover bg-card/95 p-7 sm:rounded-3xl",
+          "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-5 studio-floating-popover p-7 sm:rounded-3xl",
           className
         )}
         {...props}

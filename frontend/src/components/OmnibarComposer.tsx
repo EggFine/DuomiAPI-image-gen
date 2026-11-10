@@ -141,6 +141,7 @@ interface OmnibarComposerProps {
   onSubmitGenerate: () => void
   onOpenDevPreview: () => void
   onCollapseOverlay?: () => void
+  floating?: boolean
 }
 
 export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
@@ -203,6 +204,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   onSubmitGenerate,
   onOpenDevPreview,
   onCollapseOverlay,
+  floating = false,
 }) => {
   const composerRootRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -422,6 +424,8 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
     return { width: `${rw}px`, height: `${rh}px` }
   }, [activeRatioGroup, selectedRatio, customW, customH])
 
+  const popoverSide: "top" | "bottom" = floating ? "top" : "bottom"
+
   const pillClass =
     "inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] hover:bg-foreground/[0.085] dark:hover:bg-white/[0.1] px-3 text-xs font-medium text-foreground transition-colors cursor-pointer"
 
@@ -444,8 +448,11 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
         }
       }}
       className={cn(
-        "studio-omnibar relative mx-auto w-full max-w-3xl rounded-[28px] p-4 sm:p-5 transition-all duration-300",
-        isDragging && "ring-2 ring-foreground/25 scale-[1.004]"
+        "relative mx-auto w-full rounded-[26px] p-4 sm:p-5 transition-colors duration-200",
+        floating
+          ? "studio-floating-popover max-w-[920px]"
+          : "studio-omnibar-flat max-w-[1040px]",
+        isDragging && "ring-2 ring-foreground/25"
       )}
     >
       {/* Minimalist Frosted Drag & Drop Overlay */}
@@ -626,7 +633,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <span className="hidden sm:inline">URL</span>
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 space-y-2.5">
+            <PopoverContent
+              preferredSide={popoverSide}
+              className="w-80 space-y-2.5"
+            >
               <p className="text-xs font-medium text-foreground">参考图直链</p>
               <div className="flex gap-2">
                 <Input
@@ -708,9 +718,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               </PopoverTrigger>
               <PopoverContent
                 align="end"
-                className="w-92 max-h-80 overflow-y-auto space-y-1"
+                preferredSide={popoverSide}
+                className="w-92 max-h-80 overflow-y-auto space-y-1.5"
               >
-                <div className="flex items-center justify-between px-2 pb-1.5">
+                <div className="flex items-center justify-between px-2 pb-1">
                   <span className="text-xs font-medium text-foreground">
                     最近提示词
                   </span>
@@ -726,7 +737,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       onChangePrompt(item.prompt)
                       setHistoryPopoverOpen(false)
                     }}
-                    className="w-full rounded-2xl hover:bg-foreground/[0.055] p-2.5 text-left transition-colors cursor-pointer"
+                    className="w-full rounded-2xl popover-tile-interactive p-2.5 text-left cursor-pointer"
                   >
                     <p className="text-xs text-foreground line-clamp-2 leading-relaxed">
                       {item.prompt}
@@ -835,13 +846,16 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-84 space-y-2.5">
+            <PopoverContent
+              preferredSide={popoverSide}
+              className="w-84 space-y-2.5"
+            >
               <div className="px-1">
                 <span className="text-xs font-medium text-foreground">
                   生图模型
                 </span>
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {models.map((m) => {
                   const selected =
                     !customModel.trim() && selectedModel === m.id
@@ -855,10 +869,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                         setModelPopoverOpen(false)
                       }}
                       className={cn(
-                        "w-full rounded-2xl p-2.5 text-left transition-colors cursor-pointer",
+                        "w-full rounded-2xl p-2.5 text-left cursor-pointer",
                         selected
-                          ? "bg-foreground/[0.07] dark:bg-white/[0.1]"
-                          : "hover:bg-foreground/[0.045]"
+                          ? "popover-tile-active"
+                          : "popover-tile-interactive"
                       )}
                     >
                       <div className="flex items-center justify-between gap-2">
@@ -927,10 +941,13 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-[356px] sm:w-[416px] space-y-3.5">
-              {/* Clean Monochrome Aspect Frame Preview */}
-              <div className="flex items-center gap-3.5 rounded-2xl bg-foreground/[0.04] dark:bg-white/[0.05] p-3">
-                <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-xl bg-background/70">
+            <PopoverContent
+              preferredSide={popoverSide}
+              className="w-[356px] sm:w-[416px] space-y-3.5"
+            >
+              {/* Clean Solid Monochrome Aspect Frame Preview */}
+              <div className="flex items-center gap-3.5 rounded-2xl popover-tile p-3">
+                <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-xl bg-card border border-border">
                   <div
                     style={previewRectStyle}
                     className="rounded-[5px] border-[1.5px] border-foreground/75 bg-foreground/[0.06] transition-all duration-200 flex items-center justify-center"
@@ -981,7 +998,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                           "flex flex-col items-center justify-center gap-1 rounded-xl py-2 px-1 text-center transition-colors cursor-pointer",
                           active
                             ? "bg-primary text-primary-foreground font-medium"
-                            : "bg-foreground/[0.04] text-muted-foreground hover:text-foreground hover:bg-foreground/[0.075]"
+                            : "popover-tile-interactive text-muted-foreground hover:text-foreground"
                         )}
                       >
                         <MiniRatioBox w={grp.aspect_w} h={grp.aspect_h} />
@@ -998,7 +1015,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       "flex flex-col items-center justify-center gap-1 rounded-xl py-2 px-1 text-center transition-colors cursor-pointer",
                       selectedRatio === "custom"
                         ? "bg-primary text-primary-foreground font-medium"
-                        : "bg-foreground/[0.04] text-muted-foreground hover:text-foreground hover:bg-foreground/[0.075]"
+                        : "popover-tile-interactive text-muted-foreground hover:text-foreground"
                     )}
                   >
                     <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -1084,17 +1101,17 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                               onSelectPresetSize(sz.value, sz.tier)
                             }}
                             className={cn(
-                              "flex items-center justify-between rounded-2xl px-3 py-2 text-left transition-colors cursor-pointer",
+                              "flex items-center justify-between gap-2 rounded-2xl px-3 py-2 text-left cursor-pointer",
                               active
-                                ? "bg-foreground/[0.08] dark:bg-white/[0.12]"
-                                : "bg-foreground/[0.035] hover:bg-foreground/[0.065]"
+                                ? "popover-tile-active"
+                                : "popover-tile-interactive"
                             )}
                           >
-                            <div>
-                              <p className="text-xs font-medium text-foreground">
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-foreground truncate">
                                 {sz.label}
                               </p>
-                              <p className="font-mono text-[10px] text-muted-foreground">
+                              <p className="font-mono text-[10px] text-muted-foreground truncate">
                                 {sz.detail}
                               </p>
                             </div>
@@ -1122,12 +1139,15 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-72 space-y-3.5">
+            <PopoverContent
+              preferredSide={popoverSide}
+              className="w-72 space-y-3.5"
+            >
               <div className="space-y-1.5">
                 <span className="px-1 text-xs font-medium text-foreground">
                   刻画精细度
                 </span>
-                <div className="grid grid-cols-4 gap-1 rounded-full bg-foreground/[0.05] dark:bg-white/[0.06] p-1">
+                <div className="grid grid-cols-4 gap-1 rounded-full popover-tile p-1">
                   {[
                     { v: "default", l: "默认" },
                     { v: "low", l: "极速" },
@@ -1141,7 +1161,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       className={cn(
                         "rounded-full py-1 text-[11px] font-medium transition-all cursor-pointer",
                         quality === q.v
-                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.16]"
+                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.18]"
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
@@ -1155,7 +1175,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <span className="px-1 text-xs font-medium text-foreground">
                   背景通道
                 </span>
-                <div className="grid grid-cols-3 gap-1 rounded-full bg-foreground/[0.05] dark:bg-white/[0.06] p-1">
+                <div className="grid grid-cols-3 gap-1 rounded-full popover-tile p-1">
                   {[
                     { v: "auto", l: "自动" },
                     { v: "opaque", l: "实色" },
@@ -1168,7 +1188,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       className={cn(
                         "rounded-full py-1 text-[11px] font-medium transition-all cursor-pointer",
                         background === b.v
-                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.16]"
+                          ? "bg-card text-foreground shadow-2xs dark:bg-white/[0.18]"
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
@@ -1214,7 +1234,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               </button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 space-y-3">
+            <PopoverContent
+              preferredSide={popoverSide}
+              className="w-80 space-y-3"
+            >
               <div className="flex items-center justify-between px-1">
                 <span className="text-xs font-medium text-foreground">
                   参考图传输方式
@@ -1228,7 +1251,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 </button>
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {(
                   [
                     {
@@ -1253,10 +1276,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     type="button"
                     onClick={() => onChangeRefMode(opt.m)}
                     className={cn(
-                      "w-full rounded-2xl p-2.5 text-left transition-colors cursor-pointer",
+                      "w-full rounded-2xl p-2.5 text-left cursor-pointer",
                       refMode === opt.m
-                        ? "bg-foreground/[0.07] dark:bg-white/[0.1]"
-                        : "hover:bg-foreground/[0.04]"
+                        ? "popover-tile-active"
+                        : "popover-tile-interactive"
                     )}
                   >
                     <div className="flex items-center justify-between">
@@ -1287,7 +1310,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                           e.target.value as ImageHostProvider
                         )
                       }
-                      className="h-8 w-full rounded-xl bg-foreground/[0.05] px-2.5 text-xs text-foreground focus:outline-none"
+                      className="h-8 w-full rounded-xl popover-tile px-2.5 text-xs text-foreground focus:outline-none"
                     >
                       {imageHosts.map((h) => (
                         <option key={h.id} value={h.id}>
@@ -1303,7 +1326,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     <select
                       value={litterboxExpiry}
                       onChange={(e) => onChangeLitterboxExpiry(e.target.value)}
-                      className="h-8 w-full rounded-xl bg-foreground/[0.05] px-2.5 text-xs font-mono text-foreground focus:outline-none"
+                      className="h-8 w-full rounded-xl popover-tile px-2.5 text-xs font-mono text-foreground focus:outline-none"
                     >
                       <option value="1h">1 小时</option>
                       <option value="12h">12 小时</option>
@@ -1376,7 +1399,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                   </span>
                 </button>
               </PopoverTrigger>
-              <PopoverContent className="w-52 space-y-1">
+              <PopoverContent
+                preferredSide={popoverSide}
+                className="w-52 space-y-1"
+              >
                 <p className="text-[11px] font-medium text-muted-foreground px-2 pb-1">
                   自动归入画册
                 </p>
@@ -1386,8 +1412,8 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                   className={cn(
                     "flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-xs cursor-pointer",
                     !activeProjectId
-                      ? "bg-foreground/[0.07] font-medium"
-                      : "hover:bg-foreground/[0.04]"
+                      ? "popover-tile-active font-medium"
+                      : "hover:bg-[var(--tile-bg)]"
                   )}
                 >
                   <span>不指定</span>
@@ -1403,8 +1429,8 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     className={cn(
                       "flex w-full items-center justify-between rounded-xl px-2.5 py-2 text-xs cursor-pointer",
                       activeProjectId === p.id
-                        ? "bg-foreground/[0.07] font-medium"
-                        : "hover:bg-foreground/[0.04]"
+                        ? "popover-tile-active font-medium"
+                        : "hover:bg-[var(--tile-bg)]"
                     )}
                   >
                     <span className="flex items-center gap-2 truncate">

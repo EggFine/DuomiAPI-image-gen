@@ -151,10 +151,11 @@ export const StudioRail: React.FC<StudioRailProps> = ({
       <header
         ref={headerRef}
         aria-label="工作区导航"
-        className="flex h-14 shrink-0 items-center justify-between bg-background/80 backdrop-blur-2xl px-5 sm:px-8 select-none z-30"
+        className="studio-sticky-bar w-full shrink-0 select-none z-30"
       >
-        {/* Left: Quiet Wordmark & Subtle Live Status */}
-        <div className="flex items-center gap-3 min-w-[110px] sm:min-w-[160px]">
+        <div className="studio-container flex h-14 items-center justify-between">
+          {/* Left: Quiet Wordmark & Subtle Live Status */}
+          <div className="flex items-center gap-3 min-w-[110px] sm:min-w-[160px]">
           <button
             type="button"
             onClick={() => onSelectTab("imagine")}
@@ -324,6 +325,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
             </TooltipTrigger>
             <TooltipContent>设置</TooltipContent>
           </Tooltip>
+          </div>
         </div>
       </header>
 
