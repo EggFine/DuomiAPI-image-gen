@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   BookMarked,
@@ -40,6 +40,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
 import { parsePixelDimensions, PROJECT_COLOR_MAP } from "@/lib/studio-utils"
 import { cn } from "@/lib/utils"
 import type {
@@ -204,6 +205,15 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const submitBtnRef = useRef<HTMLButtonElement | null>(null)
+  const batchValueRef = useRef<HTMLSpanElement | null>(null)
+  const refChipRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const seenRefIdsRef = useRef<Set<string>>(
+    new Set(referenceImages.map((r) => r.id))
+  )
+  const mountedTextareaRef = useRef<boolean>(false)
+  const mountedBatchRef = useRef<boolean>(false)
+
   const [isDragging, setIsDragging] = useState(false)
   const [urlPopoverOpen, setUrlPopoverOpen] = useState(false)
   const [urlInput, setUrlInput] = useState("")
@@ -211,13 +221,95 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false)
   const [historyPopoverOpen, setHistoryPopoverOpen] = useState(false)
 
+  // Smooth GSAP auto-height interpolation on prompt textarea
   useEffect(() => {
     const el = textareaRef.current
     if (!el) return
+    const prevH = el.offsetHeight
     el.style.height = "auto"
     const nextH = Math.min(200, Math.max(54, el.scrollHeight))
-    el.style.height = `${nextH}px`
+
+    if (!mountedTextareaRef.current || prefersReducedMotion() || Math.abs(nextH - prevH) < 2) {
+      mountedTextareaRef.current = true
+      el.style.height = `${nextH}px`
+      return
+    }
+
+    el.style.height = `${prevH}px`
+    gsap.to(el, {
+      height: nextH,
+      duration: 0.18,
+      ease: "power2.out",
+      overwrite: "auto",
+    })
   }, [prompt])
+
+  // Spring pop-in for newly added Reference Image Chips (@图1, @图2...)
+  useLayoutEffect(() => {
+    const currentIds = new Set(referenceImages.map((r) => r.id))
+    const newTargets: HTMLDivElement[] = []
+    for (const r of referenceImages) {
+      if (!seenRefIdsRef.current.has(r.id)) {
+        seenRefIdsRef.current.add(r.id)
+        const el = refChipRefs.current[r.id]
+        if (el) newTargets.push(el)
+      }
+    }
+    // Prune removed IDs so re-adding later animates cleanly
+    for (const oldId of Array.from(seenRefIdsRef.current)) {
+      if (!currentIds.has(oldId)) {
+        seenRefIdsRef.current.delete(oldId)
+      }
+    }
+    if (newTargets.length > 0 && !prefersReducedMotion()) {
+      gsap.fromTo(
+        newTargets,
+        { opacity: 0, scale: 0.86, y: 6 },
+        {
+          opacity: 1,
+          scale: 1,
+          y: 0,
+          duration: 0.28,
+          stagger: 0.04,
+          ease: STUDIO_EASE.spring,
+          clearProps: "transform",
+        }
+      )
+    }
+  }, [referenceImages])
+
+  // Subtle tactile pop when changing batch count (×1..×10)
+  useLayoutEffect(() => {
+    if (!mountedBatchRef.current) {
+      mountedBatchRef.current = true
+      return
+    }
+    if (!batchValueRef.current || prefersReducedMotion()) return
+    gsap.fromTo(
+      batchValueRef.current,
+      { scale: 1.25, y: -1.5 },
+      { scale: 1, y: 0, duration: 0.24, ease: STUDIO_EASE.spring, clearProps: "transform" }
+    )
+  }, [batchCount])
+
+  const triggerGenerateWithShutter = () => {
+    if (submitBtnRef.current && !prefersReducedMotion()) {
+      gsap
+        .timeline()
+        .to(submitBtnRef.current, {
+          scale: 0.955,
+          duration: 0.07,
+          ease: "power2.in",
+        })
+        .to(submitBtnRef.current, {
+          scale: 1,
+          duration: 0.24,
+          ease: STUDIO_EASE.spring,
+          clearProps: "transform",
+        })
+    }
+    onSubmitGenerate()
+  }
 
   const activeModelObj = useMemo(
     () => models.find((m) => m.id === selectedModel),
@@ -357,8 +449,11 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
           {referenceImages.map((item, idx) => (
             <div
               key={item.id}
+              ref={(el) => {
+                refChipRefs.current[item.id] = el
+              }}
               className={cn(
-                "group relative flex items-center gap-2 rounded-xl border p-1 pr-2 transition-all",
+                "group relative flex items-center gap-2 rounded-xl border p-1 pr-2 transition-colors",
                 item.error
                   ? "border-destructive/60 bg-destructive/10"
                   : "border-border/80 bg-card/85 hover:border-amber-500/60"
@@ -664,7 +759,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault()
               if (!isSubmitting && !anyUploadingRef) {
-                onSubmitGenerate()
+                triggerGenerateWithShutter()
               }
             } else if (e.key === "Escape" && onCollapseOverlay) {
               e.preventDefault()
@@ -1335,7 +1430,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             >
               <Minus className="h-3 w-3" />
             </button>
-            <span className="w-7 text-center font-mono text-xs font-semibold tabular-nums">
+            <span
+              ref={batchValueRef}
+              className="w-7 text-center font-mono text-xs font-semibold tabular-nums inline-block"
+            >
               ×{batchCount}
             </span>
             <button
@@ -1350,10 +1448,15 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
 
           {/* Primary Generate Button */}
           <Button
-            id="btn-omnibar-generate"
+            ref={submitBtnRef}
+            id={
+              onCollapseOverlay
+                ? "btn-omnibar-overlay-generate"
+                : "btn-omnibar-generate"
+            }
             type="button"
             disabled={isSubmitting || anyUploadingRef}
-            onClick={onSubmitGenerate}
+            onClick={triggerGenerateWithShutter}
             className="h-9 rounded-xl bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-950 hover:bg-zinc-800 dark:hover:bg-white px-4 font-semibold shadow-sm gap-1.5 cursor-pointer"
           >
             {isSubmitting || anyUploadingRef ? (

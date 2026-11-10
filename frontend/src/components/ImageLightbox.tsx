@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   Check,
   ChevronLeft,
@@ -29,6 +29,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
 import {
   copyImageToClipboard,
   formatBytes,
@@ -100,6 +101,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 
   // Interactive Curtain Wipe state (0 - 100%)
   const curtainBoxRef = useRef<HTMLDivElement | null>(null)
+  const curtainTweenRef = useRef<gsap.core.Tween | null>(null)
+  const stageContentRef = useRef<HTMLDivElement | null>(null)
   const [curtainPos, setCurtainPos] = useState<number>(50)
   const [draggingCurtain, setDraggingCurtain] = useState<boolean>(false)
 
@@ -153,6 +156,49 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       setViewMode("single")
     }
   }, [record?.id, imageIndex, initialCompare, validRefSources.length, record?.note])
+
+  // Signature tactile Curtain Wipe intro sweep (34% -> 50%)
+  useEffect(() => {
+    if (!record || viewMode !== "curtain" || validRefSources.length === 0) return
+    if (prefersReducedMotion()) {
+      setCurtainPos(50)
+      return
+    }
+    const proxy = { pos: 34 }
+    setCurtainPos(34)
+    const tween = gsap.to(proxy, {
+      pos: 50,
+      duration: 0.56,
+      ease: STUDIO_EASE.expo,
+      onUpdate: () => {
+        setCurtainPos(proxy.pos)
+      },
+    })
+    curtainTweenRef.current = tween
+    return () => {
+      tween.kill()
+    }
+  }, [record?.id, viewMode, activeRefIdx, validRefSources.length])
+
+  // Smooth stage cross-settle when switching photos or view modes
+  useLayoutEffect(() => {
+    const el = stageContentRef.current
+    if (!el || !record || prefersReducedMotion()) return
+    const tween = gsap.fromTo(
+      el,
+      { opacity: 0.42, scale: 0.986 },
+      {
+        opacity: 1,
+        scale: 1,
+        duration: 0.22,
+        ease: STUDIO_EASE.out,
+        clearProps: "transform,opacity",
+      }
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [record?.id, imageIndex, viewMode])
 
   // Keyboard navigation
   useEffect(() => {
@@ -512,93 +558,30 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   : "cursor-default"
               )}
             >
-              {/* MODE 1: Interactive Curtain Wipe Slider */}
-              {viewMode === "curtain" && activeRef ? (
-                <div
-                  ref={curtainBoxRef}
-                  onPointerDown={(e) => {
-                    e.currentTarget.setPointerCapture(e.pointerId)
-                    setDraggingCurtain(true)
-                    updateCurtainFromClientX(e.clientX)
-                  }}
-                  onPointerMove={(e) => {
-                    if (draggingCurtain) updateCurtainFromClientX(e.clientX)
-                  }}
-                  onPointerUp={() => setDraggingCurtain(false)}
-                  className="relative inline-flex max-h-[92%] max-w-[92%] items-center justify-center rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/15 cursor-ew-resize touch-none"
-                >
-                  {/* Base Layer: Generated Artwork (AFTER) */}
-                  <img
-                    src={imgSrc}
-                    alt="生成成片"
-                    draggable={false}
-                    onLoad={(e) =>
-                      setNaturalDim({
-                        w: e.currentTarget.naturalWidth,
-                        h: e.currentTarget.naturalHeight,
-                      })
-                    }
-                    className="block max-h-[58vh] max-w-[86vw] lg:max-w-[62vw] w-auto h-auto object-contain select-none"
-                  />
-
-                  {/* Clipped Top Layer: Reference Image (BEFORE) */}
+              <div
+                ref={stageContentRef}
+                className="flex h-full w-full items-center justify-center"
+              >
+                {/* MODE 1: Interactive Curtain Wipe Slider */}
+                {viewMode === "curtain" && activeRef ? (
                   <div
-                    className="absolute inset-0 overflow-hidden bg-zinc-950"
-                    style={{
-                      clipPath: `inset(0 ${100 - curtainPos}% 0 0)`,
+                    ref={curtainBoxRef}
+                    onPointerDown={(e) => {
+                      curtainTweenRef.current?.kill()
+                      e.currentTarget.setPointerCapture(e.pointerId)
+                      setDraggingCurtain(true)
+                      updateCurtainFromClientX(e.clientX)
                     }}
+                    onPointerMove={(e) => {
+                      if (draggingCurtain) updateCurtainFromClientX(e.clientX)
+                    }}
+                    onPointerUp={() => setDraggingCurtain(false)}
+                    className="relative inline-flex max-h-[92%] max-w-[92%] items-center justify-center rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/15 cursor-ew-resize touch-none"
                   >
-                    <img
-                      src={activeRef.src}
-                      alt="参考原图"
-                      draggable={false}
-                      className="h-full w-full object-contain select-none"
-                    />
-                  </div>
-
-                  {/* Labels */}
-                  <span className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-zinc-200 backdrop-blur-xs border border-white/10">
-                    参考原图 (@图{activeRefIdx + 1})
-                  </span>
-                  <span className="pointer-events-none absolute right-3 top-3 rounded-md bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold tracking-wider text-zinc-950 shadow-sm">
-                    生成成片 (AFTER)
-                  </span>
-
-                  {/* Vertical Wipe Line & Handle */}
-                  <div
-                    className="pointer-events-none absolute top-0 bottom-0 w-[2px] bg-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.8)]"
-                    style={{ left: `${curtainPos}%` }}
-                  >
-                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-amber-500 text-zinc-950 shadow-xl ring-2 ring-white">
-                      <MoveHorizontal className="h-4 w-4" />
-                    </div>
-                  </div>
-                </div>
-              ) : viewMode === "side_by_side" && activeRef ? (
-                /* MODE 2: Synchronized Side-by-Side Dual View */
-                <div className="grid grid-cols-2 h-full w-full divide-x divide-zinc-800/80">
-                  <div className="relative flex flex-col items-center justify-center p-4 overflow-hidden">
-                    <span className="absolute top-3 left-3 z-10 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-medium text-zinc-200 border border-zinc-700">
-                      参考图 @图{activeRefIdx + 1}
-                    </span>
-                    <img
-                      src={activeRef.src}
-                      alt="参考图"
-                      draggable={false}
-                      style={{
-                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                        transition: dragging ? "none" : "transform 120ms ease-out",
-                      }}
-                      className="max-h-full max-w-full object-contain rounded-md shadow-xl"
-                    />
-                  </div>
-                  <div className="relative flex flex-col items-center justify-center p-4 overflow-hidden">
-                    <span className="absolute top-3 left-3 z-10 rounded-md bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold text-zinc-950">
-                      生成结果 ({displayW}×{displayH})
-                    </span>
+                    {/* Base Layer: Generated Artwork (AFTER) */}
                     <img
                       src={imgSrc}
-                      alt="生成结果"
+                      alt="生成成片"
                       draggable={false}
                       onLoad={(e) =>
                         setNaturalDim({
@@ -606,33 +589,102 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                           h: e.currentTarget.naturalHeight,
                         })
                       }
-                      style={{
-                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                        transition: dragging ? "none" : "transform 120ms ease-out",
-                      }}
-                      className="max-h-full max-w-full object-contain rounded-md shadow-xl"
+                      className="block max-h-[58vh] max-w-[86vw] lg:max-w-[62vw] w-auto h-auto object-contain select-none"
                     />
+
+                    {/* Clipped Top Layer: Reference Image (BEFORE) */}
+                    <div
+                      className="absolute inset-0 overflow-hidden bg-zinc-950"
+                      style={{
+                        clipPath: `inset(0 ${100 - curtainPos}% 0 0)`,
+                      }}
+                    >
+                      <img
+                        src={activeRef.src}
+                        alt="参考原图"
+                        draggable={false}
+                        className="h-full w-full object-contain select-none"
+                      />
+                    </div>
+
+                    {/* Labels */}
+                    <span className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-zinc-200 backdrop-blur-xs border border-white/10">
+                      参考原图 (@图{activeRefIdx + 1})
+                    </span>
+                    <span className="pointer-events-none absolute right-3 top-3 rounded-md bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold tracking-wider text-zinc-950 shadow-sm">
+                      生成成片 (AFTER)
+                    </span>
+
+                    {/* Vertical Wipe Line & Handle */}
+                    <div
+                      className="pointer-events-none absolute top-0 bottom-0 w-[2px] bg-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.8)]"
+                      style={{ left: `${curtainPos}%` }}
+                    >
+                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-amber-500 text-zinc-950 shadow-xl ring-2 ring-white">
+                        <MoveHorizontal className="h-4 w-4" />
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                /* MODE 3: Single Artwork Loupe */
-                <img
-                  src={imgSrc}
-                  alt={record.prompt || "Generated Image"}
-                  draggable={false}
-                  onLoad={(e) =>
-                    setNaturalDim({
-                      w: e.currentTarget.naturalWidth,
-                      h: e.currentTarget.naturalHeight,
-                    })
-                  }
-                  style={{
-                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                    transition: dragging ? "none" : "transform 120ms ease-out",
-                  }}
-                  className="max-h-[92%] max-w-[92%] object-contain rounded-md shadow-2xl"
-                />
-              )}
+                ) : viewMode === "side_by_side" && activeRef ? (
+                  /* MODE 2: Synchronized Side-by-Side Dual View */
+                  <div className="grid grid-cols-2 h-full w-full divide-x divide-zinc-800/80">
+                    <div className="relative flex flex-col items-center justify-center p-4 overflow-hidden">
+                      <span className="absolute top-3 left-3 z-10 rounded-md bg-black/75 px-2 py-0.5 text-[10px] font-medium text-zinc-200 border border-zinc-700">
+                        参考图 @图{activeRefIdx + 1}
+                      </span>
+                      <img
+                        src={activeRef.src}
+                        alt="参考图"
+                        draggable={false}
+                        style={{
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                          transition: dragging ? "none" : "transform 120ms ease-out",
+                        }}
+                        className="max-h-full max-w-full object-contain rounded-md shadow-xl"
+                      />
+                    </div>
+                    <div className="relative flex flex-col items-center justify-center p-4 overflow-hidden">
+                      <span className="absolute top-3 left-3 z-10 rounded-md bg-amber-500/90 px-2 py-0.5 text-[10px] font-bold text-zinc-950">
+                        生成结果 ({displayW}×{displayH})
+                      </span>
+                      <img
+                        src={imgSrc}
+                        alt="生成结果"
+                        draggable={false}
+                        onLoad={(e) =>
+                          setNaturalDim({
+                            w: e.currentTarget.naturalWidth,
+                            h: e.currentTarget.naturalHeight,
+                          })
+                        }
+                        style={{
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                          transition: dragging ? "none" : "transform 120ms ease-out",
+                        }}
+                        className="max-h-full max-w-full object-contain rounded-md shadow-xl"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  /* MODE 3: Single Artwork Loupe */
+                  <img
+                    src={imgSrc}
+                    alt={record.prompt || "Generated Image"}
+                    draggable={false}
+                    onLoad={(e) =>
+                      setNaturalDim({
+                        w: e.currentTarget.naturalWidth,
+                        h: e.currentTarget.naturalHeight,
+                      })
+                    }
+                    style={{
+                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                      transition: dragging ? "none" : "transform 120ms ease-out",
+                    }}
+                    className="max-h-[92%] max-w-[92%] object-contain rounded-md shadow-2xl"
+                  />
+                )}
+              </div>
 
               {/* Prev / Next Navigation Arrows */}
               {(imgs.length > 1 || hasPrevRecord || hasNextRecord) && (

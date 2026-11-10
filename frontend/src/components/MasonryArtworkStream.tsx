@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react"
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
   AlertTriangle,
@@ -41,6 +41,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
 import {
   computeRecordAspectRatio,
   formatBytes,
@@ -54,6 +55,53 @@ import { cn } from "@/lib/utils"
 import type { ProjectFolder, SavedImage, TaskRecord } from "@/types"
 
 export type StreamDisplayMode = "masonry" | "showcase" | "list"
+
+/**
+ * Filmic darkroom exposure reveal when an artwork image finishes loading.
+ */
+const ArtworkImageReveal: React.FC<
+  React.ImgHTMLAttributes<HTMLImageElement>
+> = ({ className, onLoad, ...props }) => {
+  const imgRef = useRef<HTMLImageElement | null>(null)
+  const alreadyCachedRef = useRef<boolean>(false)
+  const revealedRef = useRef<boolean>(false)
+
+  useLayoutEffect(() => {
+    const el = imgRef.current
+    if (!el) return
+    if (el.complete && el.naturalWidth > 0) {
+      alreadyCachedRef.current = true
+      revealedRef.current = true
+    } else if (!prefersReducedMotion()) {
+      gsap.set(el, { opacity: 0 })
+    }
+  }, [props.src])
+
+  const handleLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    onLoad?.(e)
+    if (revealedRef.current) return
+    revealedRef.current = true
+    const el = imgRef.current
+    if (!el || prefersReducedMotion() || alreadyCachedRef.current) {
+      if (el) gsap.set(el, { clearProps: "opacity,transform,filter" })
+      return
+    }
+    gsap.fromTo(
+      el,
+      { opacity: 0, scale: 1.028, filter: "blur(5px)" },
+      {
+        opacity: 1,
+        scale: 1,
+        filter: "blur(0px)",
+        duration: 0.44,
+        ease: "power2.out",
+        clearProps: "transform,filter",
+      }
+    )
+  }
+
+  return <img ref={imgRef} loading="lazy" onLoad={handleLoad} className={className} {...props} />
+}
 
 interface MasonryArtworkStreamProps {
   mode: "imagine" | "gallery"
@@ -145,6 +193,16 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   const [nowSec, setNowSec] = useState<number>(() =>
     Math.floor(Date.now() / 1000)
   )
+
+  // GSAP refs
+  const streamBodyRef = useRef<HTMLDivElement | null>(null)
+  const statusPillRef = useRef<HTMLDivElement | null>(null)
+  const statusBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const statusPillInitRef = useRef<boolean>(false)
+  const quickCapsuleRef = useRef<HTMLDivElement | null>(null)
+  const batchDockRef = useRef<HTMLDivElement | null>(null)
+  const seenCardIdsRef = useRef<Set<string>>(new Set())
+  const filterChangeInitRef = useRef<boolean>(false)
 
   useEffect(() => {
     localStorage.setItem("duomi_stream_mode", displayMode)
@@ -272,6 +330,138 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     setConfirmBatchDelete(false)
   }
 
+  // 1. Liquid sliding status filter pill
+  useLayoutEffect(() => {
+    const pill = statusPillRef.current
+    if (!pill) return
+    const activeBtn = statusBtnRefs.current[statusFilter]
+    if (!activeBtn) {
+      gsap.to(pill, { opacity: 0, duration: 0.16 })
+      return
+    }
+    const targetX = activeBtn.offsetLeft
+    const targetW = activeBtn.offsetWidth
+
+    if (!statusPillInitRef.current || prefersReducedMotion()) {
+      statusPillInitRef.current = true
+      gsap.set(pill, { x: targetX, width: targetW, opacity: 1 })
+      return
+    }
+    gsap.to(pill, {
+      x: targetX,
+      width: targetW,
+      opacity: 1,
+      duration: 0.28,
+      ease: STUDIO_EASE.expo,
+      overwrite: "auto",
+    })
+  }, [statusFilter, counts.all, counts.active, counts.succeeded, counts.starred, counts.failed])
+
+  // 2. Quick Create Capsule entrance when scrolling past top composer
+  useLayoutEffect(() => {
+    if (!showQuickCreateTrigger || !quickCapsuleRef.current || prefersReducedMotion()) {
+      return
+    }
+    const tween = gsap.fromTo(
+      quickCapsuleRef.current,
+      { opacity: 0, x: -10, scale: 0.92 },
+      {
+        opacity: 1,
+        x: 0,
+        scale: 1,
+        duration: 0.25,
+        ease: STUDIO_EASE.spring,
+        clearProps: "transform",
+      }
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [showQuickCreateTrigger])
+
+  // 3. Floating Batch Action Dock smooth entrance
+  useLayoutEffect(() => {
+    if (!selectMode || !batchDockRef.current || prefersReducedMotion()) return
+    const tween = gsap.fromTo(
+      batchDockRef.current,
+      { opacity: 0, y: 20, scale: 0.96 },
+      {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        duration: 0.26,
+        ease: STUDIO_EASE.expo,
+        clearProps: "transform",
+      }
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [selectMode])
+
+  // 4. Staggered reveal for newly mounted cards (e.g. initial load or new SSE task)
+  useLayoutEffect(() => {
+    const container = streamBodyRef.current
+    if (!container) return
+    const cardNodes = Array.from(
+      container.querySelectorAll<HTMLElement>(".artwork-card-anim")
+    )
+    const freshNodes: HTMLElement[] = []
+    for (const node of cardNodes) {
+      const id = node.dataset.recordId
+      if (id && !seenCardIdsRef.current.has(id)) {
+        seenCardIdsRef.current.add(id)
+        freshNodes.push(node)
+      }
+    }
+    if (freshNodes.length === 0 || prefersReducedMotion()) return
+    const animatedSlice = freshNodes.slice(0, 24)
+    gsap.fromTo(
+      animatedSlice,
+      { opacity: 0, y: 14, scale: 0.985 },
+      {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        duration: 0.34,
+        stagger: { each: 0.024, amount: 0.22 },
+        ease: STUDIO_EASE.out,
+        clearProps: "transform,opacity",
+      }
+    )
+  }, [filteredRecords])
+
+  // 5. Cushioned micro-reflow when switching filters, density columns, or display mode
+  useLayoutEffect(() => {
+    if (!filterChangeInitRef.current) {
+      filterChangeInitRef.current = true
+      return
+    }
+    const container = streamBodyRef.current
+    if (!container || prefersReducedMotion()) return
+    const visibleCards = Array.from(
+      container.querySelectorAll<HTMLElement>(".artwork-card-anim")
+    ).slice(0, 20)
+    if (visibleCards.length === 0) return
+
+    const tween = gsap.fromTo(
+      visibleCards,
+      { opacity: 0.58, y: 7 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.24,
+        stagger: { each: 0.015, amount: 0.14 },
+        ease: STUDIO_EASE.out,
+        overwrite: "auto",
+        clearProps: "transform,opacity",
+      }
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [statusFilter, projectFilter, modelFilter, displayMode, columnCount, groupByDate])
+
   const masonryColumnClasses = useMemo(() => {
     switch (columnCount) {
       case 2:
@@ -321,9 +511,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       return (
         <div
           key={rec.id}
+          data-record-id={rec.id}
           onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
           className={cn(
-            "group flex flex-col sm:flex-row gap-4 rounded-2xl border border-border/80 bg-card p-3 transition-all hover:border-amber-500/40",
+            "artwork-card-anim group flex flex-col sm:flex-row gap-4 rounded-2xl border border-border/80 bg-card p-3 transition-colors hover:border-amber-500/40",
             selectMode && "cursor-pointer",
             isChecked && "ring-2 ring-amber-500 border-amber-500"
           )}
@@ -507,9 +698,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     return (
       <article
         key={rec.id}
+        data-record-id={rec.id}
         onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
         className={cn(
-          "masonry-item group relative overflow-hidden rounded-2xl border transition-all duration-200",
+          "artwork-card-anim masonry-item group relative overflow-hidden rounded-2xl border transition-colors duration-200",
           displayMode === "masonry"
             ? "border-border/60 bg-card/40 hover:border-amber-500/45 hover:shadow-xl"
             : "border-border bg-card shadow-2xs hover:shadow-md",
@@ -591,9 +783,23 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               <div className="pointer-events-auto flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => onToggleStar(rec)}
+                  onClick={(e) => {
+                    if (!prefersReducedMotion()) {
+                      gsap.fromTo(
+                        e.currentTarget,
+                        { scale: 1.32 },
+                        {
+                          scale: 1,
+                          duration: 0.3,
+                          ease: STUDIO_EASE.spring,
+                          clearProps: "transform",
+                        }
+                      )
+                    }
+                    onToggleStar(rec)
+                  }}
                   className={cn(
-                    "flex h-7 w-7 items-center justify-center rounded-xl backdrop-blur-md transition-all cursor-pointer",
+                    "flex h-7 w-7 items-center justify-center rounded-xl backdrop-blur-md transition-opacity cursor-pointer",
                     rec.starred
                       ? "bg-black/70 text-amber-400 opacity-100"
                       : "bg-black/50 text-white/85 opacity-0 group-hover:opacity-100 hover:text-amber-400"
@@ -625,10 +831,9 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
 
                 return (
                   <div key={idx} className="relative w-full overflow-hidden">
-                    <img
+                    <ArtworkImageReveal
                       src={src}
                       alt={rec.prompt}
-                      loading="lazy"
                       onClick={(e) => {
                         if (selectMode) return
                         e.stopPropagation()
@@ -1104,15 +1309,18 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
             !embeddedScroll ? "sticky top-0 shadow-2xs" : "shrink-0"
           )}
         >
-          {/* Left: Quick Create Capsule (when scrolled past top composer) + Status Pills */}
+          {/* Left: Quick Create Capsule (when scrolled past top composer) + Liquid Sliding Status Pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto">
             {showQuickCreateTrigger && (
-              <div className="flex items-center gap-1 pr-1.5 mr-1 border-r border-border shrink-0">
+              <div
+                ref={quickCapsuleRef}
+                className="flex items-center gap-1 pr-1.5 mr-1 border-r border-border shrink-0"
+              >
                 {onOpenQuickComposer && (
                   <button
                     type="button"
                     onClick={onOpenQuickComposer}
-                    className="inline-flex h-7 items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 px-3 text-xs font-semibold text-zinc-950 shadow-2xs transition-all cursor-pointer"
+                    className="inline-flex h-7 items-center gap-1.5 rounded-full bg-amber-500 hover:bg-amber-400 active:scale-95 px-3 text-xs font-semibold text-zinc-950 shadow-2xs transition-all cursor-pointer"
                     title="在当前位置悬浮唤起创作舱 (快捷键 Ctrl+J)"
                   >
                     <Sparkles className="h-3 w-3" />
@@ -1128,7 +1336,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                       <button
                         type="button"
                         onClick={onScrollToTop}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border bg-card/80 text-muted-foreground hover:text-foreground active:scale-95 transition-all cursor-pointer"
                         aria-label="回到顶部创作区"
                       >
                         <ArrowUp className="h-3.5 w-3.5" />
@@ -1140,32 +1348,42 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               </div>
             )}
 
-            {[
-              { id: "all", label: "全部", c: counts.all },
-              { id: "active", label: "显影中", c: counts.active },
-              { id: "succeeded", label: "已完成", c: counts.succeeded },
-              { id: "starred", label: "★ 收藏", c: counts.starred },
-              { id: "failed", label: "异常", c: counts.failed },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setStatusFilter(tab.id)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer shrink-0",
-                  statusFilter === tab.id
-                    ? "bg-foreground text-background font-semibold"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                )}
-              >
-                <span>{tab.label}</span>
-                {tab.c > 0 && (
-                  <span className="font-mono text-[10px] opacity-75 tabular-nums">
-                    {tab.c}
-                  </span>
-                )}
-              </button>
-            ))}
+            <div className="relative flex items-center gap-1 shrink-0">
+              <div
+                ref={statusPillRef}
+                style={{ opacity: 0 }}
+                className="pointer-events-none absolute top-0 bottom-0 left-0 rounded-full bg-foreground"
+              />
+              {[
+                { id: "all", label: "全部", c: counts.all },
+                { id: "active", label: "显影中", c: counts.active },
+                { id: "succeeded", label: "已完成", c: counts.succeeded },
+                { id: "starred", label: "★ 收藏", c: counts.starred },
+                { id: "failed", label: "异常", c: counts.failed },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  ref={(el) => {
+                    statusBtnRefs.current[tab.id] = el
+                  }}
+                  type="button"
+                  onClick={() => setStatusFilter(tab.id)}
+                  className={cn(
+                    "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0",
+                    statusFilter === tab.id
+                      ? "text-background font-semibold"
+                      : "text-muted-foreground hover:bg-secondary/75 hover:text-foreground"
+                  )}
+                >
+                  <span>{tab.label}</span>
+                  {tab.c > 0 && (
+                    <span className="font-mono text-[10px] opacity-75 tabular-nums">
+                      {tab.c}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Right Controls: Search, Model Filter, Column Density Slider, View Mode, Multi-Select */}
@@ -1339,6 +1557,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
 
         {/* Artwork Stream Body */}
         <div
+          ref={streamBodyRef}
           className={cn(
             "px-4 py-5 sm:px-6 pb-24",
             embeddedScroll && "flex-1 overflow-y-auto studio-scroll"
@@ -1390,7 +1609,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
 
         {/* Linear / Figma Style Floating Glass Batch Action Dock */}
         {selectMode && (
-          <div className="fixed bottom-16 md:bottom-6 left-1/2 z-40 -translate-x-1/2 studio-omnibar flex flex-wrap items-center gap-2 rounded-2xl px-4 py-2.5 text-xs">
+          <div
+            ref={batchDockRef}
+            className="fixed bottom-16 md:bottom-6 left-1/2 z-40 -translate-x-1/2 studio-omnibar flex flex-wrap items-center gap-2 rounded-2xl px-4 py-2.5 text-xs"
+          >
             <span className="font-semibold text-foreground tabular-nums pr-1">
               已选 {selectedIdList.length} 项
             </span>

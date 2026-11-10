@@ -1,4 +1,4 @@
-import React from "react"
+import React, { useLayoutEffect, useRef } from "react"
 import {
   Activity,
   Command,
@@ -17,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
+import { gsap, prefersReducedMotion, STUDIO_EASE, useGSAP } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import type { ComposerLayoutMode, StudioNavTab } from "@/types"
 
@@ -88,10 +89,100 @@ export const StudioRail: React.FC<StudioRailProps> = ({
   onOpenLocalFolder,
   onOpenSettings,
 }) => {
+  const railRef = useRef<HTMLElement | null>(null)
+  const navIndicatorRef = useRef<HTMLDivElement | null>(null)
+  const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const iconRefs = useRef<Record<string, HTMLSpanElement | null>>({})
+  const themeIconRef = useRef<HTMLSpanElement | null>(null)
+  const initializedIndicatorRef = useRef<boolean>(false)
+  const mountedThemeRef = useRef<boolean>(false)
+
+  // Subtle initial studio rail entrance
+  useGSAP(
+    () => {
+      if (prefersReducedMotion()) return
+      gsap.fromTo(
+        ".rail-stagger-item",
+        { opacity: 0, x: -6 },
+        {
+          opacity: 1,
+          x: 0,
+          duration: 0.34,
+          stagger: 0.03,
+          ease: STUDIO_EASE.out,
+          clearProps: "transform,opacity",
+        }
+      )
+    },
+    { scope: railRef }
+  )
+
+  // Liquid sliding active tab pill + active icon micro-spring
+  useLayoutEffect(() => {
+    const indicator = navIndicatorRef.current
+    const activeBtn = btnRefs.current[activeTab]
+    if (!indicator || !activeBtn) return
+
+    const targetY = activeBtn.offsetTop
+    const targetH = activeBtn.offsetHeight
+
+    if (!initializedIndicatorRef.current || prefersReducedMotion()) {
+      initializedIndicatorRef.current = true
+      gsap.set(indicator, { y: targetY, height: targetH, opacity: 1 })
+      return
+    }
+
+    gsap.to(indicator, {
+      y: targetY,
+      height: targetH,
+      opacity: 1,
+      duration: 0.34,
+      ease: STUDIO_EASE.expo,
+      overwrite: "auto",
+    })
+
+    const iconWrap = iconRefs.current[activeTab]
+    if (iconWrap) {
+      gsap.fromTo(
+        iconWrap,
+        { scale: 0.82, y: 1.5 },
+        {
+          scale: 1,
+          y: 0,
+          duration: 0.32,
+          ease: STUDIO_EASE.spring,
+          clearProps: "transform",
+        }
+      )
+    }
+  }, [activeTab])
+
+  // Tactile celestial spin when toggling Darkroom / Paper theme
+  useLayoutEffect(() => {
+    if (!mountedThemeRef.current) {
+      mountedThemeRef.current = true
+      return
+    }
+    if (prefersReducedMotion() || !themeIconRef.current) return
+    gsap.fromTo(
+      themeIconRef.current,
+      { rotate: -72, scale: 0.72, opacity: 0.4 },
+      {
+        rotate: 0,
+        scale: 1,
+        opacity: 1,
+        duration: 0.38,
+        ease: STUDIO_EASE.spring,
+        clearProps: "transform,opacity",
+      }
+    )
+  }, [theme])
+
   return (
     <>
       {/* Desktop Left Vertical Studio Rail */}
       <aside
+        ref={railRef}
         aria-label="主工作区导航栏"
         className="hidden md:flex w-[64px] shrink-0 flex-col items-center justify-between border-r border-border studio-rail py-3.5 select-none z-30"
       >
@@ -102,7 +193,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
               <button
                 type="button"
                 onClick={() => onSelectTab("imagine")}
-                className="group relative flex h-10 w-10 items-center justify-center rounded-2xl bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-950 shadow-sm transition-transform active:scale-95 cursor-pointer"
+                className="rail-stagger-item group relative flex h-10 w-10 items-center justify-center rounded-2xl bg-zinc-900 dark:bg-zinc-100 text-zinc-50 dark:text-zinc-950 shadow-sm transition-transform hover:scale-[1.04] active:scale-95 cursor-pointer"
                 aria-label="Duomi Studio Pro"
               >
                 <span className="font-mono text-sm font-bold tracking-tighter">
@@ -117,7 +208,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">
-              <p className="font-semibold">Duomi Studio Pro v3.0</p>
+              <p className="font-semibold">Duomi Studio Pro v3.1</p>
               <p className="text-[11px] text-muted-foreground">
                 单文件纯绿色架构 ·{" "}
                 {sseConnected ? "SSE 实时引擎已连接" : "自动轮询重连中"}
@@ -127,8 +218,16 @@ export const StudioRail: React.FC<StudioRailProps> = ({
 
           <div className="h-px w-7 bg-border/80" />
 
-          {/* Primary Workspace Switcher */}
-          <nav className="flex flex-col items-center gap-1.5 w-full px-2">
+          {/* Primary Workspace Switcher with Liquid Sliding GSAP Pill */}
+          <nav className="relative flex flex-col items-center gap-1.5 w-full px-2">
+            <div
+              ref={navIndicatorRef}
+              style={{ opacity: 0 }}
+              className="pointer-events-none absolute left-2 right-2 top-0 rounded-xl bg-card shadow-2xs ring-1 ring-border"
+            >
+              <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-amber-500" />
+            </div>
+
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon
               const isActive = activeTab === item.id
@@ -136,25 +235,32 @@ export const StudioRail: React.FC<StudioRailProps> = ({
                 <Tooltip key={item.id}>
                   <TooltipTrigger asChild>
                     <button
+                      ref={(el) => {
+                        btnRefs.current[item.id] = el
+                      }}
                       id={`rail-nav-${item.id}`}
                       type="button"
                       onClick={() => onSelectTab(item.id)}
                       className={cn(
-                        "relative flex flex-col items-center justify-center w-full py-2 rounded-xl transition-all cursor-pointer group",
+                        "rail-stagger-item relative z-10 flex flex-col items-center justify-center w-full py-2 rounded-xl transition-colors cursor-pointer group",
                         isActive
-                          ? "bg-card text-foreground shadow-2xs ring-1 ring-border"
-                          : "text-muted-foreground hover:text-foreground hover:bg-card/55"
+                          ? "text-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-card/45"
                       )}
                     >
-                      {isActive && (
-                        <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full bg-amber-500" />
-                      )}
-                      <Icon
-                        className={cn(
-                          "h-[18px] w-[18px] transition-transform group-hover:scale-105",
-                          isActive && "text-amber-500"
-                        )}
-                      />
+                      <span
+                        ref={(el) => {
+                          iconRefs.current[item.id] = el
+                        }}
+                        className="inline-flex"
+                      >
+                        <Icon
+                          className={cn(
+                            "h-[18px] w-[18px] transition-transform duration-150 group-hover:scale-105",
+                            isActive && "text-amber-500"
+                          )}
+                        />
+                      </span>
                       <span className="mt-1 text-[10px] font-medium leading-none">
                         {item.short}
                       </span>
@@ -191,7 +297,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
                   id="btn-toggle-studio-layout"
                   type="button"
                   onClick={onToggleLayoutMode}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                  className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
                 >
                   {layoutMode === "omnibar" ? (
                     <PanelTop className="h-4 w-4 text-amber-500" />
@@ -204,7 +310,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
                 <p className="font-medium">
                   当前布局：
                   {layoutMode === "omnibar"
-                    ? "沉浸灵动岛模式（对标即梦/MJ）"
+                    ? "沉浸创作流模式（对标即梦/MJ）"
                     : "专业双栏检查器模式（对标 Leonardo）"}
                 </p>
                 <p className="text-[11px] text-muted-foreground">
@@ -221,7 +327,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
                 id="btn-open-command-palette"
                 type="button"
                 onClick={onOpenCommandPalette}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
               >
                 <Command className="h-4 w-4" />
               </button>
@@ -239,7 +345,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
                 id="btn-rail-open-folder"
                 type="button"
                 onClick={onOpenLocalFolder}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
               >
                 <FolderOpen className="h-4 w-4" />
               </button>
@@ -256,13 +362,15 @@ export const StudioRail: React.FC<StudioRailProps> = ({
                 id="btn-rail-theme"
                 type="button"
                 onClick={onToggleTheme}
-                className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
+                className="rail-stagger-item flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground hover:bg-card hover:text-foreground transition-colors cursor-pointer"
               >
-                {theme === "dark" ? (
-                  <Sun className="h-4 w-4 text-amber-400" />
-                ) : (
-                  <Moon className="h-4 w-4" />
-                )}
+                <span ref={themeIconRef} className="inline-flex">
+                  {theme === "dark" ? (
+                    <Sun className="h-4 w-4 text-amber-400" />
+                  ) : (
+                    <Moon className="h-4 w-4" />
+                  )}
+                </span>
               </button>
             </TooltipTrigger>
             <TooltipContent side="right">

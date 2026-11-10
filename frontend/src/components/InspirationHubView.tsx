@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react"
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   BookmarkPlus,
   Check,
@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import type { PromptTemplate } from "@/types"
 
@@ -62,6 +63,9 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
   const [newCategory, setNewCategory] = useState<string>("我的私藏配方")
   const [newPrompt, setNewPrompt] = useState<string>("")
 
+  const gridRef = useRef<HTMLDivElement | null>(null)
+  const creatorRef = useRef<HTMLDivElement | null>(null)
+
   const allRecipes = useMemo(
     () => [...customTemplates, ...builtInTemplates],
     [customTemplates, builtInTemplates]
@@ -90,6 +94,52 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
       )
     })
   }, [allRecipes, selectedCategory, search])
+
+  // Staggered editorial card entrance on mount & category switch
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (!grid || prefersReducedMotion()) return
+    const cards = Array.from(
+      grid.querySelectorAll<HTMLElement>(".recipe-card-anim")
+    )
+    if (cards.length === 0) return
+    const tween = gsap.fromTo(
+      cards,
+      { opacity: 0, y: 12 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.3,
+        stagger: { each: 0.025, amount: 0.2 },
+        ease: STUDIO_EASE.out,
+        overwrite: "auto",
+        clearProps: "transform,opacity",
+      }
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [selectedCategory])
+
+  // Inline recipe creator drawer smooth reveal
+  useLayoutEffect(() => {
+    if (!creating || !creatorRef.current || prefersReducedMotion()) return
+    const tween = gsap.fromTo(
+      creatorRef.current,
+      { opacity: 0, y: -10, scale: 0.985 },
+      {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        duration: 0.26,
+        ease: STUDIO_EASE.expo,
+        clearProps: "transform",
+      }
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [creating])
 
   const handleOpenCreate = () => {
     setNewPrompt(currentPrompt || "")
@@ -158,7 +208,10 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
 
         {/* Inline Recipe Creator Drawer */}
         {creating && (
-          <div className="rounded-2xl border border-amber-500/40 bg-card p-5 shadow-lg space-y-3">
+          <div
+            ref={creatorRef}
+            className="rounded-2xl border border-amber-500/40 bg-card p-5 shadow-lg space-y-3"
+          >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold flex items-center gap-2">
                 <Plus className="h-4 w-4 text-amber-500" />
@@ -226,7 +279,7 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
                 type="button"
                 onClick={() => setSelectedCategory(cat)}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all cursor-pointer",
+                  "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all cursor-pointer active:scale-95",
                   active
                     ? "bg-foreground text-background shadow-xs"
                     : "bg-secondary/70 text-muted-foreground hover:text-foreground hover:bg-secondary"
@@ -242,7 +295,10 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
         </div>
 
         {/* Recipe Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+        <div
+          ref={gridRef}
+          className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"
+        >
           {filtered.map((tpl) => {
             const expanded = expandedId === tpl.id
             const accentClass =
@@ -252,7 +308,7 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
               <article
                 key={tpl.id}
                 className={cn(
-                  "group flex flex-col justify-between rounded-2xl border border-border border-t-2 bg-card p-5 transition-all hover:border-foreground/25 hover:shadow-md",
+                  "recipe-card-anim group flex flex-col justify-between rounded-2xl border border-border border-t-2 bg-card p-5 transition-colors hover:border-foreground/25 hover:shadow-md",
                   accentClass
                 )}
               >

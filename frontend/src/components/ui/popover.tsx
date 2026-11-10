@@ -9,6 +9,7 @@ import React, {
 } from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { createPortal } from "react-dom"
+import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 interface PopoverContextValue {
@@ -91,11 +92,13 @@ export function PopoverContent({
 }) {
   const ctx = useContext(PopoverContext)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const animatedOpenRef = useRef<boolean>(false)
   const [coords, setCoords] = useState<{
     top: number
     left: number
+    side: "top" | "bottom"
     ready: boolean
-  }>({ top: 0, left: 0, ready: false })
+  }>({ top: 0, left: 0, side: preferredSide, ready: false })
 
   const updatePosition = useCallback(() => {
     if (!ctx?.open || !ctx.triggerRef.current || !contentRef.current) return
@@ -105,16 +108,27 @@ export function PopoverContent({
     const vh = window.innerHeight
     const pad = 12
 
+    let actualSide: "top" | "bottom" = preferredSide
     let top =
       preferredSide === "top"
         ? trig.top - pop.height - sideOffset
         : trig.bottom + sideOffset
 
     // Flip vertically if clipped
-    if (preferredSide === "bottom" && top + pop.height > vh - pad && trig.top - pop.height - sideOffset >= pad) {
+    if (
+      preferredSide === "bottom" &&
+      top + pop.height > vh - pad &&
+      trig.top - pop.height - sideOffset >= pad
+    ) {
       top = trig.top - pop.height - sideOffset
-    } else if (preferredSide === "top" && top < pad && trig.bottom + sideOffset + pop.height <= vh - pad) {
+      actualSide = "top"
+    } else if (
+      preferredSide === "top" &&
+      top < pad &&
+      trig.bottom + sideOffset + pop.height <= vh - pad
+    ) {
       top = trig.bottom + sideOffset
+      actualSide = "bottom"
     }
     top = Math.max(pad, Math.min(vh - pop.height - pad, top))
 
@@ -126,11 +140,12 @@ export function PopoverContent({
     }
     left = Math.max(pad, Math.min(vw - pop.width - pad, left))
 
-    setCoords({ top, left, ready: true })
+    setCoords({ top, left, side: actualSide, ready: true })
   }, [ctx?.open, align, sideOffset, preferredSide])
 
   useLayoutEffect(() => {
     if (!ctx?.open) {
+      animatedOpenRef.current = false
       setCoords((c) => ({ ...c, ready: false }))
       return
     }
@@ -145,6 +160,40 @@ export function PopoverContent({
     }
   }, [ctx?.open, updatePosition])
 
+  useLayoutEffect(() => {
+    if (!ctx?.open || !coords.ready || !contentRef.current) return
+    if (animatedOpenRef.current) return
+    animatedOpenRef.current = true
+
+    const el = contentRef.current
+    if (prefersReducedMotion()) {
+      gsap.set(el, { opacity: 1 })
+      return
+    }
+
+    const tween = gsap.fromTo(
+      el,
+      {
+        opacity: 0,
+        y: coords.side === "top" ? 6 : -6,
+        scale: 0.965,
+        transformOrigin:
+          coords.side === "top" ? "bottom center" : "top center",
+      },
+      {
+        opacity: 1,
+        y: 0,
+        scale: 1,
+        duration: 0.22,
+        ease: STUDIO_EASE.expo,
+        clearProps: "transform",
+      }
+    )
+    return () => {
+      tween.kill()
+    }
+  }, [ctx?.open, coords.ready, coords.side])
+
   useEffect(() => {
     if (!ctx?.open) return
     const handlePointerDown = (ev: MouseEvent) => {
@@ -153,7 +202,9 @@ export function PopoverContent({
       if (contentRef.current?.contains(target)) return
       if (ctx.triggerRef.current?.contains(target)) return
       // Also allow Radix Select portals rendered at body root
-      if ((target as HTMLElement).closest?.("[data-radix-popper-content-wrapper]")) {
+      if (
+        (target as HTMLElement).closest?.("[data-radix-popper-content-wrapper]")
+      ) {
         return
       }
       ctx.setOpen(false)
@@ -184,7 +235,7 @@ export function PopoverContent({
         zIndex: 60,
       }}
       className={cn(
-        "studio-floating-popover rounded-2xl p-3.5 text-popover-foreground transition-opacity duration-100",
+        "studio-floating-popover rounded-2xl p-3.5 text-popover-foreground",
         className
       )}
     >

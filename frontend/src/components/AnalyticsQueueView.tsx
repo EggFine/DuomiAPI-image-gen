@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react"
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   Activity,
   Archive,
@@ -16,6 +16,13 @@ import {
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  AnimatedNumber,
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import {
   cleanOrphanRefsOnServer,
   formatBytes,
@@ -57,6 +64,10 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
 }) => {
   const [nowSec, setNowSec] = useState<number>(() => Math.floor(Date.now() / 1000))
   const [cleaningRefs, setCleaningRefs] = useState<boolean>(false)
+
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const genBarRef = useRef<HTMLDivElement | null>(null)
+  const refBarRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const timer = setInterval(
@@ -165,8 +176,55 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
   const genPct = Math.min(100, Math.round((genBytes / totalBytes) * 100))
   const refPct = Math.min(100 - genPct, Math.round((refBytes / totalBytes) * 100))
 
+  const targetGenWidth = `${Math.max(genBytes > 0 ? 4 : 0, genPct)}%`
+  const targetRefWidth = `${Math.max(refBytes > 0 ? 4 : 0, refPct)}%`
+
+  useGSAP(
+    () => {
+      if (prefersReducedMotion()) return
+      gsap.fromTo(
+        ".telemetry-stagger-card",
+        { opacity: 0, y: 12 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.32,
+          stagger: 0.045,
+          ease: STUDIO_EASE.out,
+          clearProps: "transform,opacity",
+        }
+      )
+    },
+    { scope: rootRef }
+  )
+
+  useLayoutEffect(() => {
+    if (prefersReducedMotion()) {
+      if (genBarRef.current) genBarRef.current.style.width = targetGenWidth
+      if (refBarRef.current) refBarRef.current.style.width = targetRefWidth
+      return
+    }
+    if (genBarRef.current) {
+      gsap.to(genBarRef.current, {
+        width: targetGenWidth,
+        duration: 0.65,
+        ease: STUDIO_EASE.expo,
+      })
+    }
+    if (refBarRef.current) {
+      gsap.to(refBarRef.current, {
+        width: targetRefWidth,
+        duration: 0.65,
+        ease: STUDIO_EASE.expo,
+      })
+    }
+  }, [targetGenWidth, targetRefWidth])
+
   return (
-    <div className="h-full overflow-y-auto studio-scroll px-4 sm:px-7 py-6 pb-24">
+    <div
+      ref={rootRef}
+      className="h-full overflow-y-auto studio-scroll px-4 sm:px-7 py-6 pb-24"
+    >
       <div className="mx-auto max-w-[1440px] space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-border pb-5">
@@ -196,23 +254,23 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
 
         {/* Top 4 Key Metric Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="rounded-2xl border border-border bg-card p-4 space-y-1">
+          <div className="telemetry-stagger-card rounded-2xl border border-border bg-card p-4 space-y-1">
             <span className="text-xs text-muted-foreground">累计成片归档</span>
             <div className="text-2xl font-bold font-mono tabular-nums text-foreground">
-              {telemetry.succeededCount}
+              <AnimatedNumber value={telemetry.succeededCount} />
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">
                 张作品
               </span>
             </div>
             <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
-              任务综合成功率 {telemetry.successRate}%
+              任务综合成功率 <AnimatedNumber value={telemetry.successRate} suffix="%" />
             </p>
           </div>
 
-          <div className="rounded-2xl border border-border bg-card p-4 space-y-1">
+          <div className="telemetry-stagger-card rounded-2xl border border-border bg-card p-4 space-y-1">
             <span className="text-xs text-muted-foreground">正在冲印队列</span>
             <div className="text-2xl font-bold font-mono tabular-nums text-amber-500">
-              {telemetry.active.length}
+              <AnimatedNumber value={telemetry.active.length} />
               <span className="ml-1.5 text-xs font-normal text-muted-foreground">
                 个并发任务
               </span>
@@ -222,20 +280,28 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
             </p>
           </div>
 
-          <div className="rounded-2xl border border-border bg-card p-4 space-y-1">
+          <div className="telemetry-stagger-card rounded-2xl border border-border bg-card p-4 space-y-1">
             <span className="text-xs text-muted-foreground">平均出图耗时</span>
             <div className="text-2xl font-bold font-mono tabular-nums text-foreground">
-              {telemetry.avgSec ? `${telemetry.avgSec}s` : "--"}
+              {telemetry.avgSec ? (
+                <AnimatedNumber value={telemetry.avgSec} suffix="s" />
+              ) : (
+                "--"
+              )}
             </div>
             <p className="text-[11px] text-muted-foreground">
               从提交任务至原图返回实测均值
             </p>
           </div>
 
-          <div className="rounded-2xl border border-border bg-card p-4 space-y-1">
+          <div className="telemetry-stagger-card rounded-2xl border border-border bg-card p-4 space-y-1">
             <span className="text-xs text-muted-foreground">预估累计参考消耗</span>
             <div className="text-2xl font-bold font-mono tabular-nums text-foreground">
-              ¥{telemetry.estimatedCostRMB.toFixed(2)}
+              <AnimatedNumber
+                value={telemetry.estimatedCostRMB}
+                decimals={2}
+                prefix="¥"
+              />
             </div>
             <p className="text-[11px] text-muted-foreground">
               按官方 2.6 系列约 ¥0.06/次估算
@@ -246,7 +312,7 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
         {/* Main 2-Column Bento */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {/* Left: Portable Disk & Green Directory Steward */}
-          <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
+          <section className="telemetry-stagger-card rounded-2xl border border-border bg-card p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <HardDrive className="h-4 w-4 text-amber-500" />
@@ -263,13 +329,15 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
             <div className="space-y-2">
               <div className="h-3 w-full overflow-hidden rounded-full bg-secondary flex">
                 <div
-                  className="bg-emerald-500 transition-all"
-                  style={{ width: `${Math.max(genBytes > 0 ? 4 : 0, genPct)}%` }}
+                  ref={genBarRef}
+                  className="bg-emerald-500"
+                  style={{ width: "0%" }}
                   title={`生成作品原图: ${formatBytes(genBytes)}`}
                 />
                 <div
-                  className="bg-amber-500 transition-all"
-                  style={{ width: `${Math.max(refBytes > 0 ? 4 : 0, refPct)}%` }}
+                  ref={refBarRef}
+                  className="bg-amber-500"
+                  style={{ width: "0%" }}
                   title={`参考图本地缓存: ${formatBytes(refBytes)}`}
                 />
               </div>

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react"
 import {
   AlertCircle,
   CheckCircle2,
@@ -29,6 +36,7 @@ import { StudioSidebar } from "@/components/StudioSidebar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
 import {
   apiFetch,
   buildDeveloperPreview,
@@ -83,6 +91,9 @@ export function App() {
   }, [theme])
 
   const [toasts, setToasts] = useState<ToastItem[]>([])
+  const toastRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const seenToastIdsRef = useRef<Set<string>>(new Set())
+
   const showToast = useCallback(
     (message: string, type: "info" | "success" | "error" = "info") => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -93,6 +104,36 @@ export function App() {
     },
     []
   )
+
+  // Floating Toast spring-slide entrance
+  useLayoutEffect(() => {
+    const activeIds = new Set(toasts.map((t) => t.id))
+    for (const id of seenToastIdsRef.current) {
+      if (!activeIds.has(id)) {
+        seenToastIdsRef.current.delete(id)
+      }
+    }
+    for (const t of toasts) {
+      if (!seenToastIdsRef.current.has(t.id)) {
+        seenToastIdsRef.current.add(t.id)
+        const el = toastRefs.current.get(t.id)
+        if (el && !prefersReducedMotion()) {
+          gsap.fromTo(
+            el,
+            { opacity: 0, x: 22, scale: 0.95 },
+            {
+              opacity: 1,
+              x: 0,
+              scale: 1,
+              duration: 0.28,
+              ease: STUDIO_EASE.spring,
+              clearProps: "transform",
+            }
+          )
+        }
+      }
+    }
+  }, [toasts])
 
   const copyText = useCallback(
     (text: string, msg = "已复制到剪贴板") => {
@@ -114,6 +155,8 @@ export function App() {
     "studio"
   )
   const [sseConnected, setSseConnected] = useState<boolean>(false)
+  const workspaceBodyRef = useRef<HTMLElement | null>(null)
+  const prevWorkspaceKeyRef = useRef<string | null>(null)
 
   const toggleLayoutMode = useCallback(() => {
     setLayoutMode((prev) => {
@@ -122,6 +165,33 @@ export function App() {
       return next
     })
   }, [])
+
+  // Crisp workspace view entrance on tab or layout switch (preserves sticky positioning via clearProps)
+  useLayoutEffect(() => {
+    const key = `${activeTab}:${layoutMode}`
+    if (prevWorkspaceKeyRef.current === null) {
+      prevWorkspaceKeyRef.current = key
+      return
+    }
+    if (prevWorkspaceKeyRef.current === key) return
+    prevWorkspaceKeyRef.current = key
+    if (prefersReducedMotion() || !workspaceBodyRef.current) return
+    const target =
+      (workspaceBodyRef.current.firstElementChild as HTMLElement | null) ||
+      workspaceBodyRef.current
+    gsap.fromTo(
+      target,
+      { opacity: 0, y: 8 },
+      {
+        opacity: 1,
+        y: 0,
+        duration: 0.24,
+        ease: STUDIO_EASE.out,
+        clearProps: "transform,opacity",
+        overwrite: "auto",
+      }
+    )
+  }, [activeTab, layoutMode])
 
   // Server data
   const [info, setInfo] = useState<ServerInfoResponse | null>(null)
@@ -186,6 +256,73 @@ export function App() {
   const [isScrolledPastComposer, setIsScrolledPastComposer] =
     useState<boolean>(false)
   const [quickComposerOpen, setQuickComposerOpen] = useState<boolean>(false)
+  const [quickOverlayRendered, setQuickOverlayRendered] =
+    useState<boolean>(false)
+  const quickBackdropRef = useRef<HTMLDivElement | null>(null)
+  const quickCardRef = useRef<HTMLDivElement | null>(null)
+  const prevQuickOpenAnimRef = useRef<boolean>(false)
+
+  useEffect(() => {
+    if (quickComposerOpen) {
+      setQuickOverlayRendered(true)
+    }
+  }, [quickComposerOpen])
+
+  // Smooth GSAP entrance & exit choreography for Quick Composer Overlay
+  useLayoutEffect(() => {
+    if (quickComposerOpen && !prevQuickOpenAnimRef.current) {
+      prevQuickOpenAnimRef.current = true
+      if (prefersReducedMotion()) return
+      const backdrop = quickBackdropRef.current
+      const card = quickCardRef.current
+      if (backdrop) {
+        gsap.killTweensOf(backdrop)
+        gsap.fromTo(
+          backdrop,
+          { opacity: 0 },
+          { opacity: 1, duration: 0.2, ease: STUDIO_EASE.out }
+        )
+      }
+      if (card) {
+        gsap.killTweensOf(card)
+        gsap.fromTo(
+          card,
+          { opacity: 0, y: -16, scale: 0.975 },
+          {
+            opacity: 1,
+            y: 0,
+            scale: 1,
+            duration: 0.26,
+            ease: STUDIO_EASE.expo,
+            clearProps: "transform",
+          }
+        )
+      }
+    } else if (!quickComposerOpen && prevQuickOpenAnimRef.current) {
+      prevQuickOpenAnimRef.current = false
+      const backdrop = quickBackdropRef.current
+      const card = quickCardRef.current
+      if (prefersReducedMotion() || !backdrop || !card) {
+        setQuickOverlayRendered(false)
+        return
+      }
+      gsap.killTweensOf(backdrop)
+      gsap.killTweensOf(card)
+      gsap.to(backdrop, {
+        opacity: 0,
+        duration: 0.16,
+        ease: "power2.in",
+      })
+      gsap.to(card, {
+        opacity: 0,
+        y: -10,
+        scale: 0.98,
+        duration: 0.16,
+        ease: "power2.in",
+        onComplete: () => setQuickOverlayRendered(false),
+      })
+    }
+  }, [quickComposerOpen])
 
   const scrollToImagineTop = useCallback(() => {
     setQuickComposerOpen(false)
@@ -195,6 +332,7 @@ export function App() {
   useEffect(() => {
     if (activeTab !== "imagine" || layoutMode !== "omnibar") {
       setQuickComposerOpen(false)
+      setQuickOverlayRendered(false)
     }
   }, [activeTab, layoutMode])
 
@@ -1711,7 +1849,7 @@ export function App() {
                 variant="outline"
                 className="hidden sm:inline-flex font-mono text-[10px] px-1.5 py-0 text-muted-foreground"
               >
-                {info?.version || "v3.0.1"} 单文件便携版
+                {info?.version || "v3.1.0"} 单文件便携版
               </Badge>
 
               {activeCount > 0 && (
@@ -1815,7 +1953,10 @@ export function App() {
           </header>
 
           {/* Active Workspace Body */}
-          <main className="relative flex-1 min-h-0 overflow-hidden">
+          <main
+            ref={workspaceBodyRef}
+            className="relative flex-1 min-h-0 overflow-hidden"
+          >
             {/* TAB 1: IMAGINE WORKSPACE (Unified Scroll Omnibar OR Pro Split Mode) */}
             {activeTab === "imagine" &&
               (layoutMode === "omnibar" ? (
@@ -1880,16 +2021,21 @@ export function App() {
                   </div>
 
                   {/* On-Demand Contextual Quick Composer Overlay (Ctrl+J or '✨ 唤起创作舱') */}
-                  {quickComposerOpen && (
+                  {(quickComposerOpen || quickOverlayRendered) && (
                     <div
+                      ref={quickBackdropRef}
                       onClick={(e) => {
                         if (e.target === e.currentTarget) {
                           setQuickComposerOpen(false)
                         }
                       }}
-                      className="absolute inset-0 z-30 flex items-start justify-center bg-black/45 backdrop-blur-[2px] px-3 sm:px-6 pt-4 pb-6 overflow-y-auto"
+                      className={cn(
+                        "absolute inset-0 z-30 flex items-start justify-center bg-black/45 backdrop-blur-[2px] px-3 sm:px-6 pt-4 pb-6 overflow-y-auto",
+                        !quickComposerOpen && "pointer-events-none"
+                      )}
                     >
                       <div
+                        ref={quickCardRef}
                         onClick={(e) => e.stopPropagation()}
                         className="w-full max-w-4xl"
                       >
@@ -2289,6 +2435,13 @@ export function App() {
           {toasts.map((t) => (
             <div
               key={t.id}
+              ref={(el) => {
+                if (el) {
+                  toastRefs.current.set(t.id, el)
+                } else {
+                  toastRefs.current.delete(t.id)
+                }
+              }}
               className={cn(
                 "pointer-events-auto flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-xs font-medium shadow-lg backdrop-blur-md",
                 t.type === "success" &&
