@@ -327,10 +327,11 @@ func makeSyntheticPNG(t *testing.T, w, h int) []byte {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
+			noise := (x*73856093 ^ y*19349663) & 0x3f
 			img.Set(x, y, color.RGBA{
-				R: uint8((x * 255) / w),
-				G: uint8((y * 255) / h),
-				B: 160,
+				R: uint8(((x * 200) / w) + noise),
+				G: uint8(((y * 200) / h) + (noise ^ 0x2a)),
+				B: uint8(120 + noise),
 				A: 255,
 			})
 		}
