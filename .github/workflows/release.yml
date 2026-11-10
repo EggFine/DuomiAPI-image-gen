@@ -1,0 +1,100 @@
+name: Build and Release Single-File Binaries
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag Name (e.g. v1.0.0)'
+        required: false
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run unit tests
+        run: go test -v ./...
+
+      - name: Cross-compile static single-file binaries
+        run: |
+          mkdir -p dist
+          export CGO_ENABLED=0
+          LDFLAGS="-s -w"
+
+          echo "Building Windows amd64..."
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/duomi-image-gen-windows-amd64.exe .
+
+          echo "Building Windows arm64..."
+          GOOS=windows GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/duomi-image-gen-windows-arm64.exe .
+
+          echo "Building Linux amd64..."
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/duomi-image-gen-linux-amd64 .
+
+          echo "Building Linux arm64..."
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/duomi-image-gen-linux-arm64 .
+
+          echo "Building macOS amd64 (Intel)..."
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags="$LDFLAGS" -o dist/duomi-image-gen-darwin-amd64 .
+
+          echo "Building macOS arm64 (Apple Silicon)..."
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags="$LDFLAGS" -o dist/duomi-image-gen-darwin-arm64 .
+
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          ls -lh
+
+      - name: Create or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ github.event.inputs.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${INPUT_TAG:-v1.0.0}"
+          else
+            TAG="${REF_NAME}"
+          fi
+
+          echo "Publishing release for tag: ${TAG}"
+
+          cat << 'EOF' > release_notes.md
+          ## 🎨 DuomiAPI Image Studio (多米API 图像生成单文件绿色版)
+
+          ### ✨ 特性
+          - **纯单文件绿色运行**：使用 Go `embed.FS` 将 Web 创作台内嵌进单一可执行文件中，零外部依赖、**不写注册表**、不污染系统目录。
+          - **单一数据目录**：仅在程序运行目录下自动生成 `duomi_data/` 目录，统一保存：
+            - `duomi_data/config.json`（API Key 与默认参数）
+            - `duomi_data/records.json`（历史生成任务记录）
+            - `duomi_data/images/`（自动下载保存的高清生成原图）
+          - **Web 界面 + CLI 命令行双模式**：
+            - 直接双击或无参数运行：启动本地 Web 界面并自动打开浏览器。
+            - 传入 `-prompt` 或 `-query` 参数：作为命令行工具运行。
+          - **完整对接多米 API 异步生图接口**：
+            - 支持 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 及自定义模型。
+            - 支持文生图、多参考图图生图（支持直链 URL 与本地图片自动转 Base64 / 大图智能优压）。
+          EOF
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/* --clobber
+            gh release edit "${TAG}" --notes-file release_notes.md
+          else
+            gh release create "${TAG}" dist/* \
+              --title "DuomiAPI Image Studio ${TAG}" \
+              --notes-file release_notes.md
+          fi

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>多米API 图像创作工作台 · DuomiAPI Image Studio</title>
+  <meta name="description" content="多米API (duomiapi.com) 图像生成单文件绿色版工作台，支持 gpt-image-2 / 2.5 / 2.6 系列模型文生图、多参考图生图、异步轮询与本地画廊管理。" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-group">
+      <div class="brand-mark" aria-hidden="true">DM</div>
+      <div class="brand-title">
+        <h1>多米 API 图像创作工作台</h1>
+        <div class="brand-subtitle">
+          <span>单文件绿色版 · 仅写入运行目录</span>
+          <span id="data-dir-badge" class="dir-badge" title="所有配置、记录和图片均保存在此目录下">./duomi_data</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button id="btn-open-query-modal" type="button" class="btn btn-secondary">
+        查询 / 导入任务 ID
+      </button>
+      <button id="btn-open-config-modal" type="button" class="key-status" title="点击配置多米 API Key 与轮询参数">
+        <span id="key-status-dot" class="status-dot"></span>
+        <span id="key-status-text">未配置 API Key</span>
+      </button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <!-- Left Workbench Panel -->
+    <aside class="workbench-panel" aria-label="生成参数配置">
+      <!-- Model Selection -->
+      <section class="form-section">
+        <div class="section-header">
+          <label class="section-label">选择生图模型 (Model)</label>
+          <span class="section-hint">支持 1K / 2K / 4K</span>
+        </div>
+        <div id="model-cards-container" class="model-list"></div>
+        <input
+          id="input-custom-model"
+          type="text"
+          class="input-control"
+          placeholder="或输入自定义模型 ID（留空则使用上方选中模型）"
+        />
+      </section>
+
+      <!-- Prompt Input -->
+      <section class="form-section">
+        <div class="section-header">
+          <label for="input-prompt" class="section-label">画面描述词 (Prompt)</label>
+          <span id="prompt-char-count" class="section-hint">0 / 5000</span>
+        </div>
+        <textarea
+          id="input-prompt"
+          class="textarea-control"
+          maxlength="5000"
+          placeholder="详细描述画面主体、光影、材质、构图与风格（若上传了参考图，可直接输入修改指令如“将人物改为赛博朋克风格，保留构图”）..."
+        ></textarea>
+        <div class="prompt-quick-tags">
+          <button type="button" class="quick-tag" data-snippet="电影级光影，8K超高清细节，景深镜头">电影级光影</button>
+          <button type="button" class="quick-tag" data-snippet="吉卜力手绘动画风格，温暖色调，细腻笔触">手绘动画风</button>
+          <button type="button" class="quick-tag" data-snippet="商业产品摄影，柔和棚拍布光，极简纯色背景">商业摄影</button>
+          <button type="button" class="quick-tag" data-snippet="赛博朋克雨夜霓虹，未来都市特写，冷暖对比">赛博霓虹</button>
+          <button id="btn-clear-prompt" type="button" class="quick-tag">清空描述</button>
+        </div>
+      </section>
+
+      <!-- Reference Images (Image-to-Image) -->
+      <section class="form-section">
+        <div class="section-header">
+          <label class="section-label">参考图 · 图生图 (可选，支持多张)</label>
+          <span id="ref-count-badge" class="section-hint">0 张</span>
+        </div>
+        <div id="ref-drop-zone" class="ref-upload-zone">
+          <div class="ref-actions-row">
+            <button id="btn-select-local-image" type="button" class="btn btn-secondary" style="flex:1;">
+              + 选择或拖拽本地图片
+            </button>
+            <input id="input-local-file" type="file" accept="image/*" multiple hidden />
+          </div>
+          <div class="ref-url-row">
+            <input
+              id="input-ref-url"
+              type="url"
+              class="input-control"
+              placeholder="或粘贴图片直链 URL (https://...)"
+            />
+            <button id="btn-add-ref-url" type="button" class="btn btn-secondary">添加</button>
+          </div>
+          <div class="checkbox-row">
+            <label for="chk-compress-ref" class="section-hint" style="cursor:pointer;">
+              本地大图 (&gt;300KB) 自动缩图防 HTTP 400 超限
+            </label>
+            <input id="chk-compress-ref" type="checkbox" checked />
+          </div>
+          <div id="ref-thumbs-container" class="ref-thumbs"></div>
+        </div>
+      </section>
+
+      <!-- Size / Aspect Ratio -->
+      <section class="form-section">
+        <div class="section-header">
+          <label class="section-label">尺寸与画幅比例 (Size)</label>
+          <span id="current-size-label" class="section-hint">auto</span>
+        </div>
+        <div id="ratio-pills-container" class="ratio-grid">
+          <button type="button" class="ratio-pill active" data-size="auto">auto 自动</button>
+          <button type="button" class="ratio-pill" data-size="1:1">1:1 方图</button>
+          <button type="button" class="ratio-pill" data-size="16:9">16:9 横屏</button>
+          <button type="button" class="ratio-pill" data-size="9:16">9:16 竖屏</button>
+          <button type="button" class="ratio-pill" data-size="3:2">3:2 经典横</button>
+          <button type="button" class="ratio-pill" data-size="2:3">2:3 经典竖</button>
+          <button type="button" class="ratio-pill" data-size="4:3">4:3 标准横</button>
+          <button type="button" class="ratio-pill" data-size="3:4">3:4 标准竖</button>
+          <button type="button" class="ratio-pill" data-size="5:4">5:4 画框</button>
+          <button type="button" class="ratio-pill" data-size="4:5">4:5 社交竖</button>
+          <button type="button" class="ratio-pill" data-size="2:1">2:1 宽幅</button>
+          <button type="button" class="ratio-pill" data-size="1:2">1:2 长图</button>
+          <button type="button" class="ratio-pill" data-size="1024x1024">1024×1024</button>
+          <button type="button" class="ratio-pill" data-size="1792x1024">1792×1024</button>
+          <button type="button" class="ratio-pill" data-size="1024x1792">1024×1792</button>
+          <button type="button" class="ratio-pill" data-size="3840x2160">3840×2160 (4K)</button>
+        </div>
+        <div class="custom-size-box">
+          <input id="input-custom-w" type="number" min="16" max="3840" step="16" class="input-control" placeholder="宽 (16倍数)" />
+          <span class="section-hint">×</span>
+          <input id="input-custom-h" type="number" min="16" max="3840" step="16" class="input-control" placeholder="高 (16倍数)" />
+          <button id="btn-apply-custom-size" type="button" class="btn btn-secondary">应用宽高</button>
+        </div>
+        <span id="custom-size-hint" class="section-hint">自定义宽高需为 16 的倍数，单边 [16, 3840]，总像素 [655360, 8294400]</span>
+      </section>
+
+      <!-- Quality & Background & Count -->
+      <section class="form-section">
+        <div class="param-grid-2">
+          <div>
+            <label for="select-quality" class="section-label">思考深度 (Quality)</label>
+            <select id="select-quality" class="select-control" style="margin-top:5px;">
+              <option value="">默认 (由模型决定)</option>
+              <option value="low">low (快速生成)</option>
+              <option value="medium">medium (标准均衡)</option>
+              <option value="high">high (深度思考精绘)</option>
+            </select>
+          </div>
+          <div>
+            <label for="select-background" class="section-label">透明背景 (Background)</label>
+            <select id="select-background" class="select-control" style="margin-top:5px;">
+              <option value="auto">auto (自动默认)</option>
+              <option value="opaque">opaque (不透明背景)</option>
+              <option value="transparent">transparent (透明背景)</option>
+            </select>
+          </div>
+        </div>
+        <div class="param-grid-2" style="margin-top:6px;">
+          <div>
+            <label for="input-count-n" class="section-label">生成张数 (n)</label>
+            <input id="input-count-n" type="number" min="1" max="4" value="1" class="input-control" style="margin-top:5px;" />
+          </div>
+          <div style="display:flex; flex-direction:column; justify-content:flex-end;">
+            <div class="checkbox-row">
+              <label for="chk-oversea" class="section-label" style="cursor:pointer;">海外节点 (Oversea)</label>
+              <input id="chk-oversea" type="checkbox" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <button id="btn-submit-generate" type="button" class="btn btn-primary btn-lg">
+        立即提交异步生图任务
+      </button>
+    </aside>
+
+    <!-- Right Gallery & History Panel -->
+    <section class="gallery-panel" aria-label="生成记录与本地图库">
+      <div class="gallery-toolbar">
+        <div class="filter-tabs" role="tablist">
+          <button type="button" class="filter-tab active" data-filter="all">全部记录 (<span id="count-all">0</span>)</button>
+          <button type="button" class="filter-tab" data-filter="active">进行中 (<span id="count-active">0</span>)</button>
+          <button type="button" class="filter-tab" data-filter="succeeded">已完成 (<span id="count-succeeded">0</span>)</button>
+          <button type="button" class="filter-tab" data-filter="failed">失败/超时 (<span id="count-failed">0</span>)</button>
+        </div>
+
+        <div class="toolbar-right">
+          <input
+            id="input-search-records"
+            type="search"
+            class="input-control search-input"
+            placeholder="搜索提示词、模型或任务 ID..."
+          />
+          <button id="btn-refresh-records" type="button" class="btn btn-secondary">
+            刷新列表
+          </button>
+        </div>
+      </div>
+
+      <div id="records-grid" class="records-list"></div>
+    </section>
+  </main>
+
+  <!-- Config Modal -->
+  <div id="modal-config" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-labelledby="modal-config-title">
+      <div class="modal-header">
+        <h2 id="modal-config-title">多米 API 接口与本地绿色存储设置</h2>
+        <button id="btn-close-config-modal" type="button" class="btn btn-ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-section">
+          <label for="cfg-api-key" class="section-label">接口密钥 (Authorization API Key)</label>
+          <input
+            id="cfg-api-key"
+            type="password"
+            class="input-control"
+            placeholder="输入多米控制台申请的密钥（明文即可，无需加 Bearer 前缀）"
+          />
+          <span class="section-hint">
+            密钥将保存在运行目录的 <code>duomi_data/config.json</code> 中，绝不写入注册表或系统其它位置。
+          </span>
+        </div>
+
+        <div class="form-section">
+          <label for="cfg-base-url" class="section-label">API 基础地址 (Base URL)</label>
+          <input id="cfg-base-url" type="url" class="input-control" value="https://duomiapi.com" />
+        </div>
+
+        <div class="param-grid-2">
+          <div class="form-section">
+            <label for="cfg-poll-interval" class="section-label">轮询间隔 (秒)</label>
+            <input id="cfg-poll-interval" type="number" min="2" max="60" value="4" class="input-control" />
+          </div>
+          <div class="form-section">
+            <label for="cfg-poll-timeout" class="section-label">轮询超时上限 (秒)</label>
+            <input id="cfg-poll-timeout" type="number" min="30" max="1800" value="300" class="input-control" />
+          </div>
+        </div>
+
+        <div class="checkbox-row">
+          <label for="cfg-auto-download" class="section-label" style="cursor:pointer;">
+            任务成功后自动下载图片到 <code>duomi_data/images/</code>（防止远程链接过期）
+          </label>
+          <input id="cfg-auto-download" type="checkbox" checked />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-toggle-key-visibility" type="button" class="btn btn-secondary" style="margin-right:auto;">
+          显示/隐藏密钥
+        </button>
+        <button id="btn-cancel-config" type="button" class="btn btn-secondary">取消</button>
+        <button id="btn-save-config" type="button" class="btn btn-primary">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Query / Import Task ID Modal -->
+  <div id="modal-query" class="modal-backdrop" hidden>
+    <div class="modal-card" role="dialog" aria-labelledby="modal-query-title">
+      <div class="modal-header">
+        <h2 id="modal-query-title">查询或导入异步任务 (GET /v1/tasks/{id})</h2>
+        <button id="btn-close-query-modal" type="button" class="btn btn-ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-section">
+          <label for="input-query-task-id" class="section-label">任务 ID (Task ID)</label>
+          <input
+            id="input-query-task-id"
+            type="text"
+            class="input-control"
+            placeholder="例如：e8f3d384-d740-889b-139b-99d8171488c8"
+          />
+          <span class="section-hint">
+            输入任务 ID 后将立即调用 <code>GET /v1/tasks/{id}</code> 查询状态；若已完成会自动下载图片并归档到本地记录。
+          </span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="btn-cancel-query" type="button" class="btn btn-secondary">取消</button>
+        <button id="btn-confirm-query" type="button" class="btn btn-primary">立即查询并同步</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox / Detail Modal -->
+  <div id="modal-lightbox" class="modal-backdrop" hidden>
+    <div class="modal-card modal-wide" role="dialog" aria-labelledby="modal-lightbox-title">
+      <div class="modal-header">
+        <h2 id="modal-lightbox-title">图像与任务详情</h2>
+        <button id="btn-close-lightbox" type="button" class="btn btn-ghost">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="lightbox-layout">
+          <div class="lightbox-image-stage">
+            <img id="lightbox-img" src="" alt="生成图像预览" />
+          </div>
+          <div class="lightbox-info">
+            <div class="form-section">
+              <span class="section-label">任务 ID</span>
+              <div id="lightbox-task-id" class="code-block"></div>
+            </div>
+            <div class="form-section">
+              <span class="section-label">提示词 (Prompt)</span>
+              <div id="lightbox-prompt" class="code-block"></div>
+            </div>
+            <div class="form-section">
+              <span class="section-label">生成参数与保存路径</span>
+              <div id="lightbox-meta" class="code-block"></div>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:auto;">
+              <a id="lightbox-download-link" href="#" download class="btn btn-primary" style="text-decoration:none;">
+                下载本地原图
+              </a>
+              <button id="btn-lightbox-use-as-ref" type="button" class="btn btn-secondary">
+                将此图作为参考图继续创作 (图生图)
+              </button>
+              <button id="btn-lightbox-reuse-params" type="button" class="btn btn-secondary">
+                一键填入该任务的提示词与参数
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

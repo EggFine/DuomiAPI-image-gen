@@ -1,0 +1,8 @@
+# Portable runtime data directory
+duomi_data/
+
+# Build artifacts
+dist/
+*.exe
+duomi-image-gen
+duomi-image-gen-*
