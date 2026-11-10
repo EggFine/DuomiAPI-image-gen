@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useRef } from "react"
+import React, { useRef } from "react"
 import {
   Activity,
   Command,
@@ -17,7 +17,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { gsap, prefersReducedMotion, STUDIO_EASE, useGSAP } from "@/lib/motion"
+import {
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  STUDIO_MEDIA,
+  useGSAP,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import type { ComposerLayoutMode, StudioNavTab } from "@/types"
 
@@ -91,92 +97,138 @@ export const StudioRail: React.FC<StudioRailProps> = ({
 }) => {
   const railRef = useRef<HTMLElement | null>(null)
   const navIndicatorRef = useRef<HTMLDivElement | null>(null)
+  const mobileIndicatorRef = useRef<HTMLDivElement | null>(null)
   const btnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const mobileBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
   const iconRefs = useRef<Record<string, HTMLSpanElement | null>>({})
   const themeIconRef = useRef<HTMLSpanElement | null>(null)
   const initializedIndicatorRef = useRef<boolean>(false)
+  const initializedMobileRef = useRef<boolean>(false)
   const mountedThemeRef = useRef<boolean>(false)
 
-  // Subtle initial studio rail entrance
+  // Subtle initial desktop studio rail entrance via gsap.matchMedia()
   useGSAP(
     () => {
-      if (prefersReducedMotion()) return
-      gsap.fromTo(
-        ".rail-stagger-item",
-        { opacity: 0, x: -6 },
+      const mm = gsap.matchMedia()
+      mm.add(
         {
-          opacity: 1,
-          x: 0,
-          duration: 0.34,
-          stagger: 0.03,
-          ease: STUDIO_EASE.out,
-          clearProps: "transform,opacity",
-        }
+          desktop: STUDIO_MEDIA.desktop,
+          motionOk: STUDIO_MEDIA.motionOk,
+        },
+        (ctx) => {
+          const { desktop, motionOk } = ctx.conditions || {}
+          if (!desktop || !motionOk) return
+          gsap.fromTo(
+            ".rail-stagger-item",
+            { autoAlpha: 0, x: -6 },
+            {
+              autoAlpha: 1,
+              x: 0,
+              duration: 0.34,
+              stagger: 0.03,
+              ease: STUDIO_EASE.out,
+              clearProps: "transform,opacity,visibility",
+            }
+          )
+        },
+        railRef
       )
+      return () => mm.revert()
     },
     { scope: railRef }
   )
 
-  // Liquid sliding active tab pill + active icon micro-spring
-  useLayoutEffect(() => {
-    const indicator = navIndicatorRef.current
-    const activeBtn = btnRefs.current[activeTab]
-    if (!indicator || !activeBtn) return
+  // Liquid sliding active tab pill (Desktop vertical + Mobile bottom dock) & active icon micro-spring
+  useGSAP(
+    () => {
+      const reduced = prefersReducedMotion()
 
-    const targetY = activeBtn.offsetTop
-    const targetH = activeBtn.offsetHeight
+      // Desktop vertical pill
+      const indicator = navIndicatorRef.current
+      const activeBtn = btnRefs.current[activeTab]
+      if (indicator && activeBtn && activeBtn.offsetHeight > 0) {
+        const targetY = activeBtn.offsetTop
+        const targetH = activeBtn.offsetHeight
+        if (!initializedIndicatorRef.current || reduced) {
+          initializedIndicatorRef.current = true
+          gsap.set(indicator, { y: targetY, height: targetH, autoAlpha: 1 })
+        } else {
+          gsap.to(indicator, {
+            y: targetY,
+            height: targetH,
+            autoAlpha: 1,
+            duration: 0.34,
+            ease: STUDIO_EASE.expo,
+            overwrite: "auto",
+          })
+        }
+      }
 
-    if (!initializedIndicatorRef.current || prefersReducedMotion()) {
-      initializedIndicatorRef.current = true
-      gsap.set(indicator, { y: targetY, height: targetH, opacity: 1 })
-      return
-    }
+      // Mobile bottom dock pill
+      const mIndicator = mobileIndicatorRef.current
+      const mBtn = mobileBtnRefs.current[activeTab]
+      if (mIndicator && mBtn && mBtn.offsetWidth > 0) {
+        const targetX = mBtn.offsetLeft
+        const targetW = mBtn.offsetWidth
+        if (!initializedMobileRef.current || reduced) {
+          initializedMobileRef.current = true
+          gsap.set(mIndicator, { x: targetX, width: targetW, autoAlpha: 1 })
+        } else {
+          gsap.to(mIndicator, {
+            x: targetX,
+            width: targetW,
+            autoAlpha: 1,
+            duration: 0.32,
+            ease: STUDIO_EASE.expo,
+            overwrite: "auto",
+          })
+        }
+      }
 
-    gsap.to(indicator, {
-      y: targetY,
-      height: targetH,
-      opacity: 1,
-      duration: 0.34,
-      ease: STUDIO_EASE.expo,
-      overwrite: "auto",
-    })
+      // Active icon spring pop
+      const iconWrap = iconRefs.current[activeTab]
+      if (iconWrap && !reduced) {
+        gsap.fromTo(
+          iconWrap,
+          { scale: 0.82, y: 1.5 },
+          {
+            scale: 1,
+            y: 0,
+            duration: 0.32,
+            ease: STUDIO_EASE.spring,
+            overwrite: "auto",
+            clearProps: "transform",
+          }
+        )
+      }
+    },
+    { dependencies: [activeTab] }
+  )
 
-    const iconWrap = iconRefs.current[activeTab]
-    if (iconWrap) {
+  // Tactile celestial spin when toggling Darkroom / Paper theme (canonical `rotation` + `_cw`)
+  useGSAP(
+    () => {
+      if (!mountedThemeRef.current) {
+        mountedThemeRef.current = true
+        return
+      }
+      if (prefersReducedMotion() || !themeIconRef.current) return
       gsap.fromTo(
-        iconWrap,
-        { scale: 0.82, y: 1.5 },
+        themeIconRef.current,
+        { rotation: "-72_cw", scale: 0.72, autoAlpha: 0.4 },
         {
+          rotation: 0,
           scale: 1,
-          y: 0,
-          duration: 0.32,
+          autoAlpha: 1,
+          duration: 0.38,
           ease: STUDIO_EASE.spring,
-          clearProps: "transform",
+          overwrite: "auto",
+          clearProps: "transform,opacity,visibility",
         }
       )
-    }
-  }, [activeTab])
-
-  // Tactile celestial spin when toggling Darkroom / Paper theme
-  useLayoutEffect(() => {
-    if (!mountedThemeRef.current) {
-      mountedThemeRef.current = true
-      return
-    }
-    if (prefersReducedMotion() || !themeIconRef.current) return
-    gsap.fromTo(
-      themeIconRef.current,
-      { rotate: -72, scale: 0.72, opacity: 0.4 },
-      {
-        rotate: 0,
-        scale: 1,
-        opacity: 1,
-        duration: 0.38,
-        ease: STUDIO_EASE.spring,
-        clearProps: "transform,opacity",
-      }
-    )
-  }, [theme])
+    },
+    { dependencies: [theme] }
+  )
 
   return (
     <>
@@ -412,16 +464,24 @@ export const StudioRail: React.FC<StudioRailProps> = ({
         aria-label="移动端底部导航"
         className="md:hidden fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t border-border bg-card/95 backdrop-blur-lg px-2 py-1.5"
       >
+        <div
+          ref={mobileIndicatorRef}
+          style={{ opacity: 0, visibility: "hidden" }}
+          className="pointer-events-none absolute top-1.5 bottom-1.5 left-0 rounded-lg bg-amber-500/12 ring-1 ring-amber-500/25"
+        />
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon
           const isActive = activeTab === item.id
           return (
             <button
               key={item.id}
+              ref={(el) => {
+                mobileBtnRefs.current[item.id] = el
+              }}
               type="button"
               onClick={() => onSelectTab(item.id)}
               className={cn(
-                "flex flex-col items-center justify-center px-3 py-1 rounded-lg text-[11px] font-medium cursor-pointer",
+                "relative z-10 flex flex-col items-center justify-center px-3 py-1 rounded-lg text-[11px] font-medium cursor-pointer",
                 isActive ? "text-amber-500" : "text-muted-foreground"
               )}
             >
@@ -434,7 +494,7 @@ export const StudioRail: React.FC<StudioRailProps> = ({
           type="button"
           onClick={() => onOpenSettings("api")}
           className={cn(
-            "flex flex-col items-center justify-center px-3 py-1 rounded-lg text-[11px] font-medium cursor-pointer",
+            "relative z-10 flex flex-col items-center justify-center px-3 py-1 rounded-lg text-[11px] font-medium cursor-pointer",
             !hasApiKey ? "text-amber-500" : "text-muted-foreground"
           )}
         >

@@ -21,6 +21,12 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import type {
   ComposerLayoutMode,
@@ -77,6 +83,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
   onOpenLocalFolder,
 }) => {
   const inputRef = useRef<HTMLInputElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
   const [query, setQuery] = useState<string>("")
   const [activeIndex, setActiveIndex] = useState<number>(0)
 
@@ -87,6 +94,29 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
       requestAnimationFrame(() => inputRef.current?.focus())
     }
   }, [open])
+
+  useGSAP(
+    () => {
+      if (!open || prefersReducedMotion() || !listRef.current) return
+      const items = gsap.utils
+        .toArray<HTMLElement>(".cmd-palette-item", listRef.current)
+        .slice(0, 14)
+      if (items.length === 0) return
+      gsap.fromTo(
+        items,
+        { autoAlpha: 0, x: -6 },
+        {
+          autoAlpha: 1,
+          x: 0,
+          duration: 0.22,
+          stagger: 0.014,
+          ease: STUDIO_EASE.out,
+          clearProps: "transform,opacity,visibility",
+        }
+      )
+    },
+    { scope: listRef, dependencies: [open] }
+  )
 
   const allCommands = useMemo<CommandAction[]>(() => {
     const closeAnd = (fn: () => void) => () => {
@@ -296,7 +326,10 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
         </div>
 
         {/* Command Results */}
-        <div className="max-h-[380px] overflow-y-auto p-2 studio-scroll">
+        <div
+          ref={listRef}
+          className="max-h-[380px] overflow-y-auto p-2 studio-scroll"
+        >
           {filtered.length === 0 ? (
             <div className="py-10 text-center text-xs text-muted-foreground">
               没有找到匹配的快捷指令
@@ -320,7 +353,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
                     onMouseEnter={() => setActiveIndex(idx)}
                     onClick={cmd.run}
                     className={cn(
-                      "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors cursor-pointer",
+                      "cmd-palette-item flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left transition-colors cursor-pointer",
                       selected
                         ? "bg-amber-500/15 text-foreground"
                         : "text-foreground/85 hover:bg-secondary/60"

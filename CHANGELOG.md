@@ -1,5 +1,24 @@
 # 更新日志 (Changelog)
 
+## [v3.1.1] - 2026-11-10
+
+### 🎯 引入官方 `greensock/gsap-skills` 规范并深度重构零重绘 GSAP 动效架构
+- **集成全套官方 GreenSock AI 技能包 (`.agents/skills/`)**：
+  - 安装 `greensock/gsap-skills` 全部 8 个官方技能规范（`gsap-core`、`gsap-react`、`gsap-performance`、`gsap-plugins`、`gsap-timeline`、`gsap-utils`、`gsap-scrolltrigger`、`gsap-frameworks` 及 `llms.txt`），作为项目级前端动效工程护栏（仅存于 `.agents/skills/`，对 Go `//go:embed all:web` 单文件产物实现 **0 字节体积增量**）。
+- **全面迁移至作用域化 `useGSAP()` + `contextSafe()` (`gsap-react` 规范)**：
+  - 将全站所有组件（`App`、`StudioRail`、`OmnibarComposer`、`MasonryArtworkStream`、`ImageLightbox`、`InspirationHubView`、`AnalyticsQueueView`、`CommandPaletteModal`、`Dialog`、`Popover`）中的原生 `useLayoutEffect` / `useEffect` 动画全部重构为带 `scope` 的 `useGSAP()`，自动在组件卸载或重同步时执行 `gsap.context` 清理还原。
+  - 所有事件回调与异步回调创建的动画（快门按压回弹、星标点亮微弹、缩略图异步 `onLoad` 显影、卷帘拖拽跟随、悬浮创作舱退场 `onComplete` 回调）均包裹于 `contextSafe()`，彻底杜绝组件卸载后操作游离 DOM 节点。
+- **零 React 重渲染 60fps 硬件合成器性能优化 (`gsap-performance` 规范)**：
+  - **灯箱卷帘对比 (`ImageLightbox`) 零重绘升级**：废除在 `onUpdate` 与 `pointermove` 中高频调用 `setCurtainPos` 触发千行组件每秒 60 次重渲染的做法，改为由 GSAP 直接驱动容器 CSS 自定义属性 `--curtain-pos`（配合 `clip-path: inset(0 calc(100% - var(--curtain-pos)) 0 0)`），实现 **0 React 重渲染** 的丝滑卷帘引导与跟手擦除。
+  - **大图缩放平移升级为 `gsap.quickTo()`**：使用复用补间实例的 `gsap.quickTo(img, "x" | "y")` 在 GPU 合成器层直接驱动平移与缩放，消除拖拽看大图时的 React 状态抖动。
+  - **数字仪表盘 `<AnimatedNumber />` 零重绘直写**：改为通过 `spanRef.current.textContent` 在 `useGSAP` 中直接更新文本节点，消除队列页 5 组仪表同时滚动时每秒 ~300 次的组件重渲染。
+  - **存储占比条由 `width` 改为 `scaleX` 合成器动画**：`AnalyticsQueueView` 中的存储空间与模型分布条全部改为 `transformOrigin: "left center"` + `scaleX` 动画，彻底规避布局重排（Layout Thrashing）。
+- **真正启用 `Flip` 布局过渡、`ScrollToPlugin` 与 `gsap.matchMedia()` (`gsap-plugins` / `gsap-core` / `gsap-timeline` / `gsap-utils`)**：
+  - **真 FLIP 布局重排动画 (`Flip.getState` → `Flip.from`)**：在灵感配方广场切换分类、以及在作品瀑布流切换 `2~6 列` 密度、视图模式（瀑布流 / 审片卡 / 列表）、项目画册或状态筛选时，自动捕获前后几何状态并平滑过渡卡片位置，同时新增灵感广场分类胶囊与移动端底部导航栏的液态滑块。
+  - **`ScrollToPlugin` 平滑回顶与时间轴编排**：`Imagine` 视图回到顶部升级为 `scrollTo: { y: 0, autoKill: true }`（用户滚轮介入时自动礼让中断）；悬浮创作舱进退场收敛为单条原子化 `gsap.timeline()`；规范化 `rotation: "-72_cw"`、`autoAlpha`（隐藏态自动 `visibility: hidden`）、`gsap.matchMedia()` 响应式断点与 `gsap.utils.clamp` / `toArray` 工具链。
+
+---
+
 ## [v3.1.0] - 2026-11-10
 
 ### ✨ 全域 GSAP 高帧率微交互与胶片暗房动效引擎 (`GSAP + @gsap/react`)

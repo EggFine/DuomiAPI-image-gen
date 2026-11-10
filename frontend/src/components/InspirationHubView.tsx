@@ -1,4 +1,4 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react"
+import React, { useMemo, useRef, useState } from "react"
 import {
   BookmarkPlus,
   Check,
@@ -13,7 +13,13 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
+import {
+  Flip,
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 import type { PromptTemplate } from "@/types"
 
@@ -63,8 +69,14 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
   const [newCategory, setNewCategory] = useState<string>("我的私藏配方")
   const [newPrompt, setNewPrompt] = useState<string>("")
 
+  const hubRootRef = useRef<HTMLDivElement | null>(null)
   const gridRef = useRef<HTMLDivElement | null>(null)
   const creatorRef = useRef<HTMLDivElement | null>(null)
+  const catPillRef = useRef<HTMLDivElement | null>(null)
+  const catBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const catPillInitRef = useRef<boolean>(false)
+  const pendingFlipRef = useRef<Flip.FlipState | null>(null)
+  const mountedGridRef = useRef<boolean>(false)
 
   const allRecipes = useMemo(
     () => [...customTemplates, ...builtInTemplates],
@@ -95,51 +107,134 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
     })
   }, [allRecipes, selectedCategory, search])
 
-  // Staggered editorial card entrance on mount & category switch
-  useLayoutEffect(() => {
-    const grid = gridRef.current
-    if (!grid || prefersReducedMotion()) return
-    const cards = Array.from(
-      grid.querySelectorAll<HTMLElement>(".recipe-card-anim")
-    )
-    if (cards.length === 0) return
-    const tween = gsap.fromTo(
-      cards,
-      { opacity: 0, y: 12 },
-      {
-        opacity: 1,
-        y: 0,
-        duration: 0.3,
-        stagger: { each: 0.025, amount: 0.2 },
-        ease: STUDIO_EASE.out,
-        overwrite: "auto",
-        clearProps: "transform,opacity",
+  const handleSelectCategory = (cat: string) => {
+    if (cat === selectedCategory) return
+    if (gridRef.current && !prefersReducedMotion()) {
+      const currentCards = gsap.utils
+        .toArray<HTMLElement>(".recipe-card-anim", gridRef.current)
+        .slice(0, 24)
+      if (currentCards.length > 0) {
+        pendingFlipRef.current = Flip.getState(currentCards)
       }
-    )
-    return () => {
-      tween.kill()
     }
-  }, [selectedCategory])
+    setSelectedCategory(cat)
+  }
 
-  // Inline recipe creator drawer smooth reveal
-  useLayoutEffect(() => {
-    if (!creating || !creatorRef.current || prefersReducedMotion()) return
-    const tween = gsap.fromTo(
-      creatorRef.current,
-      { opacity: 0, y: -10, scale: 0.985 },
-      {
-        opacity: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.26,
-        ease: STUDIO_EASE.expo,
-        clearProps: "transform",
+  // Liquid sliding category pill
+  useGSAP(
+    () => {
+      const pill = catPillRef.current
+      const activeBtn = catBtnRefs.current[selectedCategory]
+      if (!pill || !activeBtn) return
+      const targetX = activeBtn.offsetLeft
+      const targetY = activeBtn.offsetTop
+      const targetW = activeBtn.offsetWidth
+      const targetH = activeBtn.offsetHeight
+
+      if (!catPillInitRef.current || prefersReducedMotion()) {
+        catPillInitRef.current = true
+        gsap.set(pill, {
+          x: targetX,
+          y: targetY,
+          width: targetW,
+          height: targetH,
+          autoAlpha: 1,
+        })
+        return
       }
-    )
-    return () => {
-      tween.kill()
-    }
-  }, [creating])
+
+      gsap.to(pill, {
+        x: targetX,
+        y: targetY,
+        width: targetW,
+        height: targetH,
+        autoAlpha: 1,
+        duration: 0.3,
+        ease: STUDIO_EASE.expo,
+        overwrite: "auto",
+      })
+    },
+    { scope: hubRootRef, dependencies: [selectedCategory, categories.length] }
+  )
+
+  // Staggered initial card entrance + real GSAP Flip reflow on category switch
+  useGSAP(
+    () => {
+      const grid = gridRef.current
+      const flipState = pendingFlipRef.current
+      pendingFlipRef.current = null
+      if (!grid || prefersReducedMotion()) return
+
+      const cards = gsap.utils
+        .toArray<HTMLElement>(".recipe-card-anim", grid)
+        .slice(0, 24)
+      if (cards.length === 0) return
+
+      if (!mountedGridRef.current) {
+        mountedGridRef.current = true
+        gsap.fromTo(
+          cards,
+          { autoAlpha: 0, y: 12 },
+          {
+            autoAlpha: 1,
+            y: 0,
+            duration: 0.3,
+            stagger: { each: 0.025, amount: 0.2 },
+            ease: STUDIO_EASE.out,
+            clearProps: "transform,opacity,visibility",
+          }
+        )
+        return
+      }
+
+      if (flipState) {
+        Flip.from(flipState, {
+          targets: cards,
+          duration: 0.34,
+          ease: STUDIO_EASE.expo,
+          simple: true,
+          scale: false,
+          stagger: 0.014,
+          onEnter: (els) =>
+            gsap.fromTo(
+              els,
+              { autoAlpha: 0, y: 10, scale: 0.97 },
+              {
+                autoAlpha: 1,
+                y: 0,
+                scale: 1,
+                duration: 0.26,
+                stagger: 0.018,
+                ease: STUDIO_EASE.out,
+                clearProps: "transform,opacity,visibility",
+              }
+            ),
+          clearProps: "transform",
+        })
+      }
+    },
+    { scope: hubRootRef, dependencies: [selectedCategory] }
+  )
+
+  // Inline recipe creator drawer smooth reveal via scoped useGSAP
+  useGSAP(
+    () => {
+      if (!creating || !creatorRef.current || prefersReducedMotion()) return
+      gsap.fromTo(
+        creatorRef.current,
+        { autoAlpha: 0, y: -10, scale: 0.985 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.26,
+          ease: STUDIO_EASE.expo,
+          clearProps: "transform,visibility",
+        }
+      )
+    },
+    { scope: hubRootRef, dependencies: [creating] }
+  )
 
   const handleOpenCreate = () => {
     setNewPrompt(currentPrompt || "")
@@ -166,7 +261,10 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
   }
 
   return (
-    <div className="h-full overflow-y-auto studio-scroll px-4 sm:px-7 py-6 pb-24">
+    <div
+      ref={hubRootRef}
+      className="h-full overflow-y-auto studio-scroll px-4 sm:px-7 py-6 pb-24"
+    >
       <div className="mx-auto max-w-[1440px] space-y-6">
         {/* Editorial Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 border-b border-border pb-5">
@@ -265,8 +363,13 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
           </div>
         )}
 
-        {/* Category Filter Pills */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        {/* Category Filter Pills with Liquid Sliding GSAP Indicator */}
+        <div className="relative flex flex-wrap items-center gap-1.5">
+          <div
+            ref={catPillRef}
+            style={{ opacity: 0, visibility: "hidden" }}
+            className="pointer-events-none absolute left-0 top-0 rounded-full bg-foreground shadow-xs"
+          />
           {categories.map((cat) => {
             const active = selectedCategory === cat
             const count =
@@ -276,12 +379,15 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
             return (
               <button
                 key={cat}
+                ref={(el) => {
+                  catBtnRefs.current[cat] = el
+                }}
                 type="button"
-                onClick={() => setSelectedCategory(cat)}
+                onClick={() => handleSelectCategory(cat)}
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all cursor-pointer active:scale-95",
+                  "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-colors cursor-pointer active:scale-95",
                   active
-                    ? "bg-foreground text-background shadow-xs"
+                    ? "text-background font-semibold"
                     : "bg-secondary/70 text-muted-foreground hover:text-foreground hover:bg-secondary"
                 )}
               >
@@ -307,6 +413,7 @@ export const InspirationHubView: React.FC<InspirationHubViewProps> = ({
             return (
               <article
                 key={tpl.id}
+                data-flip-id={tpl.id}
                 className={cn(
                   "recipe-card-anim group flex flex-col justify-between rounded-2xl border border-border border-t-2 bg-card p-5 transition-colors hover:border-foreground/25 hover:shadow-md",
                   accentClass

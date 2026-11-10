@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -36,7 +35,7 @@ import { StudioSidebar } from "@/components/StudioSidebar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
+import { gsap, prefersReducedMotion, STUDIO_EASE, useGSAP } from "@/lib/motion"
 import {
   apiFetch,
   buildDeveloperPreview,
@@ -75,6 +74,9 @@ interface ToastItem {
 }
 
 export function App() {
+  const appRootRef = useRef<HTMLDivElement | null>(null)
+  const { contextSafe } = useGSAP({ scope: appRootRef })
+
   const [theme, setTheme] = useState<"dark" | "light">(() => {
     const saved = localStorage.getItem("duomi_theme")
     return saved === "light" ? "light" : "dark"
@@ -105,35 +107,38 @@ export function App() {
     []
   )
 
-  // Floating Toast spring-slide entrance
-  useLayoutEffect(() => {
-    const activeIds = new Set(toasts.map((t) => t.id))
-    for (const id of seenToastIdsRef.current) {
-      if (!activeIds.has(id)) {
-        seenToastIdsRef.current.delete(id)
-      }
-    }
-    for (const t of toasts) {
-      if (!seenToastIdsRef.current.has(t.id)) {
-        seenToastIdsRef.current.add(t.id)
-        const el = toastRefs.current.get(t.id)
-        if (el && !prefersReducedMotion()) {
-          gsap.fromTo(
-            el,
-            { opacity: 0, x: 22, scale: 0.95 },
-            {
-              opacity: 1,
-              x: 0,
-              scale: 1,
-              duration: 0.28,
-              ease: STUDIO_EASE.spring,
-              clearProps: "transform",
-            }
-          )
+  // Floating Toast spring-slide entrance via scoped useGSAP + autoAlpha
+  useGSAP(
+    () => {
+      const activeIds = new Set(toasts.map((t) => t.id))
+      for (const id of seenToastIdsRef.current) {
+        if (!activeIds.has(id)) {
+          seenToastIdsRef.current.delete(id)
         }
       }
-    }
-  }, [toasts])
+      for (const t of toasts) {
+        if (!seenToastIdsRef.current.has(t.id)) {
+          seenToastIdsRef.current.add(t.id)
+          const el = toastRefs.current.get(t.id)
+          if (el && !prefersReducedMotion()) {
+            gsap.fromTo(
+              el,
+              { autoAlpha: 0, x: 22, scale: 0.95 },
+              {
+                autoAlpha: 1,
+                x: 0,
+                scale: 1,
+                duration: 0.28,
+                ease: STUDIO_EASE.spring,
+                clearProps: "transform,visibility",
+              }
+            )
+          }
+        }
+      }
+    },
+    { scope: appRootRef, dependencies: [toasts] }
+  )
 
   const copyText = useCallback(
     (text: string, msg = "已复制到剪贴板") => {
@@ -167,31 +172,34 @@ export function App() {
   }, [])
 
   // Crisp workspace view entrance on tab or layout switch (preserves sticky positioning via clearProps)
-  useLayoutEffect(() => {
-    const key = `${activeTab}:${layoutMode}`
-    if (prevWorkspaceKeyRef.current === null) {
-      prevWorkspaceKeyRef.current = key
-      return
-    }
-    if (prevWorkspaceKeyRef.current === key) return
-    prevWorkspaceKeyRef.current = key
-    if (prefersReducedMotion() || !workspaceBodyRef.current) return
-    const target =
-      (workspaceBodyRef.current.firstElementChild as HTMLElement | null) ||
-      workspaceBodyRef.current
-    gsap.fromTo(
-      target,
-      { opacity: 0, y: 8 },
-      {
-        opacity: 1,
-        y: 0,
-        duration: 0.24,
-        ease: STUDIO_EASE.out,
-        clearProps: "transform,opacity",
-        overwrite: "auto",
+  useGSAP(
+    () => {
+      const key = `${activeTab}:${layoutMode}`
+      if (prevWorkspaceKeyRef.current === null) {
+        prevWorkspaceKeyRef.current = key
+        return
       }
-    )
-  }, [activeTab, layoutMode])
+      if (prevWorkspaceKeyRef.current === key) return
+      prevWorkspaceKeyRef.current = key
+      if (prefersReducedMotion() || !workspaceBodyRef.current) return
+      const target =
+        (workspaceBodyRef.current.firstElementChild as HTMLElement | null) ||
+        workspaceBodyRef.current
+      gsap.fromTo(
+        target,
+        { opacity: 0, y: 8 },
+        {
+          opacity: 1,
+          y: 0,
+          duration: 0.24,
+          ease: STUDIO_EASE.out,
+          clearProps: "transform,opacity",
+          overwrite: "auto",
+        }
+      )
+    },
+    { scope: appRootRef, dependencies: [activeTab, layoutMode] }
+  )
 
   // Server data
   const [info, setInfo] = useState<ServerInfoResponse | null>(null)
@@ -268,66 +276,88 @@ export function App() {
     }
   }, [quickComposerOpen])
 
-  // Smooth GSAP entrance & exit choreography for Quick Composer Overlay
-  useLayoutEffect(() => {
-    if (quickComposerOpen && !prevQuickOpenAnimRef.current) {
-      prevQuickOpenAnimRef.current = true
-      if (prefersReducedMotion()) return
-      const backdrop = quickBackdropRef.current
-      const card = quickCardRef.current
-      if (backdrop) {
-        gsap.killTweensOf(backdrop)
-        gsap.fromTo(
-          backdrop,
-          { opacity: 0 },
-          { opacity: 1, duration: 0.2, ease: STUDIO_EASE.out }
-        )
+  const finishQuickOverlayClose = contextSafe(() => {
+    setQuickOverlayRendered(false)
+  })
+
+  // Sequenced GSAP timeline entrance & exit choreography for Quick Composer Overlay
+  useGSAP(
+    () => {
+      if (quickComposerOpen && !prevQuickOpenAnimRef.current) {
+        prevQuickOpenAnimRef.current = true
+        if (prefersReducedMotion()) return
+        const backdrop = quickBackdropRef.current
+        const card = quickCardRef.current
+        const tl = gsap.timeline({
+          defaults: { ease: STUDIO_EASE.expo, overwrite: "auto" },
+        })
+        if (backdrop) {
+          tl.fromTo(
+            backdrop,
+            { autoAlpha: 0 },
+            {
+              autoAlpha: 1,
+              duration: 0.2,
+              ease: STUDIO_EASE.out,
+              clearProps: "visibility",
+            },
+            0
+          )
+        }
+        if (card) {
+          tl.fromTo(
+            card,
+            { autoAlpha: 0, y: -16, scale: 0.975 },
+            {
+              autoAlpha: 1,
+              y: 0,
+              scale: 1,
+              duration: 0.26,
+              clearProps: "transform,visibility",
+            },
+            "<0.02"
+          )
+        }
+      } else if (!quickComposerOpen && prevQuickOpenAnimRef.current) {
+        prevQuickOpenAnimRef.current = false
+        const backdrop = quickBackdropRef.current
+        const card = quickCardRef.current
+        if (prefersReducedMotion() || !backdrop || !card) {
+          setQuickOverlayRendered(false)
+          return
+        }
+        gsap
+          .timeline({
+            defaults: { duration: 0.16, ease: "power2.in", overwrite: "auto" },
+            onComplete: finishQuickOverlayClose,
+          })
+          .to(card, { autoAlpha: 0, y: -10, scale: 0.98 }, 0)
+          .to(backdrop, { autoAlpha: 0 }, "<")
       }
-      if (card) {
-        gsap.killTweensOf(card)
-        gsap.fromTo(
-          card,
-          { opacity: 0, y: -16, scale: 0.975 },
-          {
-            opacity: 1,
-            y: 0,
-            scale: 1,
-            duration: 0.26,
-            ease: STUDIO_EASE.expo,
-            clearProps: "transform",
-          }
-        )
-      }
-    } else if (!quickComposerOpen && prevQuickOpenAnimRef.current) {
-      prevQuickOpenAnimRef.current = false
-      const backdrop = quickBackdropRef.current
-      const card = quickCardRef.current
-      if (prefersReducedMotion() || !backdrop || !card) {
-        setQuickOverlayRendered(false)
+    },
+    { scope: appRootRef, dependencies: [quickComposerOpen] }
+  )
+
+  // Smooth exponential scroll-to-top powered by GSAP ScrollToPlugin (autoKill: true respects user wheel interruption)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const scrollToImagineTop = useCallback(
+    contextSafe(() => {
+      setQuickComposerOpen(false)
+      const el = imagineScrollRef.current
+      if (!el) return
+      if (prefersReducedMotion()) {
+        el.scrollTop = 0
         return
       }
-      gsap.killTweensOf(backdrop)
-      gsap.killTweensOf(card)
-      gsap.to(backdrop, {
-        opacity: 0,
-        duration: 0.16,
-        ease: "power2.in",
+      gsap.to(el, {
+        scrollTo: { y: 0, autoKill: true },
+        duration: 0.46,
+        ease: STUDIO_EASE.expo,
+        overwrite: "auto",
       })
-      gsap.to(card, {
-        opacity: 0,
-        y: -10,
-        scale: 0.98,
-        duration: 0.16,
-        ease: "power2.in",
-        onComplete: () => setQuickOverlayRendered(false),
-      })
-    }
-  }, [quickComposerOpen])
-
-  const scrollToImagineTop = useCallback(() => {
-    setQuickComposerOpen(false)
-    imagineScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" })
-  }, [])
+    }),
+    [contextSafe]
+  )
 
   useEffect(() => {
     if (activeTab !== "imagine" || layoutMode !== "omnibar") {
@@ -1810,7 +1840,10 @@ export function App() {
 
   return (
     <TooltipProvider delayDuration={160}>
-      <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
+      <div
+        ref={appRootRef}
+        className="flex h-screen w-screen overflow-hidden bg-background text-foreground"
+      >
         {/* Left Vertical Studio Navigation Rail (Desktop) + Bottom Tab Bar (Mobile) */}
         <StudioRail
           activeTab={activeTab}
@@ -1849,7 +1882,7 @@ export function App() {
                 variant="outline"
                 className="hidden sm:inline-flex font-mono text-[10px] px-1.5 py-0 text-muted-foreground"
               >
-                {info?.version || "v3.1.0"} 单文件便携版
+                {info?.version || "v3.1.1"} 单文件便携版
               </Badge>
 
               {activeCount > 0 && (

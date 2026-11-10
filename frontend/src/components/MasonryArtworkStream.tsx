@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import {
   AlertCircle,
   AlertTriangle,
@@ -41,7 +41,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
+import {
+  Flip,
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import {
   computeRecordAspectRatio,
   formatBytes,
@@ -58,6 +64,7 @@ export type StreamDisplayMode = "masonry" | "showcase" | "list"
 
 /**
  * Filmic darkroom exposure reveal when an artwork image finishes loading.
+ * Uses scoped useGSAP + contextSafe so async image loads never mutate unmounted nodes.
  */
 const ArtworkImageReveal: React.FC<
   React.ImgHTMLAttributes<HTMLImageElement>
@@ -66,41 +73,59 @@ const ArtworkImageReveal: React.FC<
   const alreadyCachedRef = useRef<boolean>(false)
   const revealedRef = useRef<boolean>(false)
 
-  useLayoutEffect(() => {
+  const { contextSafe } = useGSAP(
+    () => {
+      const el = imgRef.current
+      if (!el) return
+      alreadyCachedRef.current = false
+      revealedRef.current = false
+      if (el.complete && el.naturalWidth > 0) {
+        alreadyCachedRef.current = true
+        revealedRef.current = true
+      } else if (!prefersReducedMotion()) {
+        gsap.set(el, { autoAlpha: 0 })
+      }
+    },
+    { scope: imgRef, dependencies: [props.src] }
+  )
+
+  const animateLoadedImage = contextSafe(() => {
     const el = imgRef.current
     if (!el) return
-    if (el.complete && el.naturalWidth > 0) {
-      alreadyCachedRef.current = true
-      revealedRef.current = true
-    } else if (!prefersReducedMotion()) {
-      gsap.set(el, { opacity: 0 })
+    if (prefersReducedMotion() || alreadyCachedRef.current) {
+      gsap.set(el, { clearProps: "opacity,visibility,transform,filter" })
+      return
     }
-  }, [props.src])
+    gsap.fromTo(
+      el,
+      { autoAlpha: 0, scale: 1.028, filter: "blur(5px)" },
+      {
+        autoAlpha: 1,
+        scale: 1,
+        filter: "blur(0px)",
+        duration: 0.44,
+        ease: "power2.out",
+        clearProps: "transform,filter,visibility",
+      }
+    )
+  })
 
   const handleLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     onLoad?.(e)
     if (revealedRef.current) return
     revealedRef.current = true
-    const el = imgRef.current
-    if (!el || prefersReducedMotion() || alreadyCachedRef.current) {
-      if (el) gsap.set(el, { clearProps: "opacity,transform,filter" })
-      return
-    }
-    gsap.fromTo(
-      el,
-      { opacity: 0, scale: 1.028, filter: "blur(5px)" },
-      {
-        opacity: 1,
-        scale: 1,
-        filter: "blur(0px)",
-        duration: 0.44,
-        ease: "power2.out",
-        clearProps: "transform,filter",
-      }
-    )
+    animateLoadedImage()
   }
 
-  return <img ref={imgRef} loading="lazy" onLoad={handleLoad} className={className} {...props} />
+  return (
+    <img
+      ref={imgRef}
+      loading="lazy"
+      onLoad={handleLoad}
+      className={className}
+      {...props}
+    />
+  )
 }
 
 interface MasonryArtworkStreamProps {
@@ -194,7 +219,8 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     Math.floor(Date.now() / 1000)
   )
 
-  // GSAP refs
+  // Scoped GSAP root, Flip layout state & indicator refs
+  const streamRootRef = useRef<HTMLDivElement | null>(null)
   const streamBodyRef = useRef<HTMLDivElement | null>(null)
   const statusPillRef = useRef<HTMLDivElement | null>(null)
   const statusBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({})
@@ -203,6 +229,33 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   const batchDockRef = useRef<HTMLDivElement | null>(null)
   const seenCardIdsRef = useRef<Set<string>>(new Set())
   const filterChangeInitRef = useRef<boolean>(false)
+  const pendingFlipRef = useRef<Flip.FlipState | null>(null)
+
+  const { contextSafe } = useGSAP({ scope: streamRootRef })
+
+  const captureStreamFlip = () => {
+    if (prefersReducedMotion() || !streamBodyRef.current) return
+    const visibleCards = gsap.utils
+      .toArray<HTMLElement>(".artwork-card-anim", streamBodyRef.current)
+      .slice(0, 28)
+    if (visibleCards.length > 0) {
+      pendingFlipRef.current = Flip.getState(visibleCards)
+    }
+  }
+
+  const animateStarPop = contextSafe((btn: HTMLElement) => {
+    if (prefersReducedMotion()) return
+    gsap.fromTo(
+      btn,
+      { scale: 1.32 },
+      {
+        scale: 1,
+        duration: 0.3,
+        ease: STUDIO_EASE.spring,
+        clearProps: "transform",
+      }
+    )
+  })
 
   useEffect(() => {
     localStorage.setItem("duomi_stream_mode", displayMode)
@@ -330,137 +383,205 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
     setConfirmBatchDelete(false)
   }
 
-  // 1. Liquid sliding status filter pill
-  useLayoutEffect(() => {
-    const pill = statusPillRef.current
-    if (!pill) return
-    const activeBtn = statusBtnRefs.current[statusFilter]
-    if (!activeBtn) {
-      gsap.to(pill, { opacity: 0, duration: 0.16 })
-      return
-    }
-    const targetX = activeBtn.offsetLeft
-    const targetW = activeBtn.offsetWidth
+  // 1. Liquid sliding status filter pill (autoAlpha hides inactive pill cleanly)
+  useGSAP(
+    () => {
+      const pill = statusPillRef.current
+      if (!pill) return
+      const activeBtn = statusBtnRefs.current[statusFilter]
+      if (!activeBtn) {
+        gsap.to(pill, { autoAlpha: 0, duration: 0.16, overwrite: "auto" })
+        return
+      }
+      const targetX = activeBtn.offsetLeft
+      const targetW = activeBtn.offsetWidth
 
-    if (!statusPillInitRef.current || prefersReducedMotion()) {
-      statusPillInitRef.current = true
-      gsap.set(pill, { x: targetX, width: targetW, opacity: 1 })
-      return
+      if (!statusPillInitRef.current || prefersReducedMotion()) {
+        statusPillInitRef.current = true
+        gsap.set(pill, { x: targetX, width: targetW, autoAlpha: 1 })
+        return
+      }
+      gsap.to(pill, {
+        x: targetX,
+        width: targetW,
+        autoAlpha: 1,
+        duration: 0.28,
+        ease: STUDIO_EASE.expo,
+        overwrite: "auto",
+      })
+    },
+    {
+      scope: streamRootRef,
+      dependencies: [
+        statusFilter,
+        counts.all,
+        counts.active,
+        counts.succeeded,
+        counts.starred,
+        counts.failed,
+      ],
     }
-    gsap.to(pill, {
-      x: targetX,
-      width: targetW,
-      opacity: 1,
-      duration: 0.28,
-      ease: STUDIO_EASE.expo,
-      overwrite: "auto",
-    })
-  }, [statusFilter, counts.all, counts.active, counts.succeeded, counts.starred, counts.failed])
+  )
 
   // 2. Quick Create Capsule entrance when scrolling past top composer
-  useLayoutEffect(() => {
-    if (!showQuickCreateTrigger || !quickCapsuleRef.current || prefersReducedMotion()) {
-      return
-    }
-    const tween = gsap.fromTo(
-      quickCapsuleRef.current,
-      { opacity: 0, x: -10, scale: 0.92 },
-      {
-        opacity: 1,
-        x: 0,
-        scale: 1,
-        duration: 0.25,
-        ease: STUDIO_EASE.spring,
-        clearProps: "transform",
+  useGSAP(
+    () => {
+      if (
+        !showQuickCreateTrigger ||
+        !quickCapsuleRef.current ||
+        prefersReducedMotion()
+      ) {
+        return
       }
-    )
-    return () => {
-      tween.kill()
-    }
-  }, [showQuickCreateTrigger])
+      gsap.fromTo(
+        quickCapsuleRef.current,
+        { autoAlpha: 0, x: -10, scale: 0.92 },
+        {
+          autoAlpha: 1,
+          x: 0,
+          scale: 1,
+          duration: 0.25,
+          ease: STUDIO_EASE.spring,
+          clearProps: "transform,visibility",
+        }
+      )
+    },
+    { scope: streamRootRef, dependencies: [showQuickCreateTrigger] }
+  )
 
   // 3. Floating Batch Action Dock smooth entrance
-  useLayoutEffect(() => {
-    if (!selectMode || !batchDockRef.current || prefersReducedMotion()) return
-    const tween = gsap.fromTo(
-      batchDockRef.current,
-      { opacity: 0, y: 20, scale: 0.96 },
-      {
-        opacity: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.26,
-        ease: STUDIO_EASE.expo,
-        clearProps: "transform",
-      }
-    )
-    return () => {
-      tween.kill()
-    }
-  }, [selectMode])
+  useGSAP(
+    () => {
+      if (!selectMode || !batchDockRef.current || prefersReducedMotion()) return
+      gsap.fromTo(
+        batchDockRef.current,
+        { autoAlpha: 0, y: 20, scale: 0.96 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.26,
+          ease: STUDIO_EASE.expo,
+          clearProps: "transform,visibility",
+        }
+      )
+    },
+    { scope: streamRootRef, dependencies: [selectMode] }
+  )
 
-  // 4. Staggered reveal for newly mounted cards (e.g. initial load or new SSE task)
-  useLayoutEffect(() => {
-    const container = streamBodyRef.current
-    if (!container) return
-    const cardNodes = Array.from(
-      container.querySelectorAll<HTMLElement>(".artwork-card-anim")
-    )
-    const freshNodes: HTMLElement[] = []
-    for (const node of cardNodes) {
-      const id = node.dataset.recordId
-      if (id && !seenCardIdsRef.current.has(id)) {
-        seenCardIdsRef.current.add(id)
-        freshNodes.push(node)
+  // 4. Genuine Flip.getState() -> Flip.from() layout choreography when switching filters, density columns, or display mode
+  useGSAP(
+    () => {
+      if (!filterChangeInitRef.current) {
+        filterChangeInitRef.current = true
+        return
       }
-    }
-    if (freshNodes.length === 0 || prefersReducedMotion()) return
-    const animatedSlice = freshNodes.slice(0, 24)
-    gsap.fromTo(
-      animatedSlice,
-      { opacity: 0, y: 14, scale: 0.985 },
-      {
-        opacity: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.34,
-        stagger: { each: 0.024, amount: 0.22 },
-        ease: STUDIO_EASE.out,
-        clearProps: "transform,opacity",
-      }
-    )
-  }, [filteredRecords])
+      const container = streamBodyRef.current
+      const flipState = pendingFlipRef.current
+      pendingFlipRef.current = null
+      if (!container || prefersReducedMotion()) return
 
-  // 5. Cushioned micro-reflow when switching filters, density columns, or display mode
-  useLayoutEffect(() => {
-    if (!filterChangeInitRef.current) {
-      filterChangeInitRef.current = true
-      return
-    }
-    const container = streamBodyRef.current
-    if (!container || prefersReducedMotion()) return
-    const visibleCards = Array.from(
-      container.querySelectorAll<HTMLElement>(".artwork-card-anim")
-    ).slice(0, 20)
-    if (visibleCards.length === 0) return
-
-    const tween = gsap.fromTo(
-      visibleCards,
-      { opacity: 0.58, y: 7 },
-      {
-        opacity: 1,
-        y: 0,
-        duration: 0.24,
-        stagger: { each: 0.015, amount: 0.14 },
-        ease: STUDIO_EASE.out,
-        overwrite: "auto",
-        clearProps: "transform,opacity",
+      const allCards = gsap.utils.toArray<HTMLElement>(
+        ".artwork-card-anim",
+        container
+      )
+      for (const node of allCards) {
+        const id = node.dataset.recordId
+        if (id) seenCardIdsRef.current.add(id)
       }
-    )
-    return () => {
-      tween.kill()
+
+      const visibleCards = allCards.slice(0, 28)
+      if (visibleCards.length === 0) return
+
+      if (flipState) {
+        Flip.from(flipState, {
+          targets: visibleCards,
+          duration: 0.34,
+          ease: STUDIO_EASE.expo,
+          simple: true,
+          scale: false,
+          stagger: { each: 0.012, amount: 0.14 },
+          onEnter: (elements) =>
+            gsap.fromTo(
+              elements,
+              { autoAlpha: 0, y: 12, scale: 0.975 },
+              {
+                autoAlpha: 1,
+                y: 0,
+                scale: 1,
+                duration: 0.28,
+                stagger: 0.016,
+                ease: STUDIO_EASE.out,
+                clearProps: "transform,opacity,visibility",
+              }
+            ),
+          clearProps: "transform",
+        })
+        return
+      }
+
+      gsap.fromTo(
+        visibleCards.slice(0, 20),
+        { autoAlpha: 0.58, y: 7 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: 0.24,
+          stagger: { each: 0.015, amount: 0.14 },
+          ease: STUDIO_EASE.out,
+          overwrite: "auto",
+          clearProps: "transform,opacity,visibility",
+        }
+      )
+    },
+    {
+      scope: streamRootRef,
+      dependencies: [
+        statusFilter,
+        projectFilter,
+        modelFilter,
+        displayMode,
+        columnCount,
+        groupByDate,
+      ],
     }
-  }, [statusFilter, projectFilter, modelFilter, displayMode, columnCount, groupByDate])
+  )
+
+  // 5. Staggered reveal for newly mounted cards (e.g. initial load or new SSE task)
+  useGSAP(
+    () => {
+      const container = streamBodyRef.current
+      if (!container) return
+      const cardNodes = gsap.utils.toArray<HTMLElement>(
+        ".artwork-card-anim",
+        container
+      )
+      const freshNodes: HTMLElement[] = []
+      for (const node of cardNodes) {
+        const id = node.dataset.recordId
+        if (id && !seenCardIdsRef.current.has(id)) {
+          seenCardIdsRef.current.add(id)
+          freshNodes.push(node)
+        }
+      }
+      if (freshNodes.length === 0 || prefersReducedMotion()) return
+      const animatedSlice = freshNodes.slice(0, 24)
+      gsap.fromTo(
+        animatedSlice,
+        { autoAlpha: 0, y: 14, scale: 0.985 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.34,
+          stagger: { each: 0.024, amount: 0.22 },
+          ease: STUDIO_EASE.out,
+          clearProps: "transform,opacity,visibility",
+        }
+      )
+    },
+    { scope: streamRootRef, dependencies: [filteredRecords] }
+  )
 
   const masonryColumnClasses = useMemo(() => {
     switch (columnCount) {
@@ -512,6 +633,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         <div
           key={rec.id}
           data-record-id={rec.id}
+          data-flip-id={rec.id}
           onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
           className={cn(
             "artwork-card-anim group flex flex-col sm:flex-row gap-4 rounded-2xl border border-border/80 bg-card p-3 transition-colors hover:border-amber-500/40",
@@ -521,14 +643,13 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
         >
           <div className="relative h-44 sm:h-36 sm:w-52 shrink-0 overflow-hidden rounded-xl bg-secondary/50 flex items-center justify-center">
             {isSucceeded ? (
-              <img
+              <ArtworkImageReveal
                 src={
                   images[0].local_file
                     ? `/images/${encodeURIComponent(images[0].local_file)}`
                     : images[0].remote_url
                 }
                 alt={rec.prompt}
-                loading="lazy"
                 onClick={(e) => {
                   if (selectMode) return
                   e.stopPropagation()
@@ -667,7 +788,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => onToggleStar(rec)}
+                  onClick={(e) => {
+                    animateStarPop(e.currentTarget)
+                    onToggleStar(rec)
+                  }}
                   className={cn(
                     "p-1.5 rounded-lg cursor-pointer",
                     rec.starred
@@ -699,6 +823,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
       <article
         key={rec.id}
         data-record-id={rec.id}
+        data-flip-id={rec.id}
         onClick={selectMode ? () => toggleSelect(rec.id) : undefined}
         className={cn(
           "artwork-card-anim masonry-item group relative overflow-hidden rounded-2xl border transition-colors duration-200",
@@ -784,18 +909,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                 <button
                   type="button"
                   onClick={(e) => {
-                    if (!prefersReducedMotion()) {
-                      gsap.fromTo(
-                        e.currentTarget,
-                        { scale: 1.32 },
-                        {
-                          scale: 1,
-                          duration: 0.3,
-                          ease: STUDIO_EASE.spring,
-                          clearProps: "transform",
-                        }
-                      )
-                    }
+                    animateStarPop(e.currentTarget)
                     onToggleStar(rec)
                   }}
                   className={cn(
@@ -1112,7 +1226,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
   }
 
   return (
-    <div className={cn("w-full", embeddedScroll && "flex h-full overflow-hidden")}>
+    <div
+      ref={streamRootRef}
+      className={cn("w-full", embeddedScroll && "flex h-full overflow-hidden")}
+    >
       {/* Dedicated Left Project Albums & Collections Sidebar when in Gallery/Assets View */}
       {mode === "gallery" && (
         <aside className="hidden lg:flex w-60 shrink-0 flex-col justify-between border-r border-border bg-card/40 p-3.5 select-none">
@@ -1133,6 +1250,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     key={v.id}
                     type="button"
                     onClick={() => {
+                      captureStreamFlip()
                       setStatusFilter(v.id)
                       setProjectFilter("all")
                     }}
@@ -1230,6 +1348,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                         <button
                           type="button"
                           onClick={() => {
+                            captureStreamFlip()
                             setProjectFilter(p.id)
                             setStatusFilter("all")
                           }}
@@ -1250,7 +1369,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                           <button
                             type="button"
                             onClick={() => {
-                              if (projectFilter === p.id) setProjectFilter("all")
+                              if (projectFilter === p.id) {
+                                captureStreamFlip()
+                                setProjectFilter("all")
+                              }
                               onDeleteProject(p.id)
                             }}
                             className="opacity-0 group-hover:opacity-100 p-0.5 text-muted-foreground hover:text-destructive cursor-pointer"
@@ -1351,7 +1473,7 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
             <div className="relative flex items-center gap-1 shrink-0">
               <div
                 ref={statusPillRef}
-                style={{ opacity: 0 }}
+                style={{ opacity: 0, visibility: "hidden" }}
                 className="pointer-events-none absolute top-0 bottom-0 left-0 rounded-full bg-foreground"
               />
               {[
@@ -1367,7 +1489,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                     statusBtnRefs.current[tab.id] = el
                   }}
                   type="button"
-                  onClick={() => setStatusFilter(tab.id)}
+                  onClick={() => {
+                    if (statusFilter !== tab.id) captureStreamFlip()
+                    setStatusFilter(tab.id)
+                  }}
                   className={cn(
                     "relative z-10 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors cursor-pointer shrink-0",
                     statusFilter === tab.id
@@ -1401,7 +1526,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
             {distinctModels.length > 1 && (
               <select
                 value={modelFilter}
-                onChange={(e) => setModelFilter(e.target.value)}
+                onChange={(e) => {
+                  captureStreamFlip()
+                  setModelFilter(e.target.value)
+                }}
                 className="h-7 rounded-full border border-border bg-card/70 px-2.5 text-xs text-foreground"
               >
                 <option value="all">全部模型</option>
@@ -1428,7 +1556,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                   max={6}
                   step={1}
                   value={columnCount}
-                  onChange={(e) => setColumnCount(Number(e.target.value))}
+                  onChange={(e) => {
+                    captureStreamFlip()
+                    setColumnCount(Number(e.target.value))
+                  }}
                   className="w-16 studio-slider"
                 />
               </div>
@@ -1447,7 +1578,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
                   <TooltipTrigger asChild>
                     <button
                       type="button"
-                      onClick={() => setDisplayMode(m)}
+                      onClick={() => {
+                        if (displayMode !== m) captureStreamFlip()
+                        setDisplayMode(m)
+                      }}
                       className={cn(
                         "flex h-6 w-7 items-center justify-center rounded-full transition-colors cursor-pointer",
                         displayMode === m
@@ -1465,7 +1599,10 @@ export const MasonryArtworkStream: React.FC<MasonryArtworkStreamProps> = ({
 
             <button
               type="button"
-              onClick={() => setGroupByDate((v) => !v)}
+              onClick={() => {
+                captureStreamFlip()
+                setGroupByDate((v) => !v)
+              }}
               className={cn(
                 "hidden sm:inline-flex h-7 items-center rounded-full border px-2.5 text-[11px] transition-colors cursor-pointer",
                 groupByDate

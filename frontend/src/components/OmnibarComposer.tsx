@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import React, { useMemo, useRef, useState } from "react"
 import {
   AlertTriangle,
   BookMarked,
@@ -40,7 +40,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
+import {
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import { parsePixelDimensions, PROJECT_COLOR_MAP } from "@/lib/studio-utils"
 import { cn } from "@/lib/utils"
 import type {
@@ -203,6 +208,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   onOpenDevPreview,
   onCollapseOverlay,
 }) => {
+  const composerRootRef = useRef<HTMLDivElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
   const submitBtnRef = useRef<HTMLButtonElement | null>(null)
@@ -221,93 +227,118 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false)
   const [historyPopoverOpen, setHistoryPopoverOpen] = useState(false)
 
+  // Scoped GSAP context & contextSafe wrapper for event-driven animations (per gsap-react skill)
+  const { contextSafe } = useGSAP({ scope: composerRootRef })
+
   // Smooth GSAP auto-height interpolation on prompt textarea
-  useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    const prevH = el.offsetHeight
-    el.style.height = "auto"
-    const nextH = Math.min(200, Math.max(54, el.scrollHeight))
+  useGSAP(
+    () => {
+      const el = textareaRef.current
+      if (!el) return
+      const prevH = el.offsetHeight
+      el.style.height = "auto"
+      const nextH = Math.min(200, Math.max(54, el.scrollHeight))
 
-    if (!mountedTextareaRef.current || prefersReducedMotion() || Math.abs(nextH - prevH) < 2) {
-      mountedTextareaRef.current = true
-      el.style.height = `${nextH}px`
-      return
-    }
+      if (
+        !mountedTextareaRef.current ||
+        prefersReducedMotion() ||
+        Math.abs(nextH - prevH) < 2
+      ) {
+        mountedTextareaRef.current = true
+        el.style.height = `${nextH}px`
+        return
+      }
 
-    el.style.height = `${prevH}px`
-    gsap.to(el, {
-      height: nextH,
-      duration: 0.18,
-      ease: "power2.out",
-      overwrite: "auto",
-    })
-  }, [prompt])
+      el.style.height = `${prevH}px`
+      gsap.to(el, {
+        height: nextH,
+        duration: 0.18,
+        ease: "power2.out",
+        overwrite: "auto",
+      })
+    },
+    { scope: composerRootRef, dependencies: [prompt] }
+  )
 
   // Spring pop-in for newly added Reference Image Chips (@图1, @图2...)
-  useLayoutEffect(() => {
-    const currentIds = new Set(referenceImages.map((r) => r.id))
-    const newTargets: HTMLDivElement[] = []
-    for (const r of referenceImages) {
-      if (!seenRefIdsRef.current.has(r.id)) {
-        seenRefIdsRef.current.add(r.id)
-        const el = refChipRefs.current[r.id]
-        if (el) newTargets.push(el)
+  useGSAP(
+    () => {
+      const currentIds = new Set(referenceImages.map((r) => r.id))
+      const newTargets: HTMLDivElement[] = []
+      for (const r of referenceImages) {
+        if (!seenRefIdsRef.current.has(r.id)) {
+          seenRefIdsRef.current.add(r.id)
+          const el = refChipRefs.current[r.id]
+          if (el) newTargets.push(el)
+        }
       }
-    }
-    // Prune removed IDs so re-adding later animates cleanly
-    for (const oldId of Array.from(seenRefIdsRef.current)) {
-      if (!currentIds.has(oldId)) {
-        seenRefIdsRef.current.delete(oldId)
+      for (const oldId of Array.from(seenRefIdsRef.current)) {
+        if (!currentIds.has(oldId)) {
+          seenRefIdsRef.current.delete(oldId)
+        }
       }
-    }
-    if (newTargets.length > 0 && !prefersReducedMotion()) {
+      if (newTargets.length > 0 && !prefersReducedMotion()) {
+        gsap.fromTo(
+          newTargets,
+          { autoAlpha: 0, scale: 0.86, y: 6 },
+          {
+            autoAlpha: 1,
+            scale: 1,
+            y: 0,
+            duration: 0.28,
+            stagger: 0.04,
+            ease: STUDIO_EASE.spring,
+            clearProps: "transform,visibility",
+          }
+        )
+      }
+    },
+    { scope: composerRootRef, dependencies: [referenceImages] }
+  )
+
+  // Subtle tactile pop when changing batch count (×1..×10)
+  useGSAP(
+    () => {
+      if (!mountedBatchRef.current) {
+        mountedBatchRef.current = true
+        return
+      }
+      if (!batchValueRef.current || prefersReducedMotion()) return
       gsap.fromTo(
-        newTargets,
-        { opacity: 0, scale: 0.86, y: 6 },
+        batchValueRef.current,
+        { scale: 1.25, y: -1.5 },
         {
-          opacity: 1,
           scale: 1,
           y: 0,
-          duration: 0.28,
-          stagger: 0.04,
+          duration: 0.24,
           ease: STUDIO_EASE.spring,
+          overwrite: "auto",
           clearProps: "transform",
         }
       )
-    }
-  }, [referenceImages])
+    },
+    { scope: composerRootRef, dependencies: [batchCount] }
+  )
 
-  // Subtle tactile pop when changing batch count (×1..×10)
-  useLayoutEffect(() => {
-    if (!mountedBatchRef.current) {
-      mountedBatchRef.current = true
-      return
-    }
-    if (!batchValueRef.current || prefersReducedMotion()) return
-    gsap.fromTo(
-      batchValueRef.current,
-      { scale: 1.25, y: -1.5 },
-      { scale: 1, y: 0, duration: 0.24, ease: STUDIO_EASE.spring, clearProps: "transform" }
-    )
-  }, [batchCount])
+  const animateShutterPulse = contextSafe((btn: HTMLButtonElement | null) => {
+    if (!btn || prefersReducedMotion()) return
+    gsap
+      .timeline({ defaults: { overwrite: "auto" } })
+      .to(btn, {
+        scale: 0.955,
+        duration: 0.07,
+        ease: "power2.in",
+      })
+      .to(btn, {
+        scale: 1,
+        duration: 0.24,
+        ease: STUDIO_EASE.spring,
+        clearProps: "transform",
+      })
+  })
 
   const triggerGenerateWithShutter = () => {
-    if (submitBtnRef.current && !prefersReducedMotion()) {
-      gsap
-        .timeline()
-        .to(submitBtnRef.current, {
-          scale: 0.955,
-          duration: 0.07,
-          ease: "power2.in",
-        })
-        .to(submitBtnRef.current, {
-          scale: 1,
-          duration: 0.24,
-          ease: STUDIO_EASE.spring,
-          clearProps: "transform",
-        })
-    }
+    animateShutterPulse(submitBtnRef.current)
     onSubmitGenerate()
   }
 
@@ -401,6 +432,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
 
   return (
     <div
+      ref={composerRootRef}
       onDragOver={(e) => {
         e.preventDefault()
         setIsDragging(true)

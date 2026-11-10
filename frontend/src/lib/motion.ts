@@ -1,11 +1,10 @@
-import React, { useEffect, useRef, useState } from "react"
+import React, { useRef } from "react"
 import gsap from "gsap"
 import { Flip } from "gsap/Flip"
+import { ScrollToPlugin } from "gsap/ScrollToPlugin"
 import { useGSAP } from "@gsap/react"
 
-gsap.registerPlugin(useGSAP, Flip)
-
-export { gsap, Flip, useGSAP }
+gsap.registerPlugin(useGSAP, Flip, ScrollToPlugin)
 
 export const STUDIO_EASE = {
   out: "power3.out",
@@ -15,13 +14,45 @@ export const STUDIO_EASE = {
   softSpring: "back.out(1.2)",
 } as const
 
+// Project-wide GSAP defaults (per official gsap-core skill)
+gsap.defaults({
+  duration: 0.28,
+  ease: STUDIO_EASE.out,
+})
+
+// Standard media query conditions for gsap.matchMedia() (per official gsap-core skill)
+export const STUDIO_MEDIA = {
+  motionOk: "(prefers-reduced-motion: no-preference)",
+  reduceMotion: "(prefers-reduced-motion: reduce)",
+  desktop: "(min-width: 768px)",
+  mobile: "(max-width: 767px)",
+} as const
+
+// Reusable curried gsap.utils functions (per official gsap-utils skill)
+export const clampPercent = gsap.utils.clamp(0, 100)
+export const clampZoom = gsap.utils.clamp(0.25, 8)
+
+export { gsap, Flip, ScrollToPlugin, useGSAP }
+
 export function prefersReducedMotion(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  return window.matchMedia(STUDIO_MEDIA.reduceMotion).matches
+}
+
+function formatAnimatedValue(
+  val: number,
+  decimals: number,
+  prefix: string,
+  suffix: string
+): string {
+  const formatted =
+    decimals > 0 ? val.toFixed(decimals) : Math.round(val).toLocaleString()
+  return `${prefix}${formatted}${suffix}`
 }
 
 /**
- * Smoothly interpolates a numeric telemetry value like a precision instrument meter.
+ * Smoothly interpolates a numeric telemetry value directly on the DOM text node
+ * via useGSAP — zero 60fps React re-renders and automatic unmount cleanup.
  */
 export const AnimatedNumber: React.FC<{
   value: number
@@ -38,34 +69,43 @@ export const AnimatedNumber: React.FC<{
   duration = 0.55,
   className,
 }) => {
-  const [display, setDisplay] = useState<number>(value)
+  const spanRef = useRef<HTMLSpanElement | null>(null)
   const trackerRef = useRef<{ v: number }>({ v: value })
 
-  useEffect(() => {
-    if (prefersReducedMotion()) {
-      trackerRef.current.v = value
-      setDisplay(value)
-      return
-    }
-    const tween = gsap.to(trackerRef.current, {
-      v: value,
-      duration,
-      ease: STUDIO_EASE.out,
-      onUpdate: () => {
-        setDisplay(trackerRef.current.v)
-      },
-    })
-    return () => {
-      tween.kill()
-    }
-  }, [value, duration])
+  useGSAP(
+    () => {
+      const el = spanRef.current
+      if (!el) return
 
-  const formatted =
-    decimals > 0 ? display.toFixed(decimals) : Math.round(display).toLocaleString()
+      if (prefersReducedMotion()) {
+        trackerRef.current.v = value
+        el.textContent = formatAnimatedValue(value, decimals, prefix, suffix)
+        return
+      }
+
+      gsap.to(trackerRef.current, {
+        v: value,
+        duration,
+        ease: STUDIO_EASE.out,
+        overwrite: "auto",
+        onUpdate: () => {
+          if (spanRef.current) {
+            spanRef.current.textContent = formatAnimatedValue(
+              trackerRef.current.v,
+              decimals,
+              prefix,
+              suffix
+            )
+          }
+        },
+      })
+    },
+    { dependencies: [value, decimals, prefix, suffix, duration] }
+  )
 
   return React.createElement(
     "span",
-    { className },
-    `${prefix}${formatted}${suffix}`
+    { ref: spanRef, className },
+    formatAnimatedValue(trackerRef.current.v, decimals, prefix, suffix)
   )
 }

@@ -9,7 +9,12 @@ import React, {
 } from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { createPortal } from "react-dom"
-import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
+import {
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 interface PopoverContextValue {
@@ -141,7 +146,7 @@ export function PopoverContent({
     left = Math.max(pad, Math.min(vw - pop.width - pad, left))
 
     setCoords({ top, left, side: actualSide, ready: true })
-  }, [ctx?.open, align, sideOffset, preferredSide])
+  }, [ctx?.open, ctx?.triggerRef, align, sideOffset, preferredSide])
 
   useLayoutEffect(() => {
     if (!ctx?.open) {
@@ -160,39 +165,39 @@ export function PopoverContent({
     }
   }, [ctx?.open, updatePosition])
 
-  useLayoutEffect(() => {
-    if (!ctx?.open || !coords.ready || !contentRef.current) return
-    if (animatedOpenRef.current) return
-    animatedOpenRef.current = true
+  useGSAP(
+    () => {
+      if (!ctx?.open || !coords.ready || !contentRef.current) return
+      if (animatedOpenRef.current) return
+      animatedOpenRef.current = true
 
-    const el = contentRef.current
-    if (prefersReducedMotion()) {
-      gsap.set(el, { opacity: 1 })
-      return
-    }
-
-    const tween = gsap.fromTo(
-      el,
-      {
-        opacity: 0,
-        y: coords.side === "top" ? 6 : -6,
-        scale: 0.965,
-        transformOrigin:
-          coords.side === "top" ? "bottom center" : "top center",
-      },
-      {
-        opacity: 1,
-        y: 0,
-        scale: 1,
-        duration: 0.22,
-        ease: STUDIO_EASE.expo,
-        clearProps: "transform",
+      const el = contentRef.current
+      if (prefersReducedMotion()) {
+        gsap.set(el, { autoAlpha: 1 })
+        return
       }
-    )
-    return () => {
-      tween.kill()
-    }
-  }, [ctx?.open, coords.ready, coords.side])
+
+      gsap.fromTo(
+        el,
+        {
+          autoAlpha: 0,
+          y: coords.side === "top" ? 6 : -6,
+          scale: 0.965,
+          transformOrigin:
+            coords.side === "top" ? "bottom center" : "top center",
+        },
+        {
+          autoAlpha: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.22,
+          ease: STUDIO_EASE.expo,
+          clearProps: "transform,visibility",
+        }
+      )
+    },
+    { scope: contentRef, dependencies: [ctx?.open, coords.ready, coords.side] }
+  )
 
   useEffect(() => {
     if (!ctx?.open) return

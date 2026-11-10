@@ -601,7 +601,7 @@ func TestOrganizeProjectAlbumsAndOrphanCacheCleanup(t *testing.T) {
 	ts := httptest.NewServer(appSrv.Handler())
 	defer ts.Close()
 
-	// 1. Verify /api/info reports v3.1.0 and built-in studio recipes
+	// 1. Verify /api/info reports v3.1.1 and built-in studio recipes
 	infoResp, err := http.Get(ts.URL + "/api/info")
 	if err != nil || infoResp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/info failed: %v", err)
@@ -609,8 +609,8 @@ func TestOrganizeProjectAlbumsAndOrphanCacheCleanup(t *testing.T) {
 	var infoBody map[string]any
 	_ = json.NewDecoder(infoResp.Body).Decode(&infoBody)
 	infoResp.Body.Close()
-	if infoBody["version"] != "v3.1.0" {
-		t.Fatalf("expected version v3.1.0, got %v", infoBody["version"])
+	if infoBody["version"] != "v3.1.1" {
+		t.Fatalf("expected version v3.1.1, got %v", infoBody["version"])
 	}
 
 	// 2. Organize rec-proj-a into project "proj_alpha" with note & star

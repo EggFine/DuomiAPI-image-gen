@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import React, { useEffect, useMemo, useRef, useState } from "react"
 import {
   Activity,
   Archive,
@@ -66,8 +66,7 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
   const [cleaningRefs, setCleaningRefs] = useState<boolean>(false)
 
   const rootRef = useRef<HTMLDivElement | null>(null)
-  const genBarRef = useRef<HTMLDivElement | null>(null)
-  const refBarRef = useRef<HTMLDivElement | null>(null)
+  const storageTrackRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     const timer = setInterval(
@@ -179,46 +178,56 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
   const targetGenWidth = `${Math.max(genBytes > 0 ? 4 : 0, genPct)}%`
   const targetRefWidth = `${Math.max(refBytes > 0 ? 4 : 0, refPct)}%`
 
+  // Staggered card & model bar entrance via scoped useGSAP
   useGSAP(
     () => {
       if (prefersReducedMotion()) return
       gsap.fromTo(
         ".telemetry-stagger-card",
-        { opacity: 0, y: 12 },
+        { autoAlpha: 0, y: 12 },
         {
-          opacity: 1,
+          autoAlpha: 1,
           y: 0,
           duration: 0.32,
           stagger: 0.045,
           ease: STUDIO_EASE.out,
-          clearProps: "transform,opacity",
+          clearProps: "transform,opacity,visibility",
+        }
+      )
+      gsap.fromTo(
+        ".model-share-bar",
+        { scaleX: 0, transformOrigin: "left center" },
+        {
+          scaleX: 1,
+          duration: 0.55,
+          stagger: 0.05,
+          ease: STUDIO_EASE.expo,
+          clearProps: "transform",
         }
       )
     },
     { scope: rootRef }
   )
 
-  useLayoutEffect(() => {
-    if (prefersReducedMotion()) {
-      if (genBarRef.current) genBarRef.current.style.width = targetGenWidth
-      if (refBarRef.current) refBarRef.current.style.width = targetRefWidth
-      return
-    }
-    if (genBarRef.current) {
-      gsap.to(genBarRef.current, {
-        width: targetGenWidth,
-        duration: 0.65,
-        ease: STUDIO_EASE.expo,
-      })
-    }
-    if (refBarRef.current) {
-      gsap.to(refBarRef.current, {
-        width: targetRefWidth,
-        duration: 0.65,
-        ease: STUDIO_EASE.expo,
-      })
-    }
-  }, [targetGenWidth, targetRefWidth])
+  // Compositor-only scaleX sweep on proportional storage bar (avoids width layout thrashing per gsap-performance)
+  useGSAP(
+    () => {
+      const track = storageTrackRef.current
+      if (!track || prefersReducedMotion()) return
+      gsap.fromTo(
+        track,
+        { scaleX: 0, transformOrigin: "left center" },
+        {
+          scaleX: 1,
+          duration: 0.62,
+          ease: STUDIO_EASE.expo,
+          overwrite: "auto",
+          clearProps: "transform",
+        }
+      )
+    },
+    { scope: rootRef, dependencies: [targetGenWidth, targetRefWidth] }
+  )
 
   return (
     <div
@@ -325,21 +334,21 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
               </Badge>
             </div>
 
-            {/* Visual Proportional Bar */}
+            {/* Visual Proportional Bar (Compositor scaleX via storageTrackRef) */}
             <div className="space-y-2">
-              <div className="h-3 w-full overflow-hidden rounded-full bg-secondary flex">
-                <div
-                  ref={genBarRef}
-                  className="bg-emerald-500"
-                  style={{ width: "0%" }}
-                  title={`生成作品原图: ${formatBytes(genBytes)}`}
-                />
-                <div
-                  ref={refBarRef}
-                  className="bg-amber-500"
-                  style={{ width: "0%" }}
-                  title={`参考图本地缓存: ${formatBytes(refBytes)}`}
-                />
+              <div className="h-3 w-full overflow-hidden rounded-full bg-secondary">
+                <div ref={storageTrackRef} className="flex h-full w-full">
+                  <div
+                    className="bg-emerald-500 h-full"
+                    style={{ width: targetGenWidth }}
+                    title={`生成作品原图: ${formatBytes(genBytes)}`}
+                  />
+                  <div
+                    className="bg-amber-500 h-full"
+                    style={{ width: targetRefWidth }}
+                    title={`参考图本地缓存: ${formatBytes(refBytes)}`}
+                  />
+                </div>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5 tabular-nums">
@@ -464,7 +473,7 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
                       </div>
                       <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
                         <div
-                          className="h-full rounded-full bg-amber-500"
+                          className="model-share-bar h-full rounded-full bg-amber-500"
                           style={{ width: `${pct}%` }}
                         />
                       </div>

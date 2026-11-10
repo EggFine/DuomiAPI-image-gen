@@ -1,7 +1,12 @@
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
-import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
+import {
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 const Dialog = DialogPrimitive.Root
@@ -23,18 +28,23 @@ const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => {
   const localRef = React.useRef<HTMLDivElement | null>(null)
 
-  React.useLayoutEffect(() => {
-    const el = localRef.current
-    if (!el || prefersReducedMotion()) return
-    const tween = gsap.fromTo(
-      el,
-      { opacity: 0 },
-      { opacity: 1, duration: 0.2, ease: "power2.out" }
-    )
-    return () => {
-      tween.kill()
-    }
-  }, [])
+  useGSAP(
+    () => {
+      const el = localRef.current
+      if (!el || prefersReducedMotion()) return
+      gsap.fromTo(
+        el,
+        { autoAlpha: 0 },
+        {
+          autoAlpha: 1,
+          duration: 0.2,
+          ease: "power2.out",
+          clearProps: "visibility",
+        }
+      )
+    },
+    { scope: localRef }
+  )
 
   return (
     <DialogPrimitive.Overlay
@@ -55,25 +65,25 @@ const DialogContent = React.forwardRef<
 >(({ className, children, ...props }, ref) => {
   const localRef = React.useRef<HTMLDivElement | null>(null)
 
-  React.useLayoutEffect(() => {
-    const el = localRef.current
-    if (!el || prefersReducedMotion()) return
-    const tween = gsap.fromTo(
-      el,
-      { opacity: 0, scale: 0.965, y: 10 },
-      {
-        opacity: 1,
-        scale: 1,
-        y: 0,
-        duration: 0.26,
-        ease: STUDIO_EASE.expo,
-        clearProps: "transform",
-      }
-    )
-    return () => {
-      tween.kill()
-    }
-  }, [])
+  useGSAP(
+    () => {
+      const el = localRef.current
+      if (!el || prefersReducedMotion()) return
+      gsap.fromTo(
+        el,
+        { autoAlpha: 0, scale: 0.965, y: 10 },
+        {
+          autoAlpha: 1,
+          scale: 1,
+          y: 0,
+          duration: 0.26,
+          ease: STUDIO_EASE.expo,
+          clearProps: "transform,visibility",
+        }
+      )
+    },
+    { scope: localRef }
+  )
 
   return (
     <DialogPortal>

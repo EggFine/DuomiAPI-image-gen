@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Check,
   ChevronLeft,
@@ -29,7 +29,14 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog"
-import { gsap, prefersReducedMotion, STUDIO_EASE } from "@/lib/motion"
+import {
+  clampPercent,
+  clampZoom,
+  gsap,
+  prefersReducedMotion,
+  STUDIO_EASE,
+  useGSAP,
+} from "@/lib/motion"
 import {
   copyImageToClipboard,
   formatBytes,
@@ -92,19 +99,23 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
   const [inspectorOpen, setInspectorOpen] = useState<boolean>(true)
 
   const [zoom, setZoom] = useState<number>(1)
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
   const [dragging, setDragging] = useState<boolean>(false)
-  const [dragOrigin, setDragOrigin] = useState<{ x: number; y: number }>({
-    x: 0,
-    y: 0,
-  })
+  const panRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
+  const dragOriginRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 })
 
-  // Interactive Curtain Wipe state (0 - 100%)
-  const curtainBoxRef = useRef<HTMLDivElement | null>(null)
-  const curtainTweenRef = useRef<gsap.core.Tween | null>(null)
+  // Scoped GSAP Stage & Zero-Re-Render Refs
+  const stageRootRef = useRef<HTMLDivElement | null>(null)
   const stageContentRef = useRef<HTMLDivElement | null>(null)
-  const [curtainPos, setCurtainPos] = useState<number>(50)
-  const [draggingCurtain, setDraggingCurtain] = useState<boolean>(false)
+  const curtainBoxRef = useRef<HTMLDivElement | null>(null)
+  const draggingCurtainRef = useRef<boolean>(false)
+  const loupeImgRef = useRef<HTMLImageElement | null>(null)
+  const sideRefImgRef = useRef<HTMLImageElement | null>(null)
+  const sideGenImgRef = useRef<HTMLImageElement | null>(null)
+  const quickPanFnsRef = useRef<
+    Array<{ xTo: gsap.QuickToFunc; yTo: gsap.QuickToFunc }>
+  >([])
+
+  const { contextSafe } = useGSAP({ scope: stageRootRef })
 
   const [activeRefIdx, setActiveRefIdx] = useState<number>(0)
   const [showRawJson, setShowRawJson] = useState<boolean>(false)
@@ -115,6 +126,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
   const [noteDraft, setNoteDraft] = useState<string>("")
   const [savingNote, setSavingNote] = useState<boolean>(false)
 
+  const recordId = record?.id
+  const recordNote = record?.note
   const imgs = record?.images || []
   const activeImg = imgs[imageIndex] || imgs[0]
 
@@ -143,62 +156,136 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 
   // Sync state when record / initialCompare changes
   useEffect(() => {
+    panRef.current = { x: 0, y: 0 }
     setZoom(1)
-    setPan({ x: 0, y: 0 })
     setNaturalDim(null)
     setActiveRefIdx(0)
-    setCurtainPos(50)
-    setNoteDraft(record?.note || "")
+    setNoteDraft(recordNote || "")
 
     if (initialCompare && validRefSources.length > 0) {
       setViewMode("curtain")
     } else if (!validRefSources.length) {
       setViewMode("single")
     }
-  }, [record?.id, imageIndex, initialCompare, validRefSources.length, record?.note])
+  }, [recordId, recordNote, imageIndex, initialCompare, validRefSources.length])
 
-  // Signature tactile Curtain Wipe intro sweep (34% -> 50%)
-  useEffect(() => {
-    if (!record || viewMode !== "curtain" || validRefSources.length === 0) return
-    if (prefersReducedMotion()) {
-      setCurtainPos(50)
-      return
-    }
-    const proxy = { pos: 34 }
-    setCurtainPos(34)
-    const tween = gsap.to(proxy, {
-      pos: 50,
-      duration: 0.56,
-      ease: STUDIO_EASE.expo,
-      onUpdate: () => {
-        setCurtainPos(proxy.pos)
-      },
-    })
-    curtainTweenRef.current = tween
-    return () => {
-      tween.kill()
-    }
-  }, [record?.id, viewMode, activeRefIdx, validRefSources.length])
-
-  // Smooth stage cross-settle when switching photos or view modes
-  useLayoutEffect(() => {
-    const el = stageContentRef.current
-    if (!el || !record || prefersReducedMotion()) return
-    const tween = gsap.fromTo(
-      el,
-      { opacity: 0.42, scale: 0.986 },
-      {
-        opacity: 1,
-        scale: 1,
-        duration: 0.22,
-        ease: STUDIO_EASE.out,
-        clearProps: "transform,opacity",
+  // 1. Signature tactile Curtain Wipe intro sweep (34% -> 50%) via CSS variable (--curtain-pos) — zero React re-renders
+  useGSAP(
+    () => {
+      const el = curtainBoxRef.current
+      if (!el || !recordId || viewMode !== "curtain" || validRefSources.length === 0) {
+        return
       }
-    )
-    return () => {
-      tween.kill()
+      if (prefersReducedMotion()) {
+        gsap.set(el, { "--curtain-pos": "50%" })
+        return
+      }
+      gsap.fromTo(
+        el,
+        { "--curtain-pos": "34%" },
+        {
+          "--curtain-pos": "50%",
+          duration: 0.56,
+          ease: STUDIO_EASE.expo,
+          overwrite: "auto",
+        }
+      )
+    },
+    {
+      scope: stageRootRef,
+      dependencies: [recordId, viewMode, activeRefIdx, validRefSources.length],
     }
-  }, [record?.id, imageIndex, viewMode])
+  )
+
+  // 2. Smooth stage cross-settle when switching photos or view modes
+  useGSAP(
+    () => {
+      const el = stageContentRef.current
+      if (!el || !recordId || prefersReducedMotion()) return
+      gsap.fromTo(
+        el,
+        { autoAlpha: 0.42, scale: 0.986 },
+        {
+          autoAlpha: 1,
+          scale: 1,
+          duration: 0.22,
+          ease: STUDIO_EASE.out,
+          clearProps: "transform,opacity,visibility",
+        }
+      )
+    },
+    {
+      scope: stageRootRef,
+      dependencies: [recordId, imageIndex, viewMode],
+    }
+  )
+
+  // 3. Compositor-only Zoom & reusable gsap.quickTo() Pan followers (zero 60fps setState during drag)
+  useGSAP(
+    () => {
+      const targets = [
+        loupeImgRef.current,
+        sideRefImgRef.current,
+        sideGenImgRef.current,
+      ].filter((el): el is HTMLImageElement => Boolean(el))
+
+      if (targets.length === 0) {
+        quickPanFnsRef.current = []
+        return
+      }
+
+      if (prefersReducedMotion()) {
+        gsap.set(targets, {
+          x: panRef.current.x,
+          y: panRef.current.y,
+          scale: zoom,
+        })
+      } else {
+        gsap.to(targets, {
+          x: panRef.current.x,
+          y: panRef.current.y,
+          scale: zoom,
+          duration: 0.2,
+          ease: STUDIO_EASE.out,
+          overwrite: "auto",
+        })
+      }
+
+      quickPanFnsRef.current = targets.map((el) => ({
+        xTo: gsap.quickTo(el, "x", { duration: 0.12, ease: "power3.out" }),
+        yTo: gsap.quickTo(el, "y", { duration: 0.12, ease: "power3.out" }),
+      }))
+    },
+    {
+      scope: stageRootRef,
+      dependencies: [zoom, viewMode, recordId, imageIndex],
+    }
+  )
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const applyZoomAndResetPan = useCallback(
+    contextSafe((nextZoom: number) => {
+      const clamped = clampZoom(Number(nextZoom.toFixed(2)))
+      panRef.current = { x: 0, y: 0 }
+      setZoom(clamped)
+      const targets = [
+        loupeImgRef.current,
+        sideRefImgRef.current,
+        sideGenImgRef.current,
+      ].filter((el): el is HTMLImageElement => Boolean(el))
+      if (targets.length > 0) {
+        gsap.to(targets, {
+          x: 0,
+          y: 0,
+          scale: clamped,
+          duration: prefersReducedMotion() ? 0 : 0.22,
+          ease: STUDIO_EASE.out,
+          overwrite: "auto",
+        })
+      }
+    }),
+    [contextSafe]
+  )
 
   // Keyboard navigation
   useEffect(() => {
@@ -222,12 +309,15 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
           onNavigateRecord(1)
         }
       } else if (e.key === "+" || e.key === "=") {
-        setZoom((z) => Math.min(8, Number((z + 0.25).toFixed(2))))
+        setZoom((z) => clampZoom(Number((z + 0.25).toFixed(2))))
       } else if (e.key === "-") {
-        setZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))))
+        setZoom((z) => {
+          const next = clampZoom(Number((z - 0.25).toFixed(2)))
+          if (next <= 1) panRef.current = { x: 0, y: 0 }
+          return next
+        })
       } else if (e.key === "0") {
-        setZoom(1)
-        setPan({ x: 0, y: 0 })
+        applyZoomAndResetPan(1)
       } else if (e.key.toLowerCase() === "c" && validRefSources.length > 0) {
         setViewMode((m) => (m === "curtain" ? "single" : "curtain"))
       }
@@ -243,6 +333,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     hasPrevRecord,
     hasNextRecord,
     validRefSources.length,
+    applyZoomAndResetPan,
   ])
 
   if (!record || !activeImg) return null
@@ -260,8 +351,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     e.preventDefault()
     const delta = e.deltaY < 0 ? 0.2 : -0.2
     setZoom((prev) => {
-      const next = Math.max(0.25, Math.min(8, Number((prev + delta).toFixed(2))))
-      if (next <= 1) setPan({ x: 0, y: 0 })
+      const next = clampZoom(Number((prev + delta).toFixed(2)))
+      if (next <= 1) panRef.current = { x: 0, y: 0 }
       return next
     })
   }
@@ -270,23 +361,56 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     if (viewMode === "curtain" || zoom <= 1) return
     e.preventDefault()
     setDragging(true)
-    setDragOrigin({ x: e.clientX - pan.x, y: e.clientY - pan.y })
+    dragOriginRef.current = {
+      x: e.clientX - panRef.current.x,
+      y: e.clientY - panRef.current.y,
+    }
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!dragging) return
-    setPan({ x: e.clientX - dragOrigin.x, y: e.clientY - dragOrigin.y })
+    const nextX = e.clientX - dragOriginRef.current.x
+    const nextY = e.clientY - dragOriginRef.current.y
+    panRef.current = { x: nextX, y: nextY }
+    if (prefersReducedMotion()) {
+      const targets = [
+        loupeImgRef.current,
+        sideRefImgRef.current,
+        sideGenImgRef.current,
+      ].filter((el): el is HTMLImageElement => Boolean(el))
+      if (targets.length > 0) {
+        gsap.set(targets, { x: nextX, y: nextY })
+      }
+      return
+    }
+    for (const fn of quickPanFnsRef.current) {
+      fn.xTo(nextX)
+      fn.yTo(nextY)
+    }
   }
 
   const handleMouseUp = () => setDragging(false)
 
-  const updateCurtainFromClientX = (clientX: number) => {
-    const el = curtainBoxRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const pct = ((clientX - rect.left) / Math.max(1, rect.width)) * 100
-    setCurtainPos(Math.max(0, Math.min(100, pct)))
-  }
+  const updateCurtainFromClientX = contextSafe(
+    (clientX: number, immediate = false) => {
+      const el = curtainBoxRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const pct = clampPercent(
+        ((clientX - rect.left) / Math.max(1, rect.width)) * 100
+      )
+      if (immediate || prefersReducedMotion()) {
+        gsap.set(el, { "--curtain-pos": `${pct}%`, overwrite: "auto" })
+      } else {
+        gsap.to(el, {
+          "--curtain-pos": `${pct}%`,
+          duration: 0.08,
+          ease: "power2.out",
+          overwrite: "auto",
+        })
+      }
+    }
+  )
 
   const handleCopyImage = async () => {
     setCopyingImg(true)
@@ -424,7 +548,11 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   size="icon"
                   className="h-6 w-6 text-zinc-300 hover:text-white hover:bg-zinc-800"
                   onClick={() =>
-                    setZoom((z) => Math.max(0.25, Number((z - 0.25).toFixed(2))))
+                    setZoom((z) => {
+                      const next = clampZoom(Number((z - 0.25).toFixed(2)))
+                      if (next <= 1) panRef.current = { x: 0, y: 0 }
+                      return next
+                    })
                   }
                 >
                   <ZoomOut className="h-3.5 w-3.5" />
@@ -438,17 +566,14 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   size="icon"
                   className="h-6 w-6 text-zinc-300 hover:text-white hover:bg-zinc-800"
                   onClick={() =>
-                    setZoom((z) => Math.min(8, Number((z + 0.25).toFixed(2))))
+                    setZoom((z) => clampZoom(Number((z + 0.25).toFixed(2))))
                   }
                 >
                   <ZoomIn className="h-3.5 w-3.5" />
                 </Button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setZoom(zoom === 2 ? 1 : 2)
-                    setPan({ x: 0, y: 0 })
-                  }}
+                  onClick={() => applyZoomAndResetPan(zoom === 2 ? 1 : 2)}
                   className="px-1.5 text-[10px] font-mono text-zinc-400 hover:text-white cursor-pointer"
                   title="快速切换 200% 细节放大与适配视图"
                 >
@@ -459,10 +584,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6 text-zinc-300 hover:text-white hover:bg-zinc-800"
-                  onClick={() => {
-                    setZoom(1)
-                    setPan({ x: 0, y: 0 })
-                  }}
+                  onClick={() => applyZoomAndResetPan(1)}
                   title="复位视图 (快捷键 0)"
                 >
                   <Maximize className="h-3 w-3" />
@@ -543,6 +665,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 
             {/* Viewport Stage */}
             <div
+              ref={stageRootRef}
               onWheel={handleWheel}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
@@ -562,20 +685,27 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                 ref={stageContentRef}
                 className="flex h-full w-full items-center justify-center"
               >
-                {/* MODE 1: Interactive Curtain Wipe Slider */}
+                {/* MODE 1: Interactive Curtain Wipe Slider (Zero-Re-Render CSS Custom Property --curtain-pos) */}
                 {viewMode === "curtain" && activeRef ? (
                   <div
                     ref={curtainBoxRef}
+                    style={{ "--curtain-pos": "50%" } as React.CSSProperties}
                     onPointerDown={(e) => {
-                      curtainTweenRef.current?.kill()
                       e.currentTarget.setPointerCapture(e.pointerId)
-                      setDraggingCurtain(true)
-                      updateCurtainFromClientX(e.clientX)
+                      draggingCurtainRef.current = true
+                      updateCurtainFromClientX(e.clientX, true)
                     }}
                     onPointerMove={(e) => {
-                      if (draggingCurtain) updateCurtainFromClientX(e.clientX)
+                      if (draggingCurtainRef.current) {
+                        updateCurtainFromClientX(e.clientX, false)
+                      }
                     }}
-                    onPointerUp={() => setDraggingCurtain(false)}
+                    onPointerUp={() => {
+                      draggingCurtainRef.current = false
+                    }}
+                    onPointerCancel={() => {
+                      draggingCurtainRef.current = false
+                    }}
                     className="relative inline-flex max-h-[92%] max-w-[92%] items-center justify-center rounded-lg overflow-hidden shadow-2xl ring-1 ring-white/15 cursor-ew-resize touch-none"
                   >
                     {/* Base Layer: Generated Artwork (AFTER) */}
@@ -596,7 +726,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     <div
                       className="absolute inset-0 overflow-hidden bg-zinc-950"
                       style={{
-                        clipPath: `inset(0 ${100 - curtainPos}% 0 0)`,
+                        clipPath:
+                          "inset(0 calc(100% - var(--curtain-pos, 50%)) 0 0)",
                       }}
                     >
                       <img
@@ -618,7 +749,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     {/* Vertical Wipe Line & Handle */}
                     <div
                       className="pointer-events-none absolute top-0 bottom-0 w-[2px] bg-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.8)]"
-                      style={{ left: `${curtainPos}%` }}
+                      style={{ left: "var(--curtain-pos, 50%)" }}
                     >
                       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex h-9 w-9 items-center justify-center rounded-full bg-amber-500 text-zinc-950 shadow-xl ring-2 ring-white">
                         <MoveHorizontal className="h-4 w-4" />
@@ -633,14 +764,11 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                         参考图 @图{activeRefIdx + 1}
                       </span>
                       <img
+                        ref={sideRefImgRef}
                         src={activeRef.src}
                         alt="参考图"
                         draggable={false}
-                        style={{
-                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                          transition: dragging ? "none" : "transform 120ms ease-out",
-                        }}
-                        className="max-h-full max-w-full object-contain rounded-md shadow-xl"
+                        className="max-h-full max-w-full object-contain rounded-md shadow-xl will-change-transform"
                       />
                     </div>
                     <div className="relative flex flex-col items-center justify-center p-4 overflow-hidden">
@@ -648,6 +776,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                         生成结果 ({displayW}×{displayH})
                       </span>
                       <img
+                        ref={sideGenImgRef}
                         src={imgSrc}
                         alt="生成结果"
                         draggable={false}
@@ -657,17 +786,14 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                             h: e.currentTarget.naturalHeight,
                           })
                         }
-                        style={{
-                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                          transition: dragging ? "none" : "transform 120ms ease-out",
-                        }}
-                        className="max-h-full max-w-full object-contain rounded-md shadow-xl"
+                        className="max-h-full max-w-full object-contain rounded-md shadow-xl will-change-transform"
                       />
                     </div>
                   </div>
                 ) : (
                   /* MODE 3: Single Artwork Loupe */
                   <img
+                    ref={loupeImgRef}
                     src={imgSrc}
                     alt={record.prompt || "Generated Image"}
                     draggable={false}
@@ -677,11 +803,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                         h: e.currentTarget.naturalHeight,
                       })
                     }
-                    style={{
-                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                      transition: dragging ? "none" : "transform 120ms ease-out",
-                    }}
-                    className="max-h-[92%] max-w-[92%] object-contain rounded-md shadow-2xl"
+                    className="max-h-[92%] max-w-[92%] object-contain rounded-md shadow-2xl will-change-transform"
                   />
                 )}
               </div>
