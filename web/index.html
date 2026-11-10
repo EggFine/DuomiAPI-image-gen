@@ -102,37 +102,31 @@
         </div>
       </section>
 
-      <!-- Size / Aspect Ratio -->
+      <!-- Step 1 & Step 2: Aspect Ratio -> Corresponding Preset Sizes -->
       <section class="form-section">
         <div class="section-header">
-          <label class="section-label">尺寸与画幅比例 (Size)</label>
-          <span id="current-size-label" class="section-hint">auto</span>
+          <label class="section-label">1. 选择画幅比例 (Aspect Ratio)</label>
+          <span id="current-ratio-label" class="section-hint">1:1 方图</span>
         </div>
-        <div id="ratio-pills-container" class="ratio-grid">
-          <button type="button" class="ratio-pill active" data-size="auto">auto 自动</button>
-          <button type="button" class="ratio-pill" data-size="1:1">1:1 方图</button>
-          <button type="button" class="ratio-pill" data-size="16:9">16:9 横屏</button>
-          <button type="button" class="ratio-pill" data-size="9:16">9:16 竖屏</button>
-          <button type="button" class="ratio-pill" data-size="3:2">3:2 经典横</button>
-          <button type="button" class="ratio-pill" data-size="2:3">2:3 经典竖</button>
-          <button type="button" class="ratio-pill" data-size="4:3">4:3 标准横</button>
-          <button type="button" class="ratio-pill" data-size="3:4">3:4 标准竖</button>
-          <button type="button" class="ratio-pill" data-size="5:4">5:4 画框</button>
-          <button type="button" class="ratio-pill" data-size="4:5">4:5 社交竖</button>
-          <button type="button" class="ratio-pill" data-size="2:1">2:1 宽幅</button>
-          <button type="button" class="ratio-pill" data-size="1:2">1:2 长图</button>
-          <button type="button" class="ratio-pill" data-size="1024x1024">1024×1024</button>
-          <button type="button" class="ratio-pill" data-size="1792x1024">1792×1024</button>
-          <button type="button" class="ratio-pill" data-size="1024x1792">1024×1792</button>
-          <button type="button" class="ratio-pill" data-size="3840x2160">3840×2160 (4K)</button>
+        <div id="ratio-pills-container" class="ratio-grid"></div>
+
+        <div class="section-header" style="margin-top:6px;">
+          <label class="section-label">2. 选择该比例对应尺寸 (Size / 分辨率)</label>
+          <span id="current-size-label" class="size-value-badge">1024x1024</span>
         </div>
-        <div class="custom-size-box">
-          <input id="input-custom-w" type="number" min="16" max="3840" step="16" class="input-control" placeholder="宽 (16倍数)" />
-          <span class="section-hint">×</span>
-          <input id="input-custom-h" type="number" min="16" max="3840" step="16" class="input-control" placeholder="高 (16倍数)" />
-          <button id="btn-apply-custom-size" type="button" class="btn btn-secondary">应用宽高</button>
+        <div id="size-presets-container" class="size-presets-list"></div>
+
+        <div id="custom-size-panel" class="custom-size-panel" hidden>
+          <div class="custom-size-box">
+            <input id="input-custom-w" type="number" min="16" max="3840" step="16" class="input-control" placeholder="宽 (16倍数)" />
+            <span class="section-hint">×</span>
+            <input id="input-custom-h" type="number" min="16" max="3840" step="16" class="input-control" placeholder="高 (16倍数)" />
+            <button id="btn-apply-custom-size" type="button" class="btn btn-secondary">应用宽高</button>
+          </div>
+          <span id="custom-size-hint" class="section-hint">
+            API 要求：宽高均须为 16 的倍数，单边范围 [16, 3840]，总像素范围 [655,360 ~ 8,294,400]
+          </span>
         </div>
-        <span id="custom-size-hint" class="section-hint">自定义宽高需为 16 的倍数，单边 [16, 3840]，总像素 [655360, 8294400]</span>
       </section>
 
       <!-- Quality & Background & Count -->

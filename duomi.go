@@ -81,6 +81,220 @@ func NewDuomiClient() *DuomiClient {
 	}
 }
 
+// SizePresetItem represents a specific resolution option under an aspect ratio.
+type SizePresetItem struct {
+	Value  string `json:"value"`  // value sent in API `size` field, e.g. "1024x1024" or "16:9"
+	Tier   string `json:"tier"`   // "1k", "1.5k", "2k", "4k", "ratio", "auto"
+	Label  string `json:"label"`  // e.g. "1K 标准"
+	Detail string `json:"detail"` // e.g. "1024×1024 (105万像素)"
+}
+
+// RatioPresetGroup represents an aspect ratio and all its compliant size presets.
+type RatioPresetGroup struct {
+	Ratio       string           `json:"ratio"`        // e.g. "1:1", "16:9", "auto"
+	Name        string           `json:"name"`         // e.g. "1:1 方图"
+	AspectW     int              `json:"aspect_w"`     // width ratio unit
+	AspectH     int              `json:"aspect_h"`     // height ratio unit
+	DefaultSize string           `json:"default_size"` // default size when this ratio is chosen
+	Sizes       []SizePresetItem `json:"sizes"`
+}
+
+// GetRatioPresets returns all aspect ratios and their corresponding 1K/2K/4K resolution presets.
+// Every single WxH preset strictly satisfies DuomiAPI constraints:
+// - 16 <= W, H <= 3840
+// - W % 16 == 0 and H % 16 == 0
+// - 655,360 <= W * H <= 8,294,400
+func GetRatioPresets() []RatioPresetGroup {
+	return []RatioPresetGroup{
+		{
+			Ratio:       "auto",
+			Name:        "auto 自动",
+			AspectW:     0,
+			AspectH:     0,
+			DefaultSize: "auto",
+			Sizes: []SizePresetItem{
+				{Value: "auto", Tier: "auto", Label: "自动尺寸 (auto)", Detail: "由模型根据提示词自动决定画幅与分辨率"},
+			},
+		},
+		{
+			Ratio:       "1:1",
+			Name:        "1:1 方图",
+			AspectW:     1,
+			AspectH:     1,
+			DefaultSize: "1024x1024",
+			Sizes: []SizePresetItem{
+				{Value: "1024x1024", Tier: "1k", Label: "1K 标准", Detail: "1024×1024 · 105万像素"},
+				{Value: "1536x1536", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1536×1536 · 236万像素"},
+				{Value: "2048x2048", Tier: "2k", Label: "2K 高清", Detail: "2048×2048 · 419万像素"},
+				{Value: "2880x2880", Tier: "4k", Label: "4K 极限", Detail: "2880×2880 · 829万像素(预算上限)"},
+				{Value: "1:1", Tier: "ratio", Label: "仅传比例 (1:1)", Detail: "直接传 1:1 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "16:9",
+			Name:        "16:9 横屏",
+			AspectW:     16,
+			AspectH:     9,
+			DefaultSize: "1280x720",
+			Sizes: []SizePresetItem{
+				{Value: "1280x720", Tier: "1k", Label: "1K 标准", Detail: "1280×720 · 92万像素"},
+				{Value: "1536x864", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1536×864 · 133万像素"},
+				{Value: "1792x1024", Tier: "official", Label: "API官方横版", Detail: "1792×1024 · 184万像素"},
+				{Value: "2560x1440", Tier: "2k", Label: "2K 高清", Detail: "2560×1440 · 369万像素"},
+				{Value: "3840x2160", Tier: "4k", Label: "4K 超清", Detail: "3840×2160 · 829万像素"},
+				{Value: "16:9", Tier: "ratio", Label: "仅传比例 (16:9)", Detail: "直接传 16:9 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "9:16",
+			Name:        "9:16 竖屏",
+			AspectW:     9,
+			AspectH:     16,
+			DefaultSize: "720x1280",
+			Sizes: []SizePresetItem{
+				{Value: "720x1280", Tier: "1k", Label: "1K 标准", Detail: "720×1280 · 92万像素"},
+				{Value: "864x1536", Tier: "1.5k", Label: "1.5K 进阶", Detail: "864×1536 · 133万像素"},
+				{Value: "1024x1792", Tier: "official", Label: "API官方竖版", Detail: "1024×1792 · 184万像素"},
+				{Value: "1440x2560", Tier: "2k", Label: "2K 高清", Detail: "1440×2560 · 369万像素"},
+				{Value: "2160x3840", Tier: "4k", Label: "4K 超清", Detail: "2160×3840 · 829万像素"},
+				{Value: "9:16", Tier: "ratio", Label: "仅传比例 (9:16)", Detail: "直接传 9:16 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "3:2",
+			Name:        "3:2 摄影横",
+			AspectW:     3,
+			AspectH:     2,
+			DefaultSize: "1536x1024",
+			Sizes: []SizePresetItem{
+				{Value: "1152x768", Tier: "1k", Label: "1K 标准", Detail: "1152×768 · 88万像素"},
+				{Value: "1536x1024", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1536×1024 · 157万像素"},
+				{Value: "2304x1536", Tier: "2k", Label: "2K 高清", Detail: "2304×1536 · 354万像素"},
+				{Value: "3456x2304", Tier: "4k", Label: "4K 超清", Detail: "3456×2304 · 796万像素"},
+				{Value: "3:2", Tier: "ratio", Label: "仅传比例 (3:2)", Detail: "直接传 3:2 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "2:3",
+			Name:        "2:3 摄影竖",
+			AspectW:     2,
+			AspectH:     3,
+			DefaultSize: "1024x1536",
+			Sizes: []SizePresetItem{
+				{Value: "768x1152", Tier: "1k", Label: "1K 标准", Detail: "768×1152 · 88万像素"},
+				{Value: "1024x1536", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1024×1536 · 157万像素"},
+				{Value: "1536x2304", Tier: "2k", Label: "2K 高清", Detail: "1536×2304 · 354万像素"},
+				{Value: "2304x3456", Tier: "4k", Label: "4K 超清", Detail: "2304×3456 · 796万像素"},
+				{Value: "2:3", Tier: "ratio", Label: "仅传比例 (2:3)", Detail: "直接传 2:3 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "4:3",
+			Name:        "4:3 标准横",
+			AspectW:     4,
+			AspectH:     3,
+			DefaultSize: "1536x1152",
+			Sizes: []SizePresetItem{
+				{Value: "1152x864", Tier: "1k", Label: "1K 标准", Detail: "1152×864 · 100万像素"},
+				{Value: "1536x1152", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1536×1152 · 177万像素"},
+				{Value: "2048x1536", Tier: "2k", Label: "2K 高清", Detail: "2048×1536 · 315万像素"},
+				{Value: "3264x2448", Tier: "4k", Label: "4K 超清", Detail: "3264×2448 · 799万像素"},
+				{Value: "4:3", Tier: "ratio", Label: "仅传比例 (4:3)", Detail: "直接传 4:3 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "3:4",
+			Name:        "3:4 标准竖",
+			AspectW:     3,
+			AspectH:     4,
+			DefaultSize: "1152x1536",
+			Sizes: []SizePresetItem{
+				{Value: "864x1152", Tier: "1k", Label: "1K 标准", Detail: "864×1152 · 100万像素"},
+				{Value: "1152x1536", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1152×1536 · 177万像素"},
+				{Value: "1536x2048", Tier: "2k", Label: "2K 高清", Detail: "1536×2048 · 315万像素"},
+				{Value: "2448x3264", Tier: "4k", Label: "4K 超清", Detail: "2448×3264 · 799万像素"},
+				{Value: "3:4", Tier: "ratio", Label: "仅传比例 (3:4)", Detail: "直接传 3:4 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "5:4",
+			Name:        "5:4 画框横",
+			AspectW:     5,
+			AspectH:     4,
+			DefaultSize: "1600x1280",
+			Sizes: []SizePresetItem{
+				{Value: "1120x896", Tier: "1k", Label: "1K 标准", Detail: "1120×896 · 100万像素"},
+				{Value: "1600x1280", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1600×1280 · 205万像素"},
+				{Value: "2240x1792", Tier: "2k", Label: "2K 高清", Detail: "2240×1792 · 401万像素"},
+				{Value: "3200x2560", Tier: "4k", Label: "4K 超清", Detail: "3200×2560 · 819万像素"},
+				{Value: "5:4", Tier: "ratio", Label: "仅传比例 (5:4)", Detail: "直接传 5:4 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "4:5",
+			Name:        "4:5 社交竖",
+			AspectW:     4,
+			AspectH:     5,
+			DefaultSize: "1280x1600",
+			Sizes: []SizePresetItem{
+				{Value: "896x1120", Tier: "1k", Label: "1K 标准", Detail: "896×1120 · 100万像素"},
+				{Value: "1280x1600", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1280×1600 · 205万像素"},
+				{Value: "1792x2240", Tier: "2k", Label: "2K 高清", Detail: "1792×2240 · 401万像素"},
+				{Value: "2560x3200", Tier: "4k", Label: "4K 超清", Detail: "2560×3200 · 819万像素"},
+				{Value: "4:5", Tier: "ratio", Label: "仅传比例 (4:5)", Detail: "直接传 4:5 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "2:1",
+			Name:        "2:1 宽幅横",
+			AspectW:     2,
+			AspectH:     1,
+			DefaultSize: "2048x1024",
+			Sizes: []SizePresetItem{
+				{Value: "1408x704", Tier: "1k", Label: "1K 标准", Detail: "1408×704 · 99万像素"},
+				{Value: "2048x1024", Tier: "1.5k", Label: "1.5K 进阶", Detail: "2048×1024 · 210万像素"},
+				{Value: "2560x1280", Tier: "2k", Label: "2K 高清", Detail: "2560×1280 · 328万像素"},
+				{Value: "3840x1920", Tier: "4k", Label: "4K 超清", Detail: "3840×1920 · 737万像素"},
+				{Value: "2:1", Tier: "ratio", Label: "仅传比例 (2:1)", Detail: "直接传 2:1 由服务端匹配默认尺寸"},
+			},
+		},
+		{
+			Ratio:       "1:2",
+			Name:        "1:2 长图竖",
+			AspectW:     1,
+			AspectH:     2,
+			DefaultSize: "1024x2048",
+			Sizes: []SizePresetItem{
+				{Value: "704x1408", Tier: "1k", Label: "1K 标准", Detail: "704×1408 · 99万像素"},
+				{Value: "1024x2048", Tier: "1.5k", Label: "1.5K 进阶", Detail: "1024×2048 · 210万像素"},
+				{Value: "1280x2560", Tier: "2k", Label: "2K 高清", Detail: "1280×2560 · 328万像素"},
+				{Value: "1920x3840", Tier: "4k", Label: "4K 超清", Detail: "1920×3840 · 737万像素"},
+				{Value: "1:2", Tier: "ratio", Label: "仅传比例 (1:2)", Detail: "直接传 1:2 由服务端匹配默认尺寸"},
+			},
+		},
+	}
+}
+
+// ResolveRatioPreset resolves an aspect ratio + resolution tier (e.g. ratio="16:9", tier="4k") into an API size string.
+func ResolveRatioPreset(ratio, tier string) (string, error) {
+	r := strings.TrimSpace(ratio)
+	t := strings.ToLower(strings.TrimSpace(tier))
+	for _, grp := range GetRatioPresets() {
+		if grp.Ratio == r {
+			if t == "" {
+				return grp.DefaultSize, nil
+			}
+			for _, s := range grp.Sizes {
+				if strings.ToLower(s.Tier) == t || strings.ToLower(s.Value) == t {
+					return s.Value, nil
+				}
+			}
+			return "", fmt.Errorf("比例 %s 下不支持档位 %q（可选: 1k, 1.5k, 2k, 4k, ratio）", r, tier)
+		}
+	}
+	return "", fmt.Errorf("不支持的画幅比例 %q", ratio)
+}
+
 var validAspectRatios = map[string]bool{
 	"auto": true,
 	"1:1":  true,

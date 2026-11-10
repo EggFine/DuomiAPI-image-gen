@@ -233,9 +233,10 @@ func (s *AppServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.store.GetConfig()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data_dir":   s.store.BaseDir(),
-		"images_dir": s.store.ImagesDir(),
-		"has_key":    strings.TrimSpace(cfg.APIKey) != "",
+		"data_dir":      s.store.BaseDir(),
+		"images_dir":    s.store.ImagesDir(),
+		"has_key":       strings.TrimSpace(cfg.APIKey) != "",
+		"ratio_presets": GetRatioPresets(),
 		"models": []map[string]string{
 			{
 				"id":          "gpt-image-2.6-flare",

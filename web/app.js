@@ -3,8 +3,11 @@
     info: null,
     config: null,
     models: [],
+    ratioPresets: [],
     selectedModel: "gpt-image-2.6-flare",
-    selectedSize: "auto",
+    selectedRatio: "1:1",
+    selectedSize: "1024x1024",
+    preferredTier: "1k",
     referenceImages: [], // { type: 'url'|'base64', value: string, preview: string, label: string }
     records: [],
     filter: "all",
@@ -50,17 +53,20 @@
       state.info = info;
       state.config = cfg;
       state.models = info.models || [];
+      state.ratioPresets = info.ratio_presets || [];
       state.selectedModel = cfg.default_model || "gpt-image-2.6-flare";
-      state.selectedSize = cfg.default_size || "auto";
       state.records = recData.records || [];
 
       el("data-dir-badge").textContent = info.data_dir || "./duomi_data";
       el("data-dir-badge").title = `绿色数据目录: ${info.data_dir}`;
       el("chk-oversea").checked = !!cfg.oversea;
 
+      const initialSize =
+        cfg.default_size && cfg.default_size !== "auto" ? cfg.default_size : "1024x1024";
+      selectSizeOrRatioFromValue(initialSize);
+
       updateKeyStatusUI();
       renderModels();
-      syncSizePillsUI();
       renderRecords();
       ensureAutoRefreshLoop();
 
@@ -118,11 +124,120 @@
     });
   }
 
-  function syncSizePillsUI() {
+  function selectSizeOrRatioFromValue(sizeVal) {
+    const target = (sizeVal || "1024x1024").trim();
+    for (const grp of state.ratioPresets) {
+      const found = (grp.sizes || []).find((s) => s.value === target);
+      if (found) {
+        state.selectedRatio = grp.ratio;
+        state.selectedSize = found.value;
+        if (found.tier && found.tier !== "auto") {
+          state.preferredTier = found.tier;
+        }
+        renderRatioAndSizeUI();
+        return;
+      }
+    }
+    // Check if it matches a ratio directly
+    const directGrp = state.ratioPresets.find((g) => g.ratio === target);
+    if (directGrp) {
+      state.selectedRatio = directGrp.ratio;
+      state.selectedSize = directGrp.default_size || target;
+      renderRatioAndSizeUI();
+      return;
+    }
+    // Otherwise treat as custom WxH
+    state.selectedRatio = "custom";
+    state.selectedSize = target;
+    const parts = target.toLowerCase().split("x");
+    if (parts.length === 2) {
+      el("input-custom-w").value = parseInt(parts[0], 10) || 1024;
+      el("input-custom-h").value = parseInt(parts[1], 10) || 1024;
+    }
+    renderRatioAndSizeUI();
+  }
+
+  function renderRatioAndSizeUI() {
+    const ratioContainer = el("ratio-pills-container");
+    const sizeContainer = el("size-presets-container");
+    const customPanel = el("custom-size-panel");
+
+    ratioContainer.innerHTML = "";
+    state.ratioPresets.forEach((grp) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `ratio-pill ${state.selectedRatio === grp.ratio ? "active" : ""}`;
+      btn.textContent = grp.name;
+      btn.addEventListener("click", () => {
+        state.selectedRatio = grp.ratio;
+        const sizes = grp.sizes || [];
+        // Try to match user's preferred tier (e.g. 1k / 2k / 4k / ratio) when switching ratio
+        const matched =
+          sizes.find((s) => s.tier === state.preferredTier) ||
+          sizes.find((s) => s.value === grp.default_size) ||
+          sizes[0];
+        if (matched) {
+          state.selectedSize = matched.value;
+        }
+        renderRatioAndSizeUI();
+      });
+      ratioContainer.appendChild(btn);
+    });
+
+    // Add Custom pill at the end
+    const customBtn = document.createElement("button");
+    customBtn.type = "button";
+    customBtn.className = `ratio-pill ${state.selectedRatio === "custom" ? "active" : ""}`;
+    customBtn.textContent = "自定义宽高";
+    customBtn.addEventListener("click", () => {
+      state.selectedRatio = "custom";
+      if (!el("input-custom-w").value || !el("input-custom-h").value) {
+        const parts = (state.selectedSize || "").split("x");
+        el("input-custom-w").value = parseInt(parts[0], 10) || 1024;
+        el("input-custom-h").value = parseInt(parts[1], 10) || 1024;
+      }
+      renderRatioAndSizeUI();
+    });
+    ratioContainer.appendChild(customBtn);
+
+    // Render Step 2: Size presets for the selected ratio
+    sizeContainer.innerHTML = "";
+    if (state.selectedRatio === "custom") {
+      el("current-ratio-label").textContent = "自定义宽高";
+      el("current-size-label").textContent = state.selectedSize;
+      customPanel.hidden = false;
+      return;
+    }
+
+    customPanel.hidden = true;
+    const activeGrp =
+      state.ratioPresets.find((g) => g.ratio === state.selectedRatio) ||
+      state.ratioPresets[0];
+    if (!activeGrp) return;
+
+    el("current-ratio-label").textContent = activeGrp.name;
     el("current-size-label").textContent = state.selectedSize;
-    const pills = el("ratio-pills-container").querySelectorAll(".ratio-pill");
-    pills.forEach((p) => {
-      p.classList.toggle("active", p.dataset.size === state.selectedSize);
+
+    const sizes = activeGrp.sizes || [];
+    sizes.forEach((item, idx) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      const isSpanFull = sizes.length % 2 === 1 && idx === sizes.length - 1;
+      card.className = `size-preset-card ${isSpanFull ? "span-full" : ""} ${
+        state.selectedSize === item.value ? "active" : ""
+      }`;
+      card.innerHTML = `
+        <span class="size-preset-label">${escapeHtml(item.label)}</span>
+        <span class="size-preset-detail">${escapeHtml(item.detail)}</span>
+      `;
+      card.addEventListener("click", () => {
+        state.selectedSize = item.value;
+        if (item.tier && item.tier !== "auto") {
+          state.preferredTier = item.tier;
+        }
+        renderRatioAndSizeUI();
+      });
+      sizeContainer.appendChild(card);
     });
   }
 
@@ -244,8 +359,9 @@
       );
       return;
     }
+    state.selectedRatio = "custom";
     state.selectedSize = `${w}x${h}`;
-    syncSizePillsUI();
+    renderRatioAndSizeUI();
     showToast(`已应用自定义尺寸: ${state.selectedSize} (已自动对齐16倍数)`, "success");
   }
 
@@ -532,8 +648,7 @@
     renderModels();
 
     if (rec.size) {
-      state.selectedSize = rec.size;
-      syncSizePillsUI();
+      selectSizeOrRatioFromValue(rec.size);
     }
     el("select-quality").value = rec.quality || "";
     el("select-background").value = rec.background || "auto";
@@ -645,14 +760,6 @@
       });
       el("input-ref-url").value = "";
       renderRefThumbs();
-    });
-
-    // Aspect ratio pills & custom size
-    el("ratio-pills-container").querySelectorAll(".ratio-pill").forEach((pill) => {
-      pill.addEventListener("click", () => {
-        state.selectedSize = pill.dataset.size;
-        syncSizePillsUI();
-      });
     });
 
     el("btn-apply-custom-size").addEventListener("click", applyCustomSize);

@@ -50,6 +50,30 @@ func TestValidateSize(t *testing.T) {
 	}
 }
 
+func TestGetRatioPresetsCompliance(t *testing.T) {
+	groups := GetRatioPresets()
+	if len(groups) != 12 {
+		t.Fatalf("expected 12 ratio groups, got %d", len(groups))
+	}
+	for _, grp := range groups {
+		if err := ValidateSize(grp.DefaultSize); err != nil {
+			t.Errorf("ratio %s default_size %q failed ValidateSize: %v", grp.Ratio, grp.DefaultSize, err)
+		}
+		for _, item := range grp.Sizes {
+			if err := ValidateSize(item.Value); err != nil {
+				t.Errorf("ratio %s preset %q (%s) failed ValidateSize: %v", grp.Ratio, item.Value, item.Label, err)
+			}
+		}
+	}
+	// Test ResolveRatioPreset
+	if got, err := ResolveRatioPreset("16:9", "4k"); err != nil || got != "3840x2160" {
+		t.Fatalf("expected 3840x2160 for 16:9 4k, got %q (err=%v)", got, err)
+	}
+	if got, err := ResolveRatioPreset("3:2", "2k"); err != nil || got != "2304x1536" {
+		t.Fatalf("expected 2304x1536 for 3:2 2k, got %q (err=%v)", got, err)
+	}
+}
+
 func TestNormalizeAPIKey(t *testing.T) {
 	if got := NormalizeAPIKey("  Bearer my-secret-key  "); got != "my-secret-key" {
 		t.Fatalf("expected my-secret-key, got %q", got)

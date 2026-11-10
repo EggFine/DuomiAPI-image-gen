@@ -43,7 +43,9 @@ func main() {
 		promptFlag     = flag.String("prompt", "", "[CLI模式] 图像描述词 (Prompt)")
 		promptFileFlag = flag.String("prompt-file", "", "[CLI模式] 从 UTF-8 文本文件读取 Prompt")
 		modelFlag      = flag.String("model", "", "[CLI模式] 模型 ID (gpt-image-2 / gpt-image-2.5-flare / gpt-image-2.5-sunburst / gpt-image-2.6-flare / gpt-image-2.6-sunburst)")
-		sizeFlag       = flag.String("size", "", "[CLI模式] 尺寸或比例 (如 auto, 1:1, 16:9, 9:16, 1024x1024)")
+		ratioFlag      = flag.String("ratio", "", "[CLI模式] 画幅比例 (如 auto, 1:1, 16:9, 9:16, 3:2, 2:3, 4:3, 3:4, 5:4, 4:5, 2:1, 1:2)")
+		tierFlag       = flag.String("tier", "", "[CLI模式] 配合 -ratio 选择对应尺寸档位 (1k / 1.5k / 2k / 4k / ratio)")
+		sizeFlag       = flag.String("size", "", "[CLI模式] 直接指定尺寸或比例 (如 1024x1024, 3840x2160, 16:9, auto)")
 		qualityFlag    = flag.String("quality", "", "[CLI模式] 思考深度 (low / medium / high)")
 		bgFlag         = flag.String("background", "", "[CLI模式] 背景透明度 (auto / opaque / transparent)")
 		nFlag          = flag.Int("n", 1, "[CLI模式] 生成张数")
@@ -92,6 +94,8 @@ func main() {
 			prompt:     *promptFlag,
 			promptFile: *promptFileFlag,
 			model:      *modelFlag,
+			ratio:      *ratioFlag,
+			tier:       *tierFlag,
 			size:       *sizeFlag,
 			quality:    *qualityFlag,
 			background: *bgFlag,
@@ -141,6 +145,8 @@ type cliOptions struct {
 	prompt     string
 	promptFile string
 	model      string
+	ratio      string
+	tier       string
 	size       string
 	quality    string
 	background string
@@ -184,6 +190,14 @@ func runCLI(store *Store, client *DuomiClient, cfg AppConfig, opts cliOptions) {
 			model = cfg.DefaultModel
 		}
 		size := strings.TrimSpace(opts.size)
+		if size == "" && strings.TrimSpace(opts.ratio) != "" {
+			resolved, err := ResolveRatioPreset(opts.ratio, opts.tier)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+				os.Exit(1)
+			}
+			size = resolved
+		}
 		if size == "" {
 			size = cfg.DefaultSize
 		}
