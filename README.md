@@ -1,28 +1,27 @@
-# DuomiAPI Image Studio (多米API 图像生成单文件绿色工具)
+# DuomiAPI Image Studio v2.0 (多米API 图像生成单文件绿色工作台)
 
-使用 Go 标准库编写的**单文件、纯绿色**多米 API (`duomiapi.com`) 图像生成客户端，支持 **内嵌 Web 可视化工作台** 与 **CLI 命令行** 双模式。
+使用 Go 标准库 + **React 19 + Tailwind CSS v4 + shadcn/ui** 构建的**单文件、纯绿色**多米 API (`duomiapi.com`) 图像创作工作台，同时支持 **可视化 Web Studio** 与 **CLI 命令行** 双模式。
 
 ---
 
 ## ✨ 核心特性
 
 - **单文件、零依赖、纯绿色**：
-  - 使用 Go 1.22+ `//go:embed all:web` 将基于 **React 19 + Tailwind CSS v4 + shadcn/ui (Radix UI)** 构建的现代化 Web 创作工作台完整打包进单一可执行文件（`CGO_ENABLED=0` 静态编译）。
-  - 支持 **深色 / 浅色（Dark / Light）主题一键切换**、网格与紧凑双视图、全屏多图灯箱预览、键盘快捷键切换与灵感提示词快填。
-  - **绝不生成或修改注册表**，不向 `AppData` 或用户主目录写入任何垃圾文件。
-  - **仅在程序运行目录生成一个 `duomi_data/` 文件夹**，集中保存配置、生成记录和自动下载的原图，拷走即用、删除即净。
-- **完整支持多米 API 异步图像接口**：
-  - 创建任务：`POST https://duomiapi.com/v1/images/generations?async=true`
-  - 查询任务：`GET https://duomiapi.com/v1/tasks/{id}`
-  - 认证方式：自动使用明文 `Authorization: <API_KEY>` 请求头（若误填 `Bearer ` 前缀会自动剥离）。
-- **全模型与参数覆盖**：
-  - 内置支持 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2`，并支持手动输入任意未来新模型 ID。
-  - **先选画幅比例、再选对应尺寸档位**：
-    - 支持全部 12 种画幅比例（`auto`、`1:1`、`16:9`、`9:16`、`3:2`、`2:3`、`4:3`、`3:4`、`5:4`、`4:5`、`2:1`、`1:2`），每个比例均内置严格符合多米 API 要求（宽高均为 16 倍数、单边 `[16, 3840]`、总像素 `[655,360 ~ 8,294,400]`）的 **1K / 1.5K / 2K / 4K** 预设尺寸，同时支持自定义 `宽x高`。
-  - 支持 **文生图** 与 **多参考图图生图**（可添加直链 URL 或直接拖拽上传本地图片转 Base64，内置大图智能优压防 `HTTP 400` 请求体超限）。
-  - 支持思考深度 (`quality`: `low` / `medium` / `high`)、透明背景 (`background`: `auto` / `opaque` / `transparent`)、生成张数 (`n`)、海外节点 (`oversea`)。
-- **自动轮询与本地防过期存档**：
-  - 任务提交后后台自动轮询进度，生成成功后立即将图片下载至 `duomi_data/images/`，避免多米临时 CDN 链接过期失效。
+  - 使用 Go `//go:embed all:web` 将现代化 React Web 创作工作台完整内嵌进单一静态可执行文件（`CGO_ENABLED=0`）。
+  - **绝不生成或修改注册表**，不向 `AppData` 或用户主目录写入任何文件。
+  - **仅在程序运行目录生成一个 `duomi_data/` 文件夹**，集中保存配置、模板、历史记录、参考图缓存与自动下载的原图，拷走即用、删除即净。
+- **三模式参考图引擎（默认无损传图床 · Base64 压缩独立可选）**：
+  - **自动传图床直链（默认 `upload`）**：本地图片通过二进制流**原图无损上传**至图床获取干净 `https://` 直链，不做强制有损缩放，100% 保留人物五官与细节。内置 `自动容灾 (Auto)`、`Litterbox`（支持 `1h/12h/24h/72h` 到期自动销毁）、`Catbox`、`Tmpfiles`、`Uguu`、`0x0.st`，并支持接入**自定义私有图床 API**（兰空 LskyPro / Chevereto / 自建接口）。
+  - **压缩并转 Base64（可选 `compress_base64`）**：仅作为可选项提供；选中后在本地剥离相机 EXIF / ICC 元数据并缩放优压为标准 sRGB JPEG Base64，**绝不向外部图床上传图片**。
+  - **原图转 Base64（可选 `raw_base64`）**：不压缩、不传图床，直接将原始文件编码为 Base64。
+  - 支持**全局 `Ctrl+V` 剪贴板粘贴图片**、拖拽多图上传、`图1 / 图2` 顺序调整，且切换模式时已添加的参考图会自动原地重新转换。
+- **全模型与两步式「比例 -> 预设尺寸」联动**：
+  - 内置支持 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst`、`gpt-image-2.5-flare`、`gpt-image-2.5-sunburst`、`gpt-image-2` 及任意自定义模型 ID。
+  - 支持全部 12 种画幅比例（`auto`、`1:1`、`16:9`、`9:16`、`3:2`、`2:3`、`4:3`、`3:4`、`5:4`、`4:5`、`2:1`、`1:2`），每个比例均内置严格满足多米 API 规范（宽高均为 16 倍数、单边 `[16, 3840]`、总像素 `[655,360 ~ 8,294,400]`）的 **1K / 1.5K / 2K / 4K** 预设尺寸与自定义宽高校验。
+- **SSE 实时推送 + 专业画廊与交互式灯箱**：
+  - **SSE 毫秒级状态推送**：实时同步排队、生成进度与本地原图防过期归档；支持 `1..10` 张并发批量提交。
+  - **沉浸式灯箱**：支持滚轮无级缩放（`50%~500%`）与拖拽平移、**「参考图 vs 生成结果」同屏分栏对比**、一键复制图片到剪贴板、一键将生成图「设为参考图」接力创作、一键完整复用历史参数（含参考图）。
+  - **高效画廊管理**：支持深浅色主题切换、4 种视图模式（含不裁切原比例视图）、`★` 星标收藏、按模型/状态/关键词过滤、批量多选打包导出 `.zip`（含 `manifest.json`）、一键打开本地图片文件夹、提示词模板库、API 请求 JSON / `curl` / CLI 预览器与 API Key 连通性测速。
 
 ---
 
@@ -53,27 +52,28 @@
 ```text
 ├── duomi-image-gen.exe        # 单文件主程序（Windows / Linux / macOS）
 └── duomi_data/                # 运行目录下唯一自动生成的数据目录
-    ├── config.json            # 保存 API Key、默认模型、轮询间隔等配置
-    ├── records.json           # 保存所有历史生成任务记录与参数
-    └── images/                # 自动下载保存的所有生成图片文件
+    ├── config.json            # 保存 API Key、图床策略、自定义提示词模板等配置
+    ├── records.json           # 保存所有历史生成任务记录、星标状态与完整参数
+    └── images/                # 自动归档下载的所有生成原图
+        └── refs/              # 按 SHA-256 去重缓存的本地参考图（支持完整复用与同屏对比）
 ```
 
 ---
 
 ## 🚀 快速使用
 
-### 方式一：可视化 Web 工作台模式（默认）
+### 方式一：可视化 Web 创作工作台（默认）
 
-直接双击运行 `duomi-image-gen.exe`（或在终端无参数执行 `./duomi-image-gen`）：
+直接双击运行 `duomi-image-gen.exe`（或在终端执行 `./duomi-image-gen`）：
 
 ```bash
 ./duomi-image-gen
 ```
 
 程序会自动在本地监听端口（默认 `http://127.0.0.1:18080`）并打开系统默认浏览器：
-1. 首次打开点击右上角 **「未配置 API Key」**，填入在 [多米API控制台](https://duomiapi.com) 申请的密钥并保存。
-2. 在左侧选择模型、先选 **画幅比例** 再选对应的 **1K / 1.5K / 2K / 4K 预设尺寸**，输入描述词（可选上传本地参考图或粘贴图片 URL），点击 **「立即提交异步生图任务」**。
-3. 右侧画廊将实时显示队列与生成进度，完成后自动下载原图到本地 `duomi_data/images/`，支持大图预览、一键将生成图作为参考图继续创作、一键复用历史参数。
+1. 首次使用点击右上角 **「设置」**，填入在 [多米API控制台](https://duomiapi.com) 申请的密钥，可点击 **「测试连通性」** 验证密钥与延迟后保存。
+2. 在左侧工作台选择模型、画幅比例与 **1K / 1.5K / 2K / 4K** 预设尺寸，输入提示词（支持 `Ctrl/Cmd + Enter` 快捷提交，或 `Ctrl+V` 直接粘贴参考图）。
+3. 本地参考图默认采用 **「自动传图床直链（原图无损）」**，也可随时在参考图栏一键切换为 **「压缩转 Base64」** 或 **「原图 Base64」**。
 
 可选启动参数：
 - `-port 18080`：指定本地 Web 端口（若被占用会自动顺延）
@@ -85,22 +85,22 @@
 
 ### 方式二：CLI 命令行模式
 
-传入 `-prompt`、`-prompt-file` 或 `-query` 参数时，程序自动以命令行模式运行，同样共享 `duomi_data/` 目录中的配置与图库：
+传入 `-prompt`、`-prompt-file` 或 `-query` 参数时自动进入命令行模式，共享 `duomi_data/` 配置与图库：
 
 ```bash
-# 1. 首次使用可传入 -key 并持久化保存到 duomi_data/config.json
+# 1. 首次使用传入 -key 并持久化保存到 duomi_data/config.json
 ./duomi-image-gen -key "你的多米API密钥" -save-key -prompt "赛博朋克风格的雨夜霓虹街道，电影画幅" -model gpt-image-2.6-flare -ratio 16:9 -tier 4k
 
-# 2. 先选比例(-ratio) + 再选档位(-tier: 1k / 1.5k / 2k / 4k / ratio)，或直接通过 -size 传具体宽高
-./duomi-image-gen -prompt "一只戴着宇航员头盔的橘猫，8k超高清" -ratio 1:1 -tier 2k -quality high
+# 2. 图生图（默认 -ref-mode upload 自动原图无损传图床转直链）
+./duomi-image-gen -prompt "将人物改为吉卜力手绘水彩风格" -image ./photo.png -ratio 3:2 -tier 2k
 
-# 3. 图生图（支持本地图片路径或远程 URL，可传多张）
-./duomi-image-gen -prompt "将人物改为吉卜力手绘水彩风格" -image ./photo.png -ratio 3:2 -tier 2k -background transparent
+# 3. 图生图（显式指定本地压缩转 Base64，不上传外部图床）
+./duomi-image-gen -prompt "保持人物相貌生成职业头像" -image ./photo.jpg -ref-mode compress-base64 -ratio 1:1 -tier 2k
 
-# 4. 仅提交任务拿 Task ID，不等待轮询
-./duomi-image-gen -prompt "未来城市空中花园" -submit-only
+# 4. 并发批量生成多张 (-n 4)
+./duomi-image-gen -prompt "极简主义现代建筑摄影，晨雾" -ratio 16:9 -tier 2k -n 4
 
-# 5. 根据已有的 Task ID 查询状态并下载结果图片
+# 5. 根据已有 Task ID 查询状态并下载原图
 ./duomi-image-gen -query "e8f3d384-d740-889b-139b-99d8171488c8"
 ```
 
@@ -111,14 +111,14 @@
 ### 本地编译单文件
 
 ```bash
-# 编译当前平台
-CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o duomi-image-gen .
+# 1. 构建前端静态资源至 web/
+cd frontend && npm ci && npm run build && cd ..
 
-# 交叉编译 Windows 64位绿色单文件
+# 2. 静态编译单文件可执行程序（当前平台 / Windows 64位）
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o duomi-image-gen .
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o duomi-image-gen.exe .
 ```
 
 ### GitHub Actions 自动编译并发布 Release
 
-仓库已配置 [`.github/workflows/release.yml`](.github/workflows/release.yml)：
-- 推送 `v*` 标签（如 `git tag v1.0.0 && git push origin v1.0.0`）或在 GitHub Actions 页面手动触发 `Build and Release Single-File Binaries`，即可自动编译 Windows / Linux / macOS 全平台单文件程序并发布至 GitHub Releases。
+仓库已配置 [`.github/workflows/release.yml`](.github/workflows/release.yml)：推送 `v*` 标签（如 `git tag v2.0.0 && git push origin v2.0.0`）即可自动构建前端、运行全量单元测试、交叉编译 Windows / Linux / macOS 六大架构静态单文件程序，并自动提取 `CHANGELOG.md` 对应版本更新日志发布至 GitHub Releases。

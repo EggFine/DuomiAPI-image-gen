@@ -9,6 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/draw"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
 	"io"
 	"math"
 	"mime/multipart"
@@ -25,15 +31,47 @@ import (
 // CreateImageRequest matches the OpenAPI schema from api-192667743:
 // POST /v1/images/generations?async=true
 type CreateImageRequest struct {
-	Model       string   `json:"model"`
-	Prompt      string   `json:"prompt"`
-	Size        string   `json:"size,omitempty"`
-	Image       []string `json:"image,omitempty"`
-	Quality     string   `json:"quality,omitempty"`
-	Background  string   `json:"background,omitempty"`
-	N           int      `json:"n,omitempty"`
-	Oversea     bool     `json:"oversea"`
-	CallbackURL string   `json:"callback_url,omitempty"`
+	Model                 string            `json:"model"`
+	Prompt                string            `json:"prompt"`
+	Size                  string            `json:"size,omitempty"`
+	Image                 []string          `json:"image,omitempty"`
+	Quality               string            `json:"quality,omitempty"`
+	Background            string            `json:"background,omitempty"`
+	N                     int               `json:"n,omitempty"`
+	Oversea               bool              `json:"oversea"`
+	CallbackURL           string            `json:"callback_url,omitempty"`
+	RefMode               string            `json:"-"` // "upload" (default) | "compress_base64" | "raw_base64"
+	HostOpts              ImageHostOptions  `json:"-"`
+	DisableCompatFallback bool              `json:"-"`
+}
+
+// CreateTaskResult holds detailed task creation metadata including any compatibility fallback notice.
+type CreateTaskResult struct {
+	TaskID      string
+	RawResponse string
+	WarningMsg  string
+	ActualSize  string
+}
+
+// ImageHostOptions configures how local reference images are uploaded to an image host.
+type ImageHostOptions struct {
+	Provider        string // "auto", "litterbox", "catbox", "tmpfiles", "uguu", "0x0", "custom"
+	LitterboxExpiry string // "1h", "12h", "24h", "72h"
+	CustomURL       string
+	CustomField     string
+	CustomAuth      string
+	CustomJSONPath  string
+}
+
+func ImageHostOptionsFromConfig(cfg AppConfig) ImageHostOptions {
+	return ImageHostOptions{
+		Provider:        cfg.ImageHostProvider,
+		LitterboxExpiry: cfg.LitterboxExpiry,
+		CustomURL:       cfg.CustomUploadURL,
+		CustomField:     cfg.CustomUploadField,
+		CustomAuth:      cfg.CustomUploadAuthHeader,
+		CustomJSONPath:  cfg.CustomUploadJSONPath,
+	}
 }
 
 // CreateImageResponse represents the response from POST /v1/images/generations?async=true
@@ -73,11 +111,17 @@ type TaskQueryResponse struct {
 	Error      any    `json:"error"`
 }
 
+type cachedUploadEntry struct {
+	url       string
+	provider  string
+	expiresAt time.Time
+}
+
 // DuomiClient interacts with DuomiAPI image generation endpoints.
 type DuomiClient struct {
 	httpClient  *http.Client
 	uploadMu    sync.Mutex
-	uploadCache map[string]string
+	uploadCache map[string]cachedUploadEntry
 }
 
 func NewDuomiClient() *DuomiClient {
@@ -85,7 +129,7 @@ func NewDuomiClient() *DuomiClient {
 		httpClient: &http.Client{
 			Timeout: 90 * time.Second,
 		},
-		uploadCache: make(map[string]string),
+		uploadCache: make(map[string]cachedUploadEntry),
 	}
 }
 
@@ -318,9 +362,7 @@ var validAspectRatios = map[string]bool{
 	"4:5":  true,
 }
 
-// ValidateSize checks whether the size string adheres to DuomiAPI's specification:
-// - Preset aspect ratios (auto, 1:1, 16:9, 9:16, 3:2, 2:3, 4:3, 3:4, 5:4, 4:5, 2:1, 1:2)
-// - Custom widthxheight: each side in [16, 3840], divisible by 16, and 655,360 <= width * height <= 8,294,400.
+// ValidateSize checks whether the size string adheres to DuomiAPI's specification.
 func ValidateSize(size string) error {
 	s := strings.TrimSpace(size)
 	if s == "" || validAspectRatios[s] {
@@ -349,8 +391,7 @@ func ValidateSize(size string) error {
 	return nil
 }
 
-// InferAspectRatioFromSize returns the closest DuomiAPI aspect ratio string (e.g. "16:9", "4:3")
-// and standard OpenAI resolution ("1792x1024", "1024x1792", "1024x1024") for a given WxH size string.
+// InferAspectRatioFromSize returns the closest DuomiAPI aspect ratio string and standard OpenAI resolution.
 func InferAspectRatioFromSize(size string) (ratioStr string, stdSize string) {
 	s := strings.TrimSpace(size)
 	if s == "" || s == "auto" {
@@ -418,14 +459,9 @@ func InferAspectRatioFromSize(size string) (ratioStr string, stdSize string) {
 	return bestRatio, std
 }
 
-// UploadDataURIToPublicHost uploads a base64 data URI image to a temporary public image host
-// so DuomiAPI receives a clean https:// direct URL (avoiding base64 rejection or payload size limits).
-func (c *DuomiClient) UploadDataURIToPublicHost(ctx context.Context, dataURI string) (string, error) {
+// DecodeDataURI extracts raw image bytes and extension from a data:image/...;base64,... string.
+func DecodeDataURI(dataURI string) ([]byte, string, error) {
 	raw := strings.TrimSpace(dataURI)
-	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
-		return raw, nil
-	}
-
 	ext := ".jpg"
 	b64Part := raw
 	if strings.HasPrefix(raw, "data:image/") {
@@ -438,61 +474,306 @@ func (c *DuomiClient) UploadDataURIToPublicHost(ctx context.Context, dataURI str
 				ext = ".webp"
 			case strings.Contains(header, "gif"):
 				ext = ".gif"
+			case strings.Contains(header, "bmp"):
+				ext = ".bmp"
 			default:
 				ext = ".jpg"
 			}
 			b64Part = raw[comma+1:]
 		}
 	}
-
 	imgBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64Part))
 	if err != nil || len(imgBytes) == 0 {
-		return "", fmt.Errorf("解码参考图 Base64 失败: %w", err)
+		return nil, "", fmt.Errorf("解码参考图 Base64 失败: %w", err)
+	}
+	return imgBytes, ext, nil
+}
+
+// EncodeBytesToDataURI wraps raw image bytes as a data:image/<mime>;base64,... string without altering pixels.
+func EncodeBytesToDataURI(data []byte, ext string) string {
+	clean := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(ext), "."))
+	mime := "jpeg"
+	switch clean {
+	case "png":
+		mime = "png"
+	case "webp":
+		mime = "webp"
+	case "gif":
+		mime = "gif"
+	case "bmp":
+		mime = "bmp"
+	case "jpg", "jpeg":
+		mime = "jpeg"
+	}
+	return fmt.Sprintf("data:image/%s;base64,%s", mime, base64.StdEncoding.EncodeToString(data))
+}
+
+// CompressImageBytesToBase64 is an OPTIONAL local-only image processor (used when RefImageMode == "compress_base64").
+// It decodes PNG/JPEG/GIF in pure Go, strips EXIF/ICC metadata, scales down if exceeding maxDim, and encodes JPEG Base64.
+func CompressImageBytesToBase64(data []byte, maxDim int, quality int) (dataURI string, encodedBytes int, outW int, outH int, err error) {
+	if maxDim < 256 {
+		maxDim = 1536
+	}
+	if quality < 40 || quality > 98 {
+		quality = 85
+	}
+	src, _, decErr := image.Decode(bytes.NewReader(data))
+	if decErr != nil {
+		// If format is WebP or unsupported by Go stdlib decoder, return raw data URI gracefully
+		return EncodeBytesToDataURI(data, ".webp"), len(data), 0, 0, nil
+	}
+
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	if srcW <= 0 || srcH <= 0 {
+		return "", 0, 0, 0, errors.New("无效的图片尺寸")
+	}
+
+	dstW, dstH := srcW, srcH
+	if dstW > maxDim || dstH > maxDim {
+		if dstW >= dstH {
+			dstH = int(math.Max(1, math.Round(float64(srcH)*float64(maxDim)/float64(srcW))))
+			dstW = maxDim
+		} else {
+			dstW = int(math.Max(1, math.Round(float64(srcW)*float64(maxDim)/float64(srcH))))
+			dstH = maxDim
+		}
+	}
+
+	// Composite onto opaque white background and bilinear resize
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+	draw.Draw(dst, dst.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
+
+	if dstW == srcW && dstH == srcH {
+		draw.Draw(dst, dst.Bounds(), src, bounds.Min, draw.Over)
+	} else {
+		resizeBilinear(src, dst)
+	}
+
+	var buf bytes.Buffer
+	if encErr := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: quality}); encErr != nil {
+		return "", 0, 0, 0, fmt.Errorf("JPEG 压缩编码失败: %w", encErr)
+	}
+	jpgBytes := buf.Bytes()
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(jpgBytes), len(jpgBytes), dstW, dstH, nil
+}
+
+// resizeBilinear performs smooth pure-Go bilinear image scaling onto an opaque white-initialized RGBA canvas.
+func resizeBilinear(src image.Image, dst *image.RGBA) {
+	sb := src.Bounds()
+	srcW, srcH := sb.Dx(), sb.Dy()
+	dstW, dstH := dst.Bounds().Dx(), dst.Bounds().Dy()
+
+	// Convert src onto an RGBA buffer once for fast pixel sampling
+	srcRGBA := image.NewRGBA(image.Rect(0, 0, srcW, srcH))
+	draw.Draw(srcRGBA, srcRGBA.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
+	draw.Draw(srcRGBA, srcRGBA.Bounds(), src, sb.Min, draw.Over)
+
+	xRatio := float64(srcW-1) / math.Max(1, float64(dstW-1))
+	yRatio := float64(srcH-1) / math.Max(1, float64(dstH-1))
+
+	for y := 0; y < dstH; y++ {
+		sy := float64(y) * yRatio
+		y0 := int(sy)
+		y1 := y0 + 1
+		if y1 >= srcH {
+			y1 = srcH - 1
+		}
+		wy := sy - float64(y0)
+
+		for x := 0; x < dstW; x++ {
+			sx := float64(x) * xRatio
+			x0 := int(sx)
+			x1 := x0 + 1
+			if x1 >= srcW {
+				x1 = srcW - 1
+			}
+			wx := sx - float64(x0)
+
+			i00 := srcRGBA.PixOffset(x0, y0)
+			i10 := srcRGBA.PixOffset(x1, y0)
+			i01 := srcRGBA.PixOffset(x0, y1)
+			i11 := srcRGBA.PixOffset(x1, y1)
+
+			di := dst.PixOffset(x, y)
+			for c := 0; c < 3; c++ {
+				v00 := float64(srcRGBA.Pix[i00+c])
+				v10 := float64(srcRGBA.Pix[i10+c])
+				v01 := float64(srcRGBA.Pix[i01+c])
+				v11 := float64(srcRGBA.Pix[i11+c])
+				top := v00*(1-wx) + v10*wx
+				bot := v01*(1-wx) + v11*wx
+				val := top*(1-wy) + bot*wy
+				dst.Pix[di+c] = uint8(math.Max(0, math.Min(255, math.Round(val))))
+			}
+			dst.Pix[di+3] = 255
+		}
+	}
+}
+
+// UploadBytesToImageHost uploads original lossless image bytes to the selected public or custom image host,
+// returning (directURL, providerName, error).
+func (c *DuomiClient) UploadBytesToImageHost(ctx context.Context, imgBytes []byte, ext string, opts ImageHostOptions) (string, string, error) {
+	if len(imgBytes) == 0 {
+		return "", "", errors.New("参考图内容为空")
+	}
+	cleanExt := strings.ToLower(strings.TrimSpace(ext))
+	if cleanExt == "" || !strings.HasPrefix(cleanExt, ".") {
+		cleanExt = "." + strings.TrimPrefix(cleanExt, ".")
+	}
+	if cleanExt == "." {
+		cleanExt = ".jpg"
+	}
+
+	provider := strings.ToLower(strings.TrimSpace(opts.Provider))
+	if provider == "" {
+		provider = "auto"
+	}
+	expiry := strings.TrimSpace(opts.LitterboxExpiry)
+	if expiry == "" {
+		expiry = "12h"
 	}
 
 	sum := sha256.Sum256(imgBytes)
-	cacheKey := hex.EncodeToString(sum[:])
+	cacheKey := fmt.Sprintf("%s|%s|%s|%s", hex.EncodeToString(sum[:]), provider, expiry, strings.TrimSpace(opts.CustomURL))
 
 	c.uploadMu.Lock()
-	if cachedURL, ok := c.uploadCache[cacheKey]; ok && cachedURL != "" {
+	if entry, ok := c.uploadCache[cacheKey]; ok && entry.url != "" && time.Now().Before(entry.expiresAt) {
 		c.uploadMu.Unlock()
-		return cachedURL, nil
+		return entry.url, entry.provider, nil
 	}
 	c.uploadMu.Unlock()
 
-	fileName := "ref_" + cacheKey[:10] + ext
-	uploaders := []func(context.Context, []byte, string) (string, error){
-		uploadToLitterbox,
-		uploadToCatbox,
-		uploadToTmpFiles,
-		uploadToUguu,
-		uploadTo0x0,
+	fileName := "ref_" + hex.EncodeToString(sum[:])[:10] + cleanExt
+
+	type namedUploader struct {
+		name string
+		ttl  time.Duration
+		fn   func(context.Context, []byte, string) (string, error)
 	}
 
-	var lastErr error
-	for _, fn := range uploaders {
-		upCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		pubURL, upErr := fn(upCtx, imgBytes, fileName)
+	litterboxTTL := 50 * time.Minute
+	switch expiry {
+	case "12h":
+		litterboxTTL = 11 * time.Hour
+	case "24h":
+		litterboxTTL = 23 * time.Hour
+	case "72h":
+		litterboxTTL = 70 * time.Hour
+	}
+
+	allBuiltIn := map[string]namedUploader{
+		"litterbox": {
+			name: "Litterbox (" + expiry + ")",
+			ttl:  litterboxTTL,
+			fn: func(uCtx context.Context, b []byte, name string) (string, error) {
+				return uploadToLitterbox(uCtx, b, name, expiry)
+			},
+		},
+		"catbox": {
+			name: "Catbox",
+			ttl:  24 * time.Hour,
+			fn:   uploadToCatbox,
+		},
+		"tmpfiles": {
+			name: "Tmpfiles",
+			ttl:  50 * time.Minute,
+			fn:   uploadToTmpFiles,
+		},
+		"uguu": {
+			name: "Uguu",
+			ttl:  2 * time.Hour,
+			fn:   uploadToUguu,
+		},
+		"0x0": {
+			name: "0x0.st",
+			ttl:  12 * time.Hour,
+			fn:   uploadTo0x0,
+		},
+	}
+
+	var pipeline []namedUploader
+	switch provider {
+	case "custom":
+		if strings.TrimSpace(opts.CustomURL) == "" {
+			return "", "", errors.New("已选择自定义图床，但尚未在设置中配置自定义图床上传接口 URL")
+		}
+		pipeline = append(pipeline, namedUploader{
+			name: "自定义图床",
+			ttl:  12 * time.Hour,
+			fn: func(uCtx context.Context, b []byte, name string) (string, error) {
+				return uploadToCustomHost(uCtx, b, name, opts)
+			},
+		})
+	case "litterbox", "catbox", "tmpfiles", "uguu", "0x0":
+		pipeline = append(pipeline, allBuiltIn[provider])
+	default: // "auto" failover across reliable image hosts
+		if strings.TrimSpace(opts.CustomURL) != "" {
+			pipeline = append(pipeline, namedUploader{
+				name: "自定义图床",
+				ttl:  12 * time.Hour,
+				fn: func(uCtx context.Context, b []byte, name string) (string, error) {
+					return uploadToCustomHost(uCtx, b, name, opts)
+				},
+			})
+		}
+		pipeline = append(pipeline,
+			allBuiltIn["litterbox"],
+			allBuiltIn["catbox"],
+			allBuiltIn["tmpfiles"],
+			allBuiltIn["uguu"],
+			allBuiltIn["0x0"],
+		)
+	}
+
+	var errs []string
+	for _, up := range pipeline {
+		upCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		pubURL, upErr := up.fn(upCtx, imgBytes, fileName)
 		cancel()
 		if upErr == nil && (strings.HasPrefix(pubURL, "https://") || strings.HasPrefix(pubURL, "http://")) {
 			c.uploadMu.Lock()
-			c.uploadCache[cacheKey] = pubURL
+			c.uploadCache[cacheKey] = cachedUploadEntry{
+				url:       pubURL,
+				provider:  up.name,
+				expiresAt: time.Now().Add(up.ttl),
+			}
 			c.uploadMu.Unlock()
-			return pubURL, nil
+			return pubURL, up.name, nil
 		}
-		lastErr = upErr
+		if upErr != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", up.name, upErr))
+		}
 	}
-	if lastErr == nil {
-		lastErr = errors.New("所有临时图床均不可用")
-	}
-	return "", lastErr
+	return "", "", fmt.Errorf("图床上传失败 (%s)", strings.Join(errs, "; "))
 }
 
-func uploadToLitterbox(ctx context.Context, data []byte, fileName string) (string, error) {
+// UploadDataURIToPublicHost preserves backward compatibility while delegating to UploadBytesToImageHost.
+func (c *DuomiClient) UploadDataURIToPublicHost(ctx context.Context, dataURI string) (string, error) {
+	raw := strings.TrimSpace(dataURI)
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw, nil
+	}
+	imgBytes, ext, err := DecodeDataURI(raw)
+	if err != nil {
+		return "", err
+	}
+	pubURL, _, err := c.UploadBytesToImageHost(ctx, imgBytes, ext, ImageHostOptions{
+		Provider:        "auto",
+		LitterboxExpiry: "12h",
+	})
+	return pubURL, err
+}
+
+func uploadToLitterbox(ctx context.Context, data []byte, fileName string, expiry string) (string, error) {
+	if expiry == "" {
+		expiry = "12h"
+	}
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
 	_ = mw.WriteField("reqtype", "fileupload")
-	_ = mw.WriteField("time", "1h")
+	_ = mw.WriteField("time", expiry)
 	fw, err := mw.CreateFormFile("fileToUpload", fileName)
 	if err != nil {
 		return "", err
@@ -507,7 +788,7 @@ func uploadToLitterbox(ctx context.Context, data []byte, fileName string) (strin
 		return "", err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -519,7 +800,7 @@ func uploadToLitterbox(ctx context.Context, data []byte, fileName string) (strin
 	if resp.StatusCode == http.StatusOK && strings.HasPrefix(urlStr, "https://") {
 		return urlStr, nil
 	}
-	return "", fmt.Errorf("litterbox status %d: %s", resp.StatusCode, truncateStr(urlStr, 120))
+	return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(urlStr, 100))
 }
 
 func uploadToCatbox(ctx context.Context, data []byte, fileName string) (string, error) {
@@ -540,7 +821,7 @@ func uploadToCatbox(ctx context.Context, data []byte, fileName string) (string, 
 		return "", err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -552,7 +833,7 @@ func uploadToCatbox(ctx context.Context, data []byte, fileName string) (string, 
 	if resp.StatusCode == http.StatusOK && strings.HasPrefix(urlStr, "https://") {
 		return urlStr, nil
 	}
-	return "", fmt.Errorf("catbox status %d: %s", resp.StatusCode, truncateStr(urlStr, 120))
+	return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(urlStr, 100))
 }
 
 func uploadToTmpFiles(ctx context.Context, data []byte, fileName string) (string, error) {
@@ -572,7 +853,7 @@ func uploadToTmpFiles(ctx context.Context, data []byte, fileName string) (string
 		return "", err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -586,7 +867,7 @@ func uploadToTmpFiles(ctx context.Context, data []byte, fileName string) (string
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(respBytes, &parsed); err != nil || parsed.Data.URL == "" {
-		return "", fmt.Errorf("tmpfiles status %d", resp.StatusCode)
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	u := strings.Replace(parsed.Data.URL, "http://tmpfiles.org/", "https://tmpfiles.org/dl/", 1)
 	u = strings.Replace(u, "https://tmpfiles.org/", "https://tmpfiles.org/dl/", 1)
@@ -610,7 +891,7 @@ func uploadToUguu(ctx context.Context, data []byte, fileName string) (string, er
 		return "", err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -626,7 +907,7 @@ func uploadToUguu(ctx context.Context, data []byte, fileName string) (string, er
 	if err := json.Unmarshal(respBytes, &parsed); err == nil && len(parsed.Files) > 0 && parsed.Files[0].URL != "" {
 		return parsed.Files[0].URL, nil
 	}
-	return "", fmt.Errorf("uguu status %d", resp.StatusCode)
+	return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 }
 
 func uploadTo0x0(ctx context.Context, data []byte, fileName string) (string, error) {
@@ -646,7 +927,7 @@ func uploadTo0x0(ctx context.Context, data []byte, fileName string) (string, err
 		return "", err
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -658,7 +939,98 @@ func uploadTo0x0(ctx context.Context, data []byte, fileName string) (string, err
 	if resp.StatusCode == http.StatusOK && strings.HasPrefix(urlStr, "https://") {
 		return urlStr, nil
 	}
-	return "", fmt.Errorf("0x0 status %d", resp.StatusCode)
+	return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+}
+
+func uploadToCustomHost(ctx context.Context, data []byte, fileName string, opts ImageHostOptions) (string, error) {
+	fieldName := strings.TrimSpace(opts.CustomField)
+	if fieldName == "" {
+		fieldName = "file"
+	}
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile(fieldName, fileName)
+	if err != nil {
+		return "", err
+	}
+	if _, err := fw.Write(data); err != nil {
+		return "", err
+	}
+	_ = mw.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSpace(opts.CustomURL), &body)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
+	if auth := strings.TrimSpace(opts.CustomAuth); auth != "" {
+		req.Header.Set("Authorization", auth)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	respBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	rawText := strings.TrimSpace(string(respBytes))
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncateStr(rawText, 120))
+	}
+	if strings.HasPrefix(rawText, "https://") || strings.HasPrefix(rawText, "http://") {
+		return rawText, nil
+	}
+
+	var jsonObj any
+	if err := json.Unmarshal(respBytes, &jsonObj); err == nil {
+		// Check user-specified JSON path first, then common image host paths (LskyPro, Chevereto, SM.MS, Imgur, etc.)
+		candidatePaths := []string{
+			strings.TrimSpace(opts.CustomJSONPath),
+			"url",
+			"data.url",
+			"data.links.url",
+			"image.url",
+			"links.url",
+			"result.url",
+		}
+		for _, p := range candidatePaths {
+			if p == "" {
+				continue
+			}
+			if val := extractJSONStringByPath(jsonObj, p); strings.HasPrefix(val, "https://") || strings.HasPrefix(val, "http://") {
+				return val, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("未能从自定义图床响应中解析出图片 URL: %s", truncateStr(rawText, 120))
+}
+
+func extractJSONStringByPath(root any, dotPath string) string {
+	cur := root
+	for _, seg := range strings.Split(dotPath, ".") {
+		seg = strings.TrimSpace(seg)
+		if seg == "" {
+			continue
+		}
+		switch node := cur.(type) {
+		case map[string]any:
+			cur = node[seg]
+		case []any:
+			idx, err := strconv.Atoi(seg)
+			if err != nil || idx < 0 || idx >= len(node) {
+				return ""
+			}
+			cur = node[idx]
+		default:
+			return ""
+		}
+	}
+	if s, ok := cur.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
 }
 
 func isLocalTestURL(u string) bool {
@@ -688,25 +1060,36 @@ func cloneMap(m map[string]any) map[string]any {
 	return out
 }
 
-// CreateTask submits an asynchronous image generation task to POST /v1/images/generations?async=true.
+// CreateTask submits an asynchronous image generation task (backward-compatible signature).
 func (c *DuomiClient) CreateTask(ctx context.Context, baseURL, apiKey string, req CreateImageRequest) (string, string, error) {
+	res, err := c.CreateTaskDetailed(ctx, baseURL, apiKey, req)
+	if err != nil {
+		return "", res.RawResponse, err
+	}
+	return res.TaskID, res.RawResponse, nil
+}
+
+// CreateTaskDetailed submits an asynchronous image generation task while strictly honoring req.RefMode
+// ("upload" default vs optional "compress_base64" / "raw_base64") and returning transparent fallback info.
+func (c *DuomiClient) CreateTaskDetailed(ctx context.Context, baseURL, apiKey string, req CreateImageRequest) (CreateTaskResult, error) {
+	var out CreateTaskResult
 	apiKey = NormalizeAPIKey(apiKey)
 	if apiKey == "" {
-		return "", "", errors.New("未配置 API Key，请先在设置中填写多米 API 密钥")
+		return out, errors.New("未配置 API Key，请先在设置中填写多米 API 密钥")
 	}
 	req.Model = strings.TrimSpace(req.Model)
 	if req.Model == "" {
-		req.Model = "gpt-image-2"
+		req.Model = "gpt-image-2.6-flare"
 	}
 	req.Prompt = strings.TrimSpace(req.Prompt)
 	if req.Prompt == "" {
-		return "", "", errors.New("提示词 (prompt) 不能为空")
+		return out, errors.New("提示词 (prompt) 不能为空")
 	}
 	if len([]rune(req.Prompt)) > 5000 {
-		return "", "", errors.New("提示词长度超过 5000 字符上限")
+		return out, errors.New("提示词长度超过 5000 字符上限")
 	}
 	if err := ValidateSize(req.Size); err != nil {
-		return "", "", err
+		return out, err
 	}
 
 	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -716,9 +1099,11 @@ func (c *DuomiClient) CreateTask(ctx context.Context, baseURL, apiKey string, re
 	isLocalTest := isLocalTestURL(endpoint)
 	endpoint += "/v1/images/generations?async=true"
 
-	// Convert data:image/...;base64 reference images to public https:// URLs when possible,
-	// because DuomiAPI's async task queue & upstream image-to-image channels expect image URLs
-	// and frequently reject large base64 strings with HTTP 400 fail_to_submit_task.
+	refMode := strings.TrimSpace(req.RefMode)
+	if refMode == "" {
+		refMode = "upload"
+	}
+
 	var resolvedImages []string
 	var rawBase64Images []string
 	for _, img := range req.Image {
@@ -732,11 +1117,19 @@ func (c *DuomiClient) CreateTask(ctx context.Context, baseURL, apiKey string, re
 			} else {
 				rawBase64Images = append(rawBase64Images, trimmed)
 			}
-			if !isLocalTest {
-				if pubURL, upErr := c.UploadDataURIToPublicHost(ctx, trimmed); upErr == nil && pubURL != "" {
-					resolvedImages = append(resolvedImages, pubURL)
-					continue
+			// Only upload to image host when refMode == "upload" (default).
+			// When user explicitly selected "compress_base64" or "raw_base64", NEVER upload to public image host!
+			if refMode == "upload" && !isLocalTest {
+				imgBytes, ext, decErr := DecodeDataURI(trimmed)
+				if decErr != nil {
+					return out, decErr
 				}
+				pubURL, _, upErr := c.UploadBytesToImageHost(ctx, imgBytes, ext, req.HostOpts)
+				if upErr != nil {
+					return out, fmt.Errorf("%w（若当前网络无法连接公网图床，可在参考图选项中切换为「压缩并转 Base64」重试）", upErr)
+				}
+				resolvedImages = append(resolvedImages, pubURL)
+				continue
 			}
 		} else {
 			rawBase64Images = append(rawBase64Images, trimmed)
@@ -744,10 +1137,6 @@ func (c *DuomiClient) CreateTask(ctx context.Context, baseURL, apiKey string, re
 		resolvedImages = append(resolvedImages, trimmed)
 	}
 
-	// Build clean JSON map strictly matching DuomiAPI OpenAPI spec (api-192667743).
-	// Note: `n` is NOT in DuomiAPI's /v1/images/generations?async=true spec (passing `n` causes fail_to_submit_task);
-	// multi-image generation is handled by submitting N independent async tasks.
-	// Also omit `background` when it is "auto" (default) to match the official reference-image example.
 	basePayload := map[string]any{
 		"model":   req.Model,
 		"prompt":  req.Prompt,
@@ -770,65 +1159,90 @@ func (c *DuomiClient) CreateTask(ctx context.Context, baseURL, apiKey string, re
 	}
 
 	taskID, rawStr, statusCode, err := c.doPostCreateTask(ctx, endpoint, apiKey, basePayload)
+	out.RawResponse = rawStr
+	out.ActualSize = req.Size
 	if err == nil {
-		return taskID, rawStr, nil
+		out.TaskID = taskID
+		return out, nil
 	}
 
-	// If DuomiAPI returns HTTP 400 fail_to_submit_task, automatically try compatible parameter fallbacks:
-	// 1. Some upstream channels (e.g. gpt-image-2.6-sunburst or reference-image mode) reject custom 4K WxH
-	//    like "3840x2160" and require aspect ratio strings ("16:9", "4:3") or standard resolutions ("1792x1024").
-	// 2. Go backends checking `len(prompt) <= 5000` measure UTF-8 bytes (where 2600 Chinese chars = ~7500 bytes > 5000).
-	// 3. Some upstream channels expect `image` as a single string when 1 image is provided, or raw base64 without data URI header.
-	if statusCode == http.StatusBadRequest && strings.Contains(strings.ToLower(rawStr), "fail_to_submit_task") {
+	if !req.DisableCompatFallback && statusCode == http.StatusBadRequest && strings.Contains(strings.ToLower(rawStr), "fail_to_submit_task") {
 		ratioStr, stdSize := InferAspectRatioFromSize(req.Size)
-		var fallbackPayloads []map[string]any
+		type fallbackAttempt struct {
+			payload map[string]any
+			size    string
+			note    string
+		}
+		var attempts []fallbackAttempt
 
-		// Fallback A: Replace custom WxH (e.g. "3840x2160") with aspect ratio string (e.g. "16:9")
 		if req.Size != "" && req.Size != ratioStr {
 			p1 := cloneMap(basePayload)
 			p1["size"] = ratioStr
-			fallbackPayloads = append(fallbackPayloads, p1)
+			attempts = append(attempts, fallbackAttempt{
+				payload: p1,
+				size:    ratioStr,
+				note:    fmt.Sprintf("上游渠道拒绝尺寸 %s，已自动兼容切换为比例 %s 提交成功", req.Size, ratioStr),
+			})
 		}
 
-		// Fallback B: Replace custom WxH with standard OpenAI enum resolution ("1792x1024" / "1024x1792" / "1024x1024")
 		if req.Size != "" && req.Size != stdSize {
 			p2 := cloneMap(basePayload)
 			p2["size"] = stdSize
-			fallbackPayloads = append(fallbackPayloads, p2)
+			attempts = append(attempts, fallbackAttempt{
+				payload: p2,
+				size:    stdSize,
+				note:    fmt.Sprintf("上游渠道拒绝尺寸 %s，已自动兼容切换为官方标准尺寸 %s 提交成功", req.Size, stdSize),
+			})
 		}
 
-		// Fallback C: If prompt exceeds 4800 UTF-8 bytes (Go `len(prompt) > 5000` byte check), truncate to <= 4800 UTF-8 bytes
 		if len(req.Prompt) > 4800 {
 			shortPrompt := truncateUTF8Bytes(req.Prompt, 4800)
 			p3 := cloneMap(basePayload)
 			p3["prompt"] = shortPrompt
-			fallbackPayloads = append(fallbackPayloads, p3)
+			attempts = append(attempts, fallbackAttempt{
+				payload: p3,
+				size:    req.Size,
+				note:    "提示词 UTF-8 字节超 5000，已自动按安全字符边界精简并提交成功",
+			})
 
 			if req.Size != "" && req.Size != ratioStr {
 				p4 := cloneMap(p3)
 				p4["size"] = ratioStr
-				fallbackPayloads = append(fallbackPayloads, p4)
+				attempts = append(attempts, fallbackAttempt{
+					payload: p4,
+					size:    ratioStr,
+					note:    fmt.Sprintf("已自动兼容切换为比例 %s 并对齐 4800 UTF-8 字节上限提交成功", ratioStr),
+				})
 			}
 		}
 
-		// Fallback D: If 1 reference image is still a data:image/ base64 URI, try raw base64 without header
 		if len(resolvedImages) > 0 && strings.HasPrefix(resolvedImages[0], "data:image/") && len(rawBase64Images) > 0 {
 			p5 := cloneMap(basePayload)
 			p5["image"] = rawBase64Images
+			actualS := req.Size
 			if req.Size != "" && req.Size != ratioStr {
 				p5["size"] = ratioStr
+				actualS = ratioStr
 			}
-			fallbackPayloads = append(fallbackPayloads, p5)
+			attempts = append(attempts, fallbackAttempt{
+				payload: p5,
+				size:    actualS,
+				note:    "已自动剥离 Base64 DataURI 前缀兼容提交成功",
+			})
 		}
 
-		for _, fbPayload := range fallbackPayloads {
-			if fbID, fbRaw, _, fbErr := c.doPostCreateTask(ctx, endpoint, apiKey, fbPayload); fbErr == nil && fbID != "" {
-				return fbID, fbRaw, nil
+		for _, att := range attempts {
+			if fbID, fbRaw, _, fbErr := c.doPostCreateTask(ctx, endpoint, apiKey, att.payload); fbErr == nil && fbID != "" {
+				out.TaskID = fbID
+				out.RawResponse = fbRaw
+				out.ActualSize = att.size
+				out.WarningMsg = att.note
+				return out, nil
 			}
 		}
 	}
 
-	return "", rawStr, err
+	return out, err
 }
 
 func (c *DuomiClient) doPostCreateTask(ctx context.Context, endpoint, apiKey string, payload map[string]any) (string, string, int, error) {
@@ -841,11 +1255,10 @@ func (c *DuomiClient) doPostCreateTask(ctx context.Context, endpoint, apiKey str
 	if err != nil {
 		return "", "", 0, fmt.Errorf("创建 HTTP 请求失败: %w", err)
 	}
-	// Crucial per DuomiAPI docs: raw API key in Authorization header WITHOUT "Bearer " prefix
 	httpReq.Header.Set("Authorization", apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	httpReq.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -863,12 +1276,12 @@ func (c *DuomiClient) doPostCreateTask(ctx context.Context, endpoint, apiKey str
 		hint := ""
 		lowerRaw := strings.ToLower(rawStr)
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
-			hint = "（请检查 API Key 是否正确且余额充足；注意无需加 Bearer 前缀）"
+			hint = "（请检查 API Key 是否正确且账户余额充足；注意无需加 Bearer 前缀）"
 		} else if strings.Contains(lowerRaw, "fail_to_submit_task") {
-			hint = "（上游提交任务失败：若使用了本地参考图，建议使用图片直链 URL 或开启自动转直链/压缩；若提示词超过 1600 个汉字/5000 UTF-8 字节，建议适当精简；或尝试切换为仅传比例/2K尺寸）"
+			hint = "（上游渠道提交失败：若使用了 Base64 参考图，建议切换为默认的「自动传图床」模式；若提示词超 1600 汉字，建议精简；或尝试 2K / 仅传比例）"
 		} else if (resp.StatusCode == 400 || resp.StatusCode == 413 || resp.StatusCode == 422) &&
 			(strings.Contains(lowerRaw, "size") || strings.Contains(lowerRaw, "large") || strings.Contains(lowerRaw, "body")) {
-			hint = "（本地参考图 base64 请求体可能过大，建议开启自动压缩或使用图片直链 URL）"
+			hint = "（Base64 请求体过大，建议切换为「自动传图床」或「压缩并转 Base64」）"
 		}
 		return "", rawStr, resp.StatusCode, fmt.Errorf("API 返回错误 (HTTP %d)%s: %s", resp.StatusCode, hint, truncateStr(rawStr, 500))
 	}
@@ -895,6 +1308,66 @@ func (c *DuomiClient) doPostCreateTask(ctx context.Context, endpoint, apiKey str
 	return taskID, rawStr, resp.StatusCode, nil
 }
 
+// ConnectivityTestResult reports endpoint reachability, auth status, and round-trip latency.
+type ConnectivityTestResult struct {
+	OK        bool   `json:"ok"`
+	LatencyMs int64  `json:"latency_ms"`
+	Status    int    `json:"status"`
+	Message   string `json:"message"`
+}
+
+// TestConnection verifies whether BaseURL is reachable and whether the API Key passes DuomiAPI authentication.
+func (c *DuomiClient) TestConnection(ctx context.Context, baseURL, apiKey string) ConnectivityTestResult {
+	apiKey = NormalizeAPIKey(apiKey)
+	if apiKey == "" {
+		return ConnectivityTestResult{OK: false, Message: "请先输入 API Key"}
+	}
+	endpoint := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if endpoint == "" {
+		endpoint = "https://duomiapi.com"
+	}
+	probeURL := endpoint + "/v1/tasks/duomi-studio-auth-check"
+
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, probeURL, nil)
+	if err != nil {
+		return ConnectivityTestResult{OK: false, Message: "无效的接口地址: " + err.Error()}
+	}
+	req.Header.Set("Authorization", apiKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
+
+	resp, err := c.httpClient.Do(req)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return ConnectivityTestResult{
+			OK:        false,
+			LatencyMs: latency,
+			Message:   "网络连接失败: " + err.Error(),
+		}
+	}
+	defer resp.Body.Close()
+	rawBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	rawStr := strings.ToLower(strings.TrimSpace(string(rawBytes)))
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
+		strings.Contains(rawStr, "invalid_api_key") || strings.Contains(rawStr, "unauthorized") || strings.Contains(rawStr, "无效的令牌") {
+		return ConnectivityTestResult{
+			OK:        false,
+			LatencyMs: latency,
+			Status:    resp.StatusCode,
+			Message:   fmt.Sprintf("连接已建立 (%dms)，但密钥鉴权未通过 (HTTP %d)，请检查 API Key 是否正确", latency, resp.StatusCode),
+		}
+	}
+
+	return ConnectivityTestResult{
+		OK:        true,
+		LatencyMs: latency,
+		Status:    resp.StatusCode,
+		Message:   fmt.Sprintf("连接正常 · 鉴权通过 · 响应延迟 %d ms", latency),
+	}
+}
+
 // GetTask queries the asynchronous task status via GET /v1/tasks/{id}.
 func (c *DuomiClient) GetTask(ctx context.Context, baseURL, apiKey, taskID string) (*TaskQueryResponse, string, error) {
 	apiKey = NormalizeAPIKey(apiKey)
@@ -918,7 +1391,7 @@ func (c *DuomiClient) GetTask(ctx context.Context, baseURL, apiKey, taskID strin
 	}
 	httpReq.Header.Set("Authorization", apiKey)
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	httpReq.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -953,7 +1426,7 @@ func (c *DuomiClient) DownloadImage(ctx context.Context, remoteURL, imagesDir, t
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "DuomiAPI-Image-Gen-Go/1.0")
+	req.Header.Set("User-Agent", "DuomiAPI-Image-Studio/2.0")
 
 	resp, err := dlClient.Do(req)
 	if err != nil {
@@ -1020,9 +1493,15 @@ func SaveBase64Image(b64Data, imagesDir, taskID string, index int) (string, erro
 	return localFile, nil
 }
 
-// EncodeLocalFileOrURL converts a local file path to a data:image/...;base64 string,
-// or returns the string unchanged if it's already a URL or data URI.
+// EncodeLocalFileOrURL processes a local file path or URL according to mode:
+// - "upload" (default): returns data URI for CreateTaskDetailed to upload losslessly, or direct URL if already http(s)
+// - "compress_base64": compresses & strips metadata locally in pure Go, returning compact JPEG data URI
+// - "raw_base64": encodes raw file bytes to data URI without modification
 func EncodeLocalFileOrURL(input string) (string, error) {
+	return ProcessLocalFileOrURL(input, "raw_base64", 1536, 85)
+}
+
+func ProcessLocalFileOrURL(input string, mode string, maxDim int, quality int) (string, error) {
 	trimmed := strings.TrimSpace(input)
 	if trimmed == "" {
 		return "", nil
@@ -1038,19 +1517,14 @@ func EncodeLocalFileOrURL(input string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("读取参考图文件失败: %w", err)
 	}
-	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(trimmed), "."))
-	mime := "png"
-	switch ext {
-	case "jpg", "jpeg":
-		mime = "jpeg"
-	case "webp":
-		mime = "webp"
-	case "gif":
-		mime = "gif"
-	case "bmp":
-		mime = "bmp"
+	ext := filepath.Ext(trimmed)
+	if mode == "compress_base64" {
+		uri, _, _, _, cErr := CompressImageBytesToBase64(data, maxDim, quality)
+		if cErr == nil && uri != "" {
+			return uri, nil
+		}
 	}
-	return fmt.Sprintf("data:image/%s;base64,%s", mime, base64.StdEncoding.EncodeToString(data)), nil
+	return EncodeBytesToDataURI(data, ext), nil
 }
 
 func detectImageExt(remoteURL, suggestedName, contentType string) string {

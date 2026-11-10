@@ -1,12 +1,21 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -312,3 +321,242 @@ func TestEmbeddedReactStaticAssets(t *testing.T) {
 		}
 	}
 }
+
+func makeSyntheticPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.Set(x, y, color.RGBA{
+				R: uint8((x * 255) / w),
+				G: uint8((y * 255) / h),
+				B: 160,
+				A: 255,
+			})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("png.Encode failed: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestCompressImageBytesToBase64(t *testing.T) {
+	rawPNG := makeSyntheticPNG(t, 1600, 1200)
+	dataURI, outBytes, outW, outH, err := CompressImageBytesToBase64(rawPNG, 800, 82)
+	if err != nil {
+		t.Fatalf("CompressImageBytesToBase64 failed: %v", err)
+	}
+	if !strings.HasPrefix(dataURI, "data:image/jpeg;base64,") {
+		t.Fatalf("expected data:image/jpeg;base64, prefix, got %q", dataURI[:32])
+	}
+	if outW != 800 || outH != 600 {
+		t.Fatalf("expected resized 800x600, got %dx%d", outW, outH)
+	}
+	if outBytes <= 0 || outBytes >= len(rawPNG) {
+		t.Fatalf("expected compressed size < rawPNG (%d), got %d", len(rawPNG), outBytes)
+	}
+}
+
+func TestUploadRefModesAndStrictRefModeIsolation(t *testing.T) {
+	rawPNG := makeSyntheticPNG(t, 1200, 900)
+
+	var hostUploads atomic.Int32
+	mockImageHost := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hostUploads.Add(1)
+		if r.Header.Get("Authorization") != "Bearer custom-host-token" {
+			http.Error(w, "bad custom host auth", http.StatusUnauthorized)
+			return
+		}
+		file, _, err := r.FormFile("image_file")
+		if err != nil {
+			http.Error(w, "missing image_file field: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
+		uploadedBytes, _ := io.ReadAll(file)
+		// Verify lossless upload: exact original PNG bytes must arrive untouched!
+		if !bytes.Equal(uploadedBytes, rawPNG) {
+			http.Error(w, "uploaded bytes were modified/compressed instead of lossless!", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":true,"payload":{"direct_url":"https://cdn.example.test/lossless-orig.png"}}`))
+	}))
+	defer mockImageHost.Close()
+
+	store, err := NewStore(filepath.Join(t.TempDir(), "duomi_data"))
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	cfg := store.GetConfig()
+	cfg.APIKey = "duomi-test-key"
+	cfg.RefImageMode = "upload" // Default mode: automatic lossless image host upload
+	cfg.ImageHostProvider = "custom"
+	cfg.CustomUploadURL = mockImageHost.URL + "/upload"
+	cfg.CustomUploadField = "image_file"
+	cfg.CustomUploadAuthHeader = "Bearer custom-host-token"
+	cfg.CustomUploadJSONPath = "payload.direct_url"
+	if err := store.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig failed: %v", err)
+	}
+
+	appSrv := NewAppServer(store, NewDuomiClient())
+	ts := httptest.NewServer(appSrv.Handler())
+	defer ts.Close()
+
+	// 1. Default mode ("upload"): multipart lossless upload -> returns direct URL + caches local_ref
+	var mpBuf bytes.Buffer
+	mw := multipart.NewWriter(&mpBuf)
+	_ = mw.WriteField("mode", "upload")
+	fw, _ := mw.CreateFormFile("file", "photo.png")
+	_, _ = fw.Write(rawPNG)
+	_ = mw.Close()
+
+	resp, err := http.Post(ts.URL+"/api/upload-ref", mw.FormDataContentType(), &mpBuf)
+	if err != nil {
+		t.Fatalf("POST /api/upload-ref failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected 200 OK for lossless upload, got %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+	var upRes map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&upRes)
+	if upRes["url"] != "https://cdn.example.test/lossless-orig.png" {
+		t.Fatalf("unexpected url: %v", upRes["url"])
+	}
+	localRef, _ := upRes["local_ref"].(string)
+	if !strings.HasPrefix(localRef, "refs/") {
+		t.Fatalf("expected cached local_ref under refs/, got %q", localRef)
+	}
+	if hostUploads.Load() != 1 {
+		t.Fatalf("expected 1 image host upload, got %d", hostUploads.Load())
+	}
+
+	// 2. Switch to optional "compress_base64" mode using cached local_ref -> must NOT touch image host
+	reconvReq, _ := json.Marshal(map[string]any{
+		"local_ref":        localRef,
+		"mode":             "compress_base64",
+		"compress_max_dim": 640,
+		"compress_quality": 80,
+	})
+	resp2, err := http.Post(ts.URL+"/api/upload-ref", "application/json", bytes.NewReader(reconvReq))
+	if err != nil {
+		t.Fatalf("re-convert compress_base64 failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for compress_base64, got %d", resp2.StatusCode)
+	}
+	var b64Res map[string]any
+	_ = json.NewDecoder(resp2.Body).Decode(&b64Res)
+	b64Val, _ := b64Res["value"].(string)
+	if !strings.HasPrefix(b64Val, "data:image/jpeg;base64,") {
+		t.Fatalf("expected compressed JPEG data URI, got %q", b64Val[:24])
+	}
+	if hostUploads.Load() != 1 {
+		t.Fatalf("compress_base64 must NOT upload to image host, uploads=%d", hostUploads.Load())
+	}
+
+	// 3. Verify CreateTaskDetailed strictly respects RefMode="compress_base64" and sends Base64 directly without uploading
+	var receivedImages []any
+	mockDuomi := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		if imgs, ok := payload["image"].([]any); ok {
+			receivedImages = imgs
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"b64-task-001"}`))
+	}))
+	defer mockDuomi.Close()
+
+	res, err := appSrv.client.CreateTaskDetailed(context.Background(), mockDuomi.URL, "duomi-test-key", CreateImageRequest{
+		Model:    "gpt-image-2.6-flare",
+		Prompt:   "keep base64 local",
+		Size:     "1:1",
+		Image:    []string{b64Val},
+		RefMode:  "compress_base64",
+		HostOpts: ImageHostOptions{Provider: "custom", CustomURL: mockImageHost.URL + "/upload"},
+	})
+	if err != nil || res.TaskID != "b64-task-001" {
+		t.Fatalf("CreateTaskDetailed failed: res=%+v err=%v", res, err)
+	}
+	if hostUploads.Load() != 1 {
+		t.Fatalf("expected zero additional host uploads when RefMode=compress_base64, got %d", hostUploads.Load())
+	}
+	if len(receivedImages) != 1 || !strings.HasPrefix(receivedImages[0].(string), "data:image/jpeg;base64,") {
+		t.Fatalf("expected DuomiAPI to receive data:image/jpeg;base64 directly, got %v", receivedImages)
+	}
+}
+
+func TestStarBatchDeleteAndZipExport(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "duomi_data"))
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	pngBytes := makeSyntheticPNG(t, 64, 64)
+	imgFileName := "sample_art.png"
+	if err := os.WriteFile(filepath.Join(store.ImagesDir(), imgFileName), pngBytes, 0644); err != nil {
+		t.Fatalf("write sample image failed: %v", err)
+	}
+
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:     "rec-ok-1",
+		Model:  "gpt-image-2.6-flare",
+		Prompt: "sunset over mountains",
+		State:  "succeeded",
+		Images: []SavedImage{{LocalFile: imgFileName, Width: 64, Height: 64, SizeBytes: int64(len(pngBytes))}},
+	})
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:       "rec-fail-1",
+		Model:    "gpt-image-2.6-flare",
+		Prompt:   "broken task",
+		State:    "failed",
+		ErrorMsg: "mock error",
+	})
+
+	appSrv := NewAppServer(store, NewDuomiClient())
+	ts := httptest.NewServer(appSrv.Handler())
+	defer ts.Close()
+
+	// Star rec-ok-1
+	starResp, err := http.Post(ts.URL+"/api/records/star", "application/json", strings.NewReader(`{"id":"rec-ok-1","starred":true}`))
+	if err != nil || starResp.StatusCode != http.StatusOK {
+		t.Fatalf("star record failed: err=%v status=%v", err, starResp)
+	}
+	starResp.Body.Close()
+	if rec, ok := store.GetRecord("rec-ok-1"); !ok || !rec.Starred {
+		t.Fatalf("expected rec-ok-1 to be starred, got %+v", rec)
+	}
+
+	// Export ZIP archive
+	zipResp, err := http.Get(ts.URL + "/api/records/export-zip?ids=rec-ok-1")
+	if err != nil || zipResp.StatusCode != http.StatusOK {
+		t.Fatalf("export-zip failed: err=%v status=%v", err, zipResp)
+	}
+	zipBytes, _ := io.ReadAll(zipResp.Body)
+	zipResp.Body.Close()
+
+	zr, err := zip.NewReader(bytes.NewReader(zipBytes), int64(len(zipBytes)))
+	if err != nil || len(zr.File) != 2 {
+		t.Fatalf("expected valid zip with 2 entries (image + manifest.json), got err=%v files=%d", err, len(zr.File))
+	}
+
+	// Clear failed records
+	delResp, err := http.Post(ts.URL+"/api/records/batch-delete", "application/json", strings.NewReader(`{"clear_failed":true}`))
+	if err != nil || delResp.StatusCode != http.StatusOK {
+		t.Fatalf("batch-delete clear_failed failed: err=%v", err)
+	}
+	delResp.Body.Close()
+	if _, exists := store.GetRecord("rec-fail-1"); exists {
+		t.Fatalf("expected failed record rec-fail-1 to be removed")
+	}
+	if _, exists := store.GetRecord("rec-ok-1"); !exists {
+		t.Fatalf("expected succeeded record rec-ok-1 to remain")
+	}
+}
+

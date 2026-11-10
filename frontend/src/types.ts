@@ -1,3 +1,14 @@
+export type RefImageMode = "upload" | "compress_base64" | "raw_base64"
+
+export type ImageHostProvider =
+  | "auto"
+  | "litterbox"
+  | "catbox"
+  | "tmpfiles"
+  | "uguu"
+  | "0x0"
+  | "custom"
+
 export interface SizePresetItem {
   value: string
   tier: string
@@ -22,11 +33,42 @@ export interface ModelInfo {
   description: string
 }
 
+export interface ImageHostInfo {
+  id: ImageHostProvider
+  name: string
+  desc: string
+}
+
+export interface PromptTemplate {
+  id: string
+  title: string
+  category: string
+  prompt: string
+  model?: string
+  size?: string
+  quality?: string
+  built_in?: boolean
+  created_at?: number
+}
+
+export interface DiskUsageStats {
+  data_dir: string
+  images_dir: string
+  generated_count: number
+  ref_cache_count: number
+  record_count: number
+  total_bytes: number
+}
+
 export interface ServerInfoResponse {
+  version: string
   data_dir: string
   images_dir: string
   has_key: boolean
+  disk_stats: DiskUsageStats
   ratio_presets: RatioPresetGroup[]
+  builtin_templates: PromptTemplate[]
+  image_hosts: ImageHostInfo[]
   models: ModelInfo[]
 }
 
@@ -39,16 +81,39 @@ export interface AppConfig {
   poll_interval: number
   poll_timeout: number
   auto_download: boolean
+  ref_image_mode: RefImageMode
+  image_host_provider: ImageHostProvider
+  litterbox_expiry: "1h" | "12h" | "24h" | "72h" | string
+  custom_upload_url: string
+  custom_upload_field: string
+  custom_upload_auth: string
+  custom_upload_json_path: string
+  compress_max_dim: number
+  compress_quality: number
+  auto_compat_fallback: boolean
+  prompt_templates?: PromptTemplate[]
 }
 
 export interface SavedImage {
   remote_url: string
   local_file: string
   file_name: string
+  width?: number
+  height?: number
+  size_bytes?: number
+}
+
+export interface SavedRefImage {
+  local_ref?: string
+  remote_url?: string
+  mode?: string
+  provider?: string
+  label?: string
 }
 
 export interface TaskRecord {
   id: string
+  batch_id?: string
   model: string
   prompt: string
   size: string
@@ -57,23 +122,66 @@ export interface TaskRecord {
   n: number
   oversea: boolean
   callback_url?: string
+  ref_mode?: string
   ref_count: number
   ref_previews?: string[]
-  state: "pending" | "running" | "succeeded" | "error" | "failed" | "timeout" | string
+  ref_items?: SavedRefImage[]
+  starred?: boolean
+  state:
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "error"
+    | "failed"
+    | "timeout"
+    | "canceled"
+    | string
   progress: number
   images?: SavedImage[]
   description?: string
+  warning_msg?: string
   error_msg?: string
   create_time: number
   update_time: number
+  duration_ms?: number
   raw_response?: string
 }
 
 export interface ReferenceImageEntry {
   id: string
-  type: "url" | "base64"
-  value: string
+  mode: RefImageMode | "url"
+  value: string // URL or data:image/...;base64,...
   preview: string
+  local_ref?: string // e.g. "refs/ref_xxxx.jpg"
+  remote_url?: string
+  provider?: string
   label: string
+  width?: number
+  height?: number
+  size_bytes?: number
+  orig_bytes?: number
   uploading?: boolean
+  error?: string
+}
+
+export interface UploadRefResponse {
+  mode: RefImageMode
+  url?: string
+  value: string
+  provider?: string
+  local_ref?: string
+  preview_url?: string
+  size_bytes?: number
+  orig_bytes?: number
+  width?: number
+  height?: number
+  label?: string
+  error?: string
+}
+
+export interface ConnectivityTestResult {
+  ok: boolean
+  latency_ms: number
+  status?: number
+  message: string
 }

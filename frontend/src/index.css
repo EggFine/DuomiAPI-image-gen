@@ -3,48 +3,48 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: hsl(40 20% 98%);
-  --foreground: hsl(240 10% 8%);
+  --background: hsl(40 18% 97.5%);
+  --foreground: hsl(240 10% 9%);
   --card: hsl(0 0% 100%);
-  --card-foreground: hsl(240 10% 8%);
+  --card-foreground: hsl(240 10% 9%);
   --popover: hsl(0 0% 100%);
-  --popover-foreground: hsl(240 10% 8%);
-  --primary: hsl(240 6% 10%);
+  --popover-foreground: hsl(240 10% 9%);
+  --primary: hsl(240 6% 11%);
   --primary-foreground: hsl(0 0% 98%);
-  --secondary: hsl(240 5% 94%);
-  --secondary-foreground: hsl(240 6% 12%);
+  --secondary: hsl(240 5% 93.5%);
+  --secondary-foreground: hsl(240 6% 14%);
   --muted: hsl(240 5% 94%);
-  --muted-foreground: hsl(240 4% 42%);
-  --accent: hsl(240 5% 92%);
+  --muted-foreground: hsl(240 4% 40%);
+  --accent: hsl(240 5% 91.5%);
   --accent-foreground: hsl(240 6% 10%);
-  --destructive: hsl(0 72% 51%);
+  --destructive: hsl(0 72% 50%);
   --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 6% 88%);
-  --input: hsl(240 6% 88%);
-  --ring: hsl(32 95% 44%);
+  --border: hsl(240 6% 87%);
+  --input: hsl(240 6% 86%);
+  --ring: hsl(35 92% 46%);
   --radius: 0.625rem;
 }
 
 .dark {
-  --background: hsl(240 7% 6%);
+  --background: hsl(240 8% 6.5%);
   --foreground: hsl(0 0% 95%);
-  --card: hsl(240 6% 9%);
+  --card: hsl(240 7% 9.5%);
   --card-foreground: hsl(0 0% 95%);
-  --popover: hsl(240 6% 9%);
+  --popover: hsl(240 7% 10%);
   --popover-foreground: hsl(0 0% 95%);
   --primary: hsl(0 0% 96%);
   --primary-foreground: hsl(240 6% 9%);
-  --secondary: hsl(240 5% 14%);
+  --secondary: hsl(240 5% 14.5%);
   --secondary-foreground: hsl(0 0% 94%);
-  --muted: hsl(240 5% 13%);
+  --muted: hsl(240 5% 13.5%);
   --muted-foreground: hsl(240 5% 60%);
-  --accent: hsl(240 5% 16%);
+  --accent: hsl(240 5% 16.5%);
   --accent-foreground: hsl(0 0% 96%);
   --destructive: hsl(0 68% 54%);
   --destructive-foreground: hsl(0 0% 98%);
-  --border: hsl(240 5% 16%);
-  --input: hsl(240 5% 16%);
-  --ring: hsl(36 95% 54%);
+  --border: hsl(240 5% 17%);
+  --input: hsl(240 5% 17%);
+  --ring: hsl(37 95% 52%);
 }
 
 @theme inline {
@@ -84,6 +84,10 @@
   }
 }
 
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
 /* Custom studio scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -93,11 +97,11 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: hsl(240 5% 50% / 0.25);
+  background: hsl(240 5% 50% / 0.24);
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: hsl(240 5% 50% / 0.45);
+  background: hsl(240 5% 50% / 0.44);
 }
 
 /* Checkerboard pattern for transparent PNG previews */
@@ -109,4 +113,17 @@
     linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.12) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.animate-progress-shimmer {
+  animation: progress-indeterminate 1.8s ease-in-out infinite;
 }
