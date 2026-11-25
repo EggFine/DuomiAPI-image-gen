@@ -35,9 +35,12 @@ import {
 } from "@/lib/motion"
 import {
   copyImageToClipboard,
+  fetchRecordDetail,
   formatBytes,
   formatDurationSeconds,
   formatUnixTime,
+  getOriginalImageUrl,
+  getThumbUrl,
   PROJECT_COLOR_MAP,
 } from "@/lib/studio-utils"
 import { cn } from "@/lib/utils"
@@ -114,6 +117,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 
   const [activeRefIdx, setActiveRefIdx] = useState<number>(0)
   const [showRawJson, setShowRawJson] = useState<boolean>(false)
+  const [lazyRawJson, setLazyRawJson] = useState<string>("")
+  const [loadingRawJson, setLoadingRawJson] = useState<boolean>(false)
   const [naturalDim, setNaturalDim] = useState<{ w: number; h: number } | null>(
     null
   )
@@ -134,7 +139,8 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
           label: ri.label || `参考图 #${idx + 1}`,
           mode: ri.mode,
           provider: ri.provider,
-          src: ri.local_ref ? `/images/${ri.local_ref}` : ri.remote_url || "",
+          src: getOriginalImageUrl(ri.local_ref, ri.remote_url),
+          thumbSrc: getThumbUrl(ri.local_ref, ri.remote_url, 160),
         }))
         .filter((ri) => Boolean(ri.src))
     }
@@ -144,6 +150,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
         mode: record.ref_mode,
         provider: "",
         src,
+        thumbSrc: src,
       }))
     }
     return []
@@ -155,6 +162,9 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     setNaturalDim(null)
     setActiveRefIdx(0)
     setNoteDraft(recordNote || "")
+    setShowRawJson(false)
+    setLazyRawJson("")
+    setLoadingRawJson(false)
 
     if (initialCompare && validRefSources.length > 0) {
       setViewMode("curtain")
@@ -162,6 +172,31 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
       setViewMode("single")
     }
   }, [recordId, recordNote, imageIndex, initialCompare, validRefSources.length])
+
+  // Lazy-load raw_response from /api/records/detail only when user expands Raw JSON
+  useEffect(() => {
+    if (!showRawJson || !recordId) return
+    if (record?.raw_response || lazyRawJson) return
+    const ac = new AbortController()
+    setLoadingRawJson(true)
+    fetchRecordDetail(recordId, ac.signal)
+      .then((detail) => {
+        if (!ac.signal.aborted) {
+          setLazyRawJson(detail.raw_response || "(无原始响应内容)")
+        }
+      })
+      .catch((err) => {
+        if (!ac.signal.aborted && err?.name !== "AbortError") {
+          setLazyRawJson(`读取失败: ${err?.message || "未知错误"}`)
+        }
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) {
+          setLoadingRawJson(false)
+        }
+      })
+    return () => ac.abort()
+  }, [showRawJson, recordId, record?.raw_response, lazyRawJson])
 
   // 1. Calm Curtain Wipe intro sweep (38% -> 50%) via CSS variable (--curtain-pos)
   useGSAP(
@@ -634,7 +669,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     )}
                   >
                     <img
-                      src={ref.src}
+                      src={ref.thumbSrc}
                       alt=""
                       className="h-4 w-4 rounded-full object-cover"
                     />
@@ -818,15 +853,17 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
               )}
             </div>
 
-            {/* Borderless Filmstrip */}
+            {/* Borderless Filmstrip — uses 160px local thumbnails */}
             {galleryRecords.length > 1 && onSelectRecord && (
               <div className="flex items-center gap-2 overflow-x-auto px-5 py-3 studio-scroll">
                 {galleryRecords.slice(0, 40).map((item) => {
                   const thumb = item.images?.[0]
                   if (!thumb) return null
-                  const thumbSrc = thumb.local_file
-                    ? `/images/${encodeURIComponent(thumb.local_file)}`
-                    : thumb.remote_url
+                  const thumbSrc = getThumbUrl(
+                    thumb.local_file,
+                    thumb.remote_url,
+                    160
+                  )
                   const selected = item.id === record.id
                   return (
                     <button
@@ -844,6 +881,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                         src={thumbSrc}
                         alt=""
                         loading="lazy"
+                        decoding="async"
                         className="h-full w-full object-cover"
                       />
                     </button>
@@ -1086,7 +1124,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                   )}
                 </div>
 
-                {record.raw_response && (
+                {(record.raw_response || record.has_raw_response) && (
                   <div className="space-y-1.5 px-1">
                     <button
                       type="button"
@@ -1097,7 +1135,9 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                     </button>
                     {showRawJson && (
                       <pre className="max-h-36 overflow-auto rounded-2xl bg-black/70 p-3 text-[10px] font-mono text-zinc-300 studio-scroll">
-                        {record.raw_response}
+                        {loadingRawJson
+                          ? "正在按需加载原始响应..."
+                          : record.raw_response || lazyRawJson}
                       </pre>
                     )}
                   </div>

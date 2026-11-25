@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react"
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react"
 import {
   BookMarked,
   BookmarkPlus,
@@ -42,7 +42,15 @@ import {
   STUDIO_EASE,
   useGSAP,
 } from "@/lib/motion"
-import { parsePixelDimensions, PROJECT_COLOR_MAP } from "@/lib/studio-utils"
+import {
+  getThumbUrl,
+  parsePixelDimensions,
+  PROJECT_COLOR_MAP,
+} from "@/lib/studio-utils"
+import {
+  isComposingEvent,
+  useCompositionInput,
+} from "@/lib/useCompositionInput"
 import { cn } from "@/lib/utils"
 import type {
   ImageHostInfo,
@@ -82,6 +90,7 @@ interface OmnibarComposerProps {
   onChangeCustomModel: (v: string) => void
 
   prompt: string
+  promptRevision?: number
   onChangePrompt: (v: string) => void
   promptHistory: PromptHistoryItem[]
   onOpenZenWorkbench: () => void
@@ -138,7 +147,7 @@ interface OmnibarComposerProps {
   batchCount: number
   onChangeBatchCount: (n: number) => void
   isSubmitting: boolean
-  onSubmitGenerate: () => void
+  onSubmitGenerate: (overridePrompt?: string) => void
   onOpenDevPreview: () => void
   onCollapseOverlay?: () => void
   floating?: boolean
@@ -151,6 +160,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   customModel,
   onChangeCustomModel,
   prompt,
+  promptRevision,
   onChangePrompt,
   promptHistory,
   onOpenZenWorkbench,
@@ -215,7 +225,6 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   const seenRefIdsRef = useRef<Set<string>>(
     new Set(referenceImages.map((r) => r.id))
   )
-  const mountedTextareaRef = useRef<boolean>(false)
   const mountedBatchRef = useRef<boolean>(false)
 
   const [isDragging, setIsDragging] = useState(false)
@@ -225,37 +234,28 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   const [ratioPopoverOpen, setRatioPopoverOpen] = useState(false)
   const [historyPopoverOpen, setHistoryPopoverOpen] = useState(false)
 
+  const {
+    value: localPrompt,
+    valueRef: localPromptRef,
+    composingRef,
+    handleChange: handlePromptChange,
+    handleCompositionStart,
+    handleCompositionEnd,
+    setProgrammaticValue: setPromptDirect,
+    flushValue,
+    isComposingKey,
+  } = useCompositionInput(prompt, onChangePrompt, promptRevision)
+
   const { contextSafe } = useGSAP({ scope: composerRootRef })
 
-  // Smooth GSAP auto-height interpolation on prompt textarea
-  useGSAP(
-    () => {
-      const el = textareaRef.current
-      if (!el) return
-      const prevH = el.offsetHeight
-      el.style.height = "auto"
-      const nextH = Math.min(220, Math.max(58, el.scrollHeight))
-
-      if (
-        !mountedTextareaRef.current ||
-        prefersReducedMotion() ||
-        Math.abs(nextH - prevH) < 2
-      ) {
-        mountedTextareaRef.current = true
-        el.style.height = `${nextH}px`
-        return
-      }
-
-      el.style.height = `${prevH}px`
-      gsap.to(el, {
-        height: nextH,
-        duration: 0.22,
-        ease: STUDIO_EASE.out,
-        overwrite: "auto",
-      })
-    },
-    { scope: composerRootRef, dependencies: [prompt] }
-  )
+  // Lightweight IME-safe auto-height: never mutates textarea layout while CJK IME is active
+  useLayoutEffect(() => {
+    const el = textareaRef.current
+    if (!el || composingRef.current) return
+    el.style.height = "auto"
+    const nextH = Math.min(220, Math.max(58, el.scrollHeight))
+    el.style.height = `${nextH}px`
+  }, [localPrompt, composingRef])
 
   // Calm Apple fluid settle for newly added Reference Image Chips (@图1, @图2...)
   useGSAP(
@@ -335,7 +335,8 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
 
   const triggerGenerateWithShutter = () => {
     animateShutterPulse(submitBtnRef.current)
-    onSubmitGenerate()
+    const flushed = flushValue()
+    onSubmitGenerate(flushed)
   }
 
   const activeModelObj = useMemo(
@@ -360,13 +361,15 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
   )
 
   const promptMetrics = useMemo(() => {
-    const chars = Array.from(prompt).length
-    const utf8Bytes = new TextEncoder().encode(prompt).length
+    const chars = Array.from(localPrompt).length
+    const utf8Bytes = new TextEncoder().encode(localPrompt).length
     const multiHint =
       batchCount === 1 &&
-      /(生成[二三四五六七八九十2-9]张|[2-9]张独立|六宫格|四宫格)/.test(prompt)
+      /(生成[二三四五六七八九十2-9]张|[2-9]张独立|六宫格|四宫格)/.test(
+        localPrompt
+      )
     return { chars, utf8Bytes, multiHint }
-  }, [prompt, batchCount])
+  }, [localPrompt, batchCount])
 
   const activeProject = useMemo(
     () => projects.find((p) => p.id === activeProjectId),
@@ -377,14 +380,15 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
 
   const insertAtCursor = (token: string) => {
     const el = textareaRef.current
+    const cur = el ? el.value : localPromptRef.current
     if (!el) {
-      onChangePrompt(prompt ? `${prompt} ${token}` : token)
+      setPromptDirect(cur ? `${cur} ${token}` : token)
       return
     }
-    const start = el.selectionStart ?? prompt.length
-    const end = el.selectionEnd ?? prompt.length
-    const next = prompt.slice(0, start) + token + prompt.slice(end)
-    onChangePrompt(next)
+    const start = el.selectionStart ?? cur.length
+    const end = el.selectionEnd ?? cur.length
+    const next = cur.slice(0, start) + token + cur.slice(end)
+    setPromptDirect(next)
     requestAnimationFrame(() => {
       el.focus()
       const cursor = start + token.length
@@ -497,7 +501,11 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             >
               <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-xl bg-secondary">
                 <img
-                  src={item.preview}
+                  src={
+                    item.local_ref && !item.annotated
+                      ? getThumbUrl(item.local_ref, item.preview, 160)
+                      : item.preview
+                  }
                   alt={`参考图${idx + 1}`}
                   className="h-full w-full object-cover"
                 />
@@ -643,6 +651,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                   value={urlInput}
                   onChange={(e) => setUrlInput(e.target.value)}
                   onKeyDown={(e) => {
+                    if (isComposingEvent(e)) return
                     if (e.key === "Enter" && urlInput.trim()) {
                       onAddRefUrl(urlInput)
                       setUrlInput("")
@@ -678,7 +687,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               <button
                 id="btn-open-zen-workbench"
                 type="button"
-                onClick={onOpenZenWorkbench}
+                onClick={() => {
+                  flushValue()
+                  onOpenZenWorkbench()
+                }}
                 className={ghostUtilityClass}
               >
                 <Wand2 className="h-3.5 w-3.5" />
@@ -734,7 +746,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                     key={item.id}
                     type="button"
                     onClick={() => {
-                      onChangePrompt(item.prompt)
+                      setPromptDirect(item.prompt)
                       setHistoryPopoverOpen(false)
                     }}
                     className="w-full rounded-2xl popover-tile-interactive p-2.5 text-left cursor-pointer"
@@ -753,12 +765,15 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
             </Popover>
           )}
 
-          {prompt.trim().length > 0 && (
+          {localPrompt.trim().length > 0 && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  onClick={onSaveAsTemplate}
+                  onClick={() => {
+                    flushValue()
+                    onSaveAsTemplate()
+                  }}
                   className={ghostUtilityClass}
                 >
                   <BookmarkPlus className="h-3.5 w-3.5" />
@@ -771,7 +786,10 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
           {onCollapseOverlay && (
             <button
               type="button"
-              onClick={onCollapseOverlay}
+              onClick={() => {
+                flushValue()
+                onCollapseOverlay()
+              }}
               className={cn(ghostUtilityClass, "bg-foreground/[0.05]")}
               title="收起 (Esc)"
             >
@@ -792,9 +810,12 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
           }
           ref={textareaRef}
           autoFocus={Boolean(onCollapseOverlay)}
-          value={prompt}
-          onChange={(e) => onChangePrompt(e.target.value)}
+          value={localPrompt}
+          onChange={handlePromptChange}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
           onKeyDown={(e) => {
+            if (isComposingKey(e)) return
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
               e.preventDefault()
               if (!isSubmitting && !anyUploadingRef) {
@@ -802,6 +823,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               }
             } else if (e.key === "Escape" && onCollapseOverlay) {
               e.preventDefault()
+              flushValue()
               onCollapseOverlay()
             }
           }}
@@ -1028,7 +1050,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
               {selectedRatio === "custom" ? (
                 <div className="space-y-2 pt-1">
                   <span className="px-1 text-[11px] font-medium text-muted-foreground">
-                    像素宽高（16 倍数）
+                    像素宽高（16 倍数，回车或点击对齐应用）
                   </span>
                   <div className="grid grid-cols-[1fr_auto_1fr_auto] items-center gap-1.5">
                     <Input
@@ -1038,9 +1060,17 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       step={16}
                       value={customW}
                       onChange={(e) => {
-                        const w = Number(e.target.value)
-                        onChangeCustomW(w)
-                        onApplyCustomSize(w, customH)
+                        onChangeCustomW(parseInt(e.target.value, 10) || 0)
+                      }}
+                      onBlur={() => {
+                        if (customW >= 256 && customH >= 256) {
+                          onApplyCustomSize(customW, customH)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          onApplyCustomSize(customW, customH)
+                        }
                       }}
                       className="h-8 font-mono text-xs text-center"
                     />
@@ -1054,9 +1084,17 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                       step={16}
                       value={customH}
                       onChange={(e) => {
-                        const h = Number(e.target.value)
-                        onChangeCustomH(h)
-                        onApplyCustomSize(customW, h)
+                        onChangeCustomH(parseInt(e.target.value, 10) || 0)
+                      }}
+                      onBlur={() => {
+                        if (customW >= 256 && customH >= 256) {
+                          onApplyCustomSize(customW, customH)
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          onApplyCustomSize(customW, customH)
+                        }
                       }}
                       className="h-8 font-mono text-xs text-center"
                     />
@@ -1244,7 +1282,7 @@ export const OmnibarComposer: React.FC<OmnibarComposerProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={() => onOpenSettingsTab("imagehost")}
+                  onClick={() => onOpenSettingsTab("ref")}
                   className="text-[11px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   图床设置 →

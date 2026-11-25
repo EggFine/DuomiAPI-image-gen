@@ -5,6 +5,7 @@ import {
   LayoutPanelLeft,
   Moon,
   PanelTop,
+  ScrollText,
   SlidersHorizontal,
   Sun,
 } from "lucide-react"
@@ -31,9 +32,11 @@ interface StudioRailProps {
   totalGalleryCount: number
   hasApiKey: boolean
   sseConnected: boolean
+  unreadLogErrors?: number
   theme: "dark" | "light"
   onToggleTheme: () => void
   onOpenCommandPalette: () => void
+  onOpenLogs: () => void
   onOpenLocalFolder: () => void
   onOpenSettings: (tab?: string) => void
 }
@@ -57,9 +60,11 @@ export const StudioRail: React.FC<StudioRailProps> = ({
   activeQueueCount,
   hasApiKey,
   sseConnected,
+  unreadLogErrors = 0,
   theme,
   onToggleTheme,
   onOpenCommandPalette,
+  onOpenLogs,
   onOpenLocalFolder,
   onOpenSettings,
 }) => {
@@ -264,6 +269,31 @@ export const StudioRail: React.FC<StudioRailProps> = ({
             <TooltipContent className="flex items-center gap-1.5">
               <span>指令</span>
               <kbd className="studio-kbd">⌘K</kbd>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                id="btn-rail-logs"
+                type="button"
+                onClick={onOpenLogs}
+                className="relative flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground hover:bg-foreground/[0.055] hover:text-foreground transition-colors cursor-pointer"
+                aria-label="运行日志"
+              >
+                <ScrollText className="h-4 w-4" />
+                {unreadLogErrors > 0 && (
+                  <span
+                    className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-red-500"
+                    title={`发现 ${unreadLogErrors} 条异常日志`}
+                  />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {unreadLogErrors > 0
+                ? `运行日志（${unreadLogErrors} 条新异常）`
+                : "查看与复制运行日志"}
             </TooltipContent>
           </Tooltip>
 

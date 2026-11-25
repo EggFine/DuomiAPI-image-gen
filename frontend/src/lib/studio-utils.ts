@@ -1,34 +1,217 @@
+import { reportClientLog } from "@/lib/logger"
 import type {
   DiskUsageStats,
   ImageHostProvider,
+  LogsResponse,
   PromptHistoryItem,
+  RecordsPageResponse,
   ReferenceImageEntry,
   RefImageMode,
   TaskRecord,
   UploadRefResponse,
 } from "@/types"
 
+function encodeImageRelPath(relPath: string): string {
+  return relPath
+    .replace(/^\/+/, "")
+    .split("/")
+    .map((seg) => encodeURIComponent(seg))
+    .join("/")
+}
+
+export function getOriginalImageUrl(
+  localFile?: string,
+  remoteUrl?: string
+): string {
+  if (localFile) {
+    return `/images/${encodeImageRelPath(localFile)}`
+  }
+  return remoteUrl || ""
+}
+
+export function getThumbUrl(
+  localFile?: string,
+  remoteUrl?: string,
+  width: 160 | 480 | 720 = 480
+): string {
+  if (localFile) {
+    return `/thumbs/${encodeImageRelPath(localFile)}?w=${width}`
+  }
+  return remoteUrl || ""
+}
+
+const TERMINAL_STATES = new Set([
+  "succeeded",
+  "error",
+  "failed",
+  "timeout",
+  "canceled",
+])
+
+/**
+ * Monotonically merges an incoming TaskRecord (e.g. from /api/generate batch return or SSE)
+ * into an existing client record so stale responses can never regress state or drop loaded detail.
+ */
+export function mergeTaskRecord(
+  existing: TaskRecord | undefined,
+  incoming: TaskRecord
+): TaskRecord {
+  if (!existing) return incoming
+
+  const existTerm = TERMINAL_STATES.has(existing.state)
+  const incTerm = TERMINAL_STATES.has(incoming.state)
+  const existTime = existing.update_time || existing.create_time || 0
+  const incTime = incoming.update_time || incoming.create_time || 0
+
+  // Never regress a terminal task back to pending/running unless incoming is strictly newer
+  if (existTerm && !incTerm && incTime <= existTime) {
+    return existing
+  }
+
+  // While active, avoid regressing running -> pending or losing progress on older payload
+  if (!existTerm && !incTerm) {
+    if (
+      existing.state === "running" &&
+      incoming.state === "pending" &&
+      incTime <= existTime
+    ) {
+      return existing
+    }
+    if (
+      incTime < existTime &&
+      (incoming.progress || 0) < (existing.progress || 0)
+    ) {
+      return existing
+    }
+  }
+
+  return {
+    ...existing,
+    ...incoming,
+    // Keep already-loaded raw_response if incoming SSE/list record is slim
+    raw_response: incoming.raw_response || existing.raw_response,
+    has_raw_response:
+      incoming.has_raw_response ??
+      Boolean(incoming.raw_response || existing.has_raw_response || existing.raw_response),
+  }
+}
+
 export async function apiFetch<T>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
   const isFormData = options.body instanceof FormData
-  const resp = await fetch(url, {
-    headers: isFormData
-      ? { ...(options.headers || {}) }
-      : {
-          "Content-Type": "application/json",
-          ...(options.headers || {}),
-        },
-    ...options,
-  })
+  let resp: Response
+  try {
+    resp = await fetch(url, {
+      headers: isFormData
+        ? { ...(options.headers || {}) }
+        : {
+            "Content-Type": "application/json",
+            ...(options.headers || {}),
+          },
+      ...options,
+    })
+  } catch (networkErr: any) {
+    if (networkErr?.name !== "AbortError" && !url.startsWith("/api/logs")) {
+      reportClientLog(
+        "ERROR",
+        `Network request failed: ${options.method || "GET"} ${url}`,
+        { error: networkErr?.message || String(networkErr) },
+        networkErr?.stack,
+        "frontend"
+      )
+    }
+    throw networkErr
+  }
+
   const data = await resp.json().catch(() => ({}))
   if (!resp.ok) {
-    const err: any = new Error(data.error || `请求失败 (HTTP ${resp.status})`)
+    const message = data.error || `请求失败 (HTTP ${resp.status})`
+    if (
+      !url.startsWith("/api/logs") &&
+      (resp.status >= 500 ||
+        url.startsWith("/api/generate") ||
+        url.startsWith("/api/upload-ref"))
+    ) {
+      reportClientLog(
+        resp.status >= 500 ? "ERROR" : "WARN",
+        `API ${options.method || "GET"} ${url} -> HTTP ${resp.status}: ${message}`,
+        { status: resp.status },
+        undefined,
+        "frontend"
+      )
+    }
+    const err: any = new Error(message)
+    err.status = resp.status
     err.payload = data
     throw err
   }
   return data as T
+}
+
+export async function fetchRecordsPage(
+  params: {
+    limit?: number
+    offset?: number
+    status?: string
+    projectId?: string
+    model?: string
+    q?: string
+    includeStats?: boolean
+  },
+  signal?: AbortSignal
+): Promise<RecordsPageResponse> {
+  const qs = new URLSearchParams()
+  if (params.limit) qs.set("limit", String(params.limit))
+  if (params.offset && params.offset > 0) qs.set("offset", String(params.offset))
+  if (params.status && params.status !== "all") qs.set("status", params.status)
+  if (params.projectId && params.projectId !== "all") {
+    qs.set("project_id", params.projectId)
+  }
+  if (params.model && params.model !== "all") qs.set("model", params.model)
+  if (params.q && params.q.trim()) qs.set("q", params.q.trim())
+  if (params.includeStats) qs.set("include_stats", "1")
+  const queryStr = qs.toString()
+  return apiFetch<RecordsPageResponse>(
+    queryStr ? `/api/records?${queryStr}` : "/api/records",
+    { signal }
+  )
+}
+
+export async function fetchRecordDetail(
+  id: string,
+  signal?: AbortSignal
+): Promise<TaskRecord> {
+  return apiFetch<TaskRecord>(
+    `/api/records/detail?id=${encodeURIComponent(id)}`,
+    { signal }
+  )
+}
+
+export async function fetchLogs(
+  params?: {
+    limit?: number
+    level?: string
+    source?: string
+    q?: string
+  },
+  signal?: AbortSignal
+): Promise<LogsResponse> {
+  const qs = new URLSearchParams()
+  if (params?.limit) qs.set("limit", String(params.limit))
+  if (params?.level) qs.set("level", params.level)
+  if (params?.source) qs.set("source", params.source)
+  if (params?.q) qs.set("q", params.q)
+  const queryStr = qs.toString()
+  return apiFetch<LogsResponse>(
+    queryStr ? `/api/logs?${queryStr}` : "/api/logs",
+    { signal }
+  )
+}
+
+export async function clearLogsOnServer(): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>("/api/logs/clear", { method: "POST" })
 }
 
 export async function uploadLocalRefFile(
@@ -39,6 +222,7 @@ export async function uploadLocalRefFile(
     litterboxExpiry?: string
     compressMaxDim?: number
     compressQuality?: number
+    signal?: AbortSignal
   }
 ): Promise<UploadRefResponse> {
   const fd = new FormData()
@@ -54,6 +238,7 @@ export async function uploadLocalRefFile(
   return apiFetch<UploadRefResponse>("/api/upload-ref", {
     method: "POST",
     body: fd,
+    signal: opts.signal,
   })
 }
 
@@ -65,6 +250,7 @@ export async function convertCachedRefOnServer(opts: {
   litterboxExpiry?: string
   compressMaxDim?: number
   compressQuality?: number
+  signal?: AbortSignal
 }): Promise<UploadRefResponse> {
   return apiFetch<UploadRefResponse>("/api/upload-ref", {
     method: "POST",
@@ -77,6 +263,7 @@ export async function convertCachedRefOnServer(opts: {
       compress_max_dim: opts.compressMaxDim || 0,
       compress_quality: opts.compressQuality || 0,
     }),
+    signal: opts.signal,
   })
 }
 

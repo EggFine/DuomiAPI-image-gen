@@ -68,10 +68,16 @@ export interface ProjectFolder {
 export interface DiskUsageStats {
   data_dir: string
   images_dir: string
+  thumbs_dir?: string
+  logs_dir?: string
   generated_count: number
   generated_bytes?: number
   ref_cache_count: number
   ref_cache_bytes?: number
+  thumbs_count?: number
+  thumbs_bytes?: number
+  logs_count?: number
+  logs_bytes?: number
   record_count: number
   total_bytes: number
 }
@@ -80,6 +86,8 @@ export interface ServerInfoResponse {
   version: string
   data_dir: string
   images_dir: string
+  thumbs_dir?: string
+  logs_dir?: string
   has_key: boolean
   disk_stats: DiskUsageStats
   ratio_presets: RatioPresetGroup[]
@@ -164,7 +172,53 @@ export interface TaskRecord {
   create_time: number
   update_time: number
   duration_ms?: number
+  has_raw_response?: boolean
   raw_response?: string
+}
+
+export interface RecordCounts {
+  all: number
+  active: number
+  succeeded: number
+  starred: number
+  with_refs: number
+  failed: number
+  by_project: Record<string, number>
+}
+
+export interface RecordsPageResponse {
+  records: TaskRecord[]
+  total: number
+  has_more: boolean
+  next_offset: number
+  counts: RecordCounts
+  distinct_models: string[]
+  disk_stats?: DiskUsageStats
+}
+
+export interface LogEntry {
+  id: number
+  ts: string
+  level: "DEBUG" | "INFO" | "WARN" | "ERROR" | string
+  source: string
+  message: string
+  fields?: Record<string, unknown>
+  stack?: string
+}
+
+export interface LogFileInfo {
+  name: string
+  size_bytes: number
+  mod_time: number
+}
+
+export interface LogsResponse {
+  version: string
+  platform: string
+  logs_dir: string
+  entries: LogEntry[]
+  files: LogFileInfo[]
+  plain_text: string
 }
 
 export interface ReferenceImageEntry {

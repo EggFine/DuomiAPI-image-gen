@@ -10,6 +10,7 @@ import {
   LayoutPanelLeft,
   Moon,
   PanelTop,
+  ScrollText,
   Search,
   Sparkles,
   Sun,
@@ -61,6 +62,7 @@ interface CommandPaletteModalProps {
   onOpenSettings: (tab?: string) => void
   onOpenImportTask: () => void
   onOpenDevPreview: () => void
+  onOpenLogs: () => void
   onOpenLocalFolder: () => void
 }
 
@@ -80,6 +82,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
   onOpenSettings,
   onOpenImportTask,
   onOpenDevPreview,
+  onOpenLogs,
   onOpenLocalFolder,
 }) => {
   const inputRef = useRef<HTMLInputElement | null>(null)
@@ -186,6 +189,14 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
         run: closeAnd(() => onOpenSettings("api")),
       },
       {
+        id: "sys-logs",
+        group: "系统",
+        title: "查看与复制便携运行日志",
+        subtitle: "自动脱敏 · 故障排查",
+        icon: ScrollText,
+        run: closeAnd(onOpenLogs),
+      },
+      {
         id: "sys-import",
         group: "系统",
         title: "查询历史任务 ID",
@@ -246,6 +257,7 @@ export const CommandPaletteModal: React.FC<CommandPaletteModalProps> = ({
     onOpenDevPreview,
     onOpenImportTask,
     onOpenLocalFolder,
+    onOpenLogs,
     onOpenSettings,
     onOpenZenWorkbench,
     onSelectModel,

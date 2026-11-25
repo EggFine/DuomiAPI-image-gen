@@ -19,6 +19,8 @@ import {
   STUDIO_EASE,
   useGSAP,
 } from "@/lib/motion"
+import { getThumbUrl } from "@/lib/studio-utils"
+import { useCompositionInput } from "@/lib/useCompositionInput"
 import { cn } from "@/lib/utils"
 import type { ReferenceImageEntry } from "@/types"
 
@@ -28,6 +30,7 @@ interface BottomComposerDockProps {
   onChangeExpanded: (expanded: boolean) => void
 
   prompt: string
+  promptRevision?: number
   onChangePrompt: (v: string) => void
 
   referenceImages: ReferenceImageEntry[]
@@ -40,7 +43,7 @@ interface BottomComposerDockProps {
   isSubmitting: boolean
   anyUploadingRef: boolean
 
-  onSubmitGenerate: () => void
+  onSubmitGenerate: (overridePrompt?: string) => void
   onScrollToTop: () => void
   renderExpandedComposer: () => React.ReactNode
 }
@@ -50,6 +53,7 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
   expanded,
   onChangeExpanded,
   prompt,
+  promptRevision,
   onChangePrompt,
   referenceImages,
   onFilesSelected,
@@ -69,10 +73,21 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
   const dockScopeRef = useRef<HTMLDivElement | null>(null)
   const dockShellRef = useRef<HTMLDivElement | null>(null)
   const dockInnerRef = useRef<HTMLDivElement | null>(null)
-  const compactInputRef = useRef<HTMLInputElement | null>(null)
+  const compactInputRef = useRef<HTMLTextAreaElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const prevVisibleRef = useRef<boolean>(false)
   const prevExpandedRef = useRef<boolean>(expanded)
+
+  const {
+    value: localPrompt,
+    valueRef: localPromptRef,
+    handleChange: handlePromptChange,
+    handleCompositionStart,
+    handleCompositionEnd,
+    setProgrammaticValue: setPromptDirect,
+    flushValue,
+    isComposingKey,
+  } = useCompositionInput(prompt, onChangePrompt, promptRevision)
 
   const { contextSafe } = useGSAP({ scope: dockScopeRef })
 
@@ -192,20 +207,26 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
 
   const insertTokenIntoCompactInput = (token: string) => {
     const el = compactInputRef.current
+    const cur = el ? el.value : localPromptRef.current
     if (!el) {
-      onChangePrompt(prompt ? `${prompt} ${token}` : token)
+      setPromptDirect(cur ? `${cur} ${token}` : token)
       return
     }
-    const start = el.selectionStart ?? prompt.length
-    const end = el.selectionEnd ?? prompt.length
-    const next = prompt.slice(0, start) + token + prompt.slice(end)
-    onChangePrompt(next)
+    const start = el.selectionStart ?? cur.length
+    const end = el.selectionEnd ?? cur.length
+    const next = cur.slice(0, start) + token + cur.slice(end)
+    setPromptDirect(next)
     requestAnimationFrame(() => {
       el.focus()
       const pos = start + token.length
       el.setSelectionRange(pos, pos)
     })
   }
+
+  const lineCount = useMemo(
+    () => (localPrompt.includes("\n") ? localPrompt.split("\n").length : 1),
+    [localPrompt]
+  )
 
   const compactSummary = useMemo(() => {
     const cleanModel = shortModelLabel
@@ -309,7 +330,11 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
                       >
                         <span className="relative h-6 w-6 overflow-hidden rounded-full bg-secondary shrink-0">
                           <img
-                            src={ref.preview}
+                            src={
+                              ref.local_ref && !ref.annotated
+                                ? getThumbUrl(ref.local_ref, ref.preview, 160)
+                                : ref.preview
+                            }
                             alt={`图${idx + 1}`}
                             className="h-full w-full object-cover"
                           />
@@ -345,22 +370,26 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
                 </div>
               )}
 
-              {/* Center: Single-Line Live Prompt Input */}
-              <input
+              {/* Center: Single-Row Textarea Preserving Newlines & CJK IME Composition */}
+              <textarea
                 id="bottom-dock-prompt-input"
                 ref={compactInputRef}
-                type="text"
-                value={prompt}
-                onChange={(e) => onChangePrompt(e.target.value)}
+                rows={1}
+                value={localPrompt}
+                onChange={handlePromptChange}
+                onCompositionStart={handleCompositionStart}
+                onCompositionEnd={handleCompositionEnd}
                 onKeyDown={(e) => {
-                  if (e.nativeEvent.isComposing) return
+                  if (isComposingKey(e)) return
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault()
                     if (!isSubmitting && !anyUploadingRef) {
-                      onSubmitGenerate()
+                      const flushed = flushValue()
+                      onSubmitGenerate(flushed)
                     }
                   } else if (e.key === "Enter" && e.shiftKey) {
                     e.preventDefault()
+                    flushValue()
                     onChangeExpanded(true)
                   }
                 }}
@@ -369,15 +398,32 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
                     ? "结合参考图描述画面，回车直接生成…"
                     : "继续输入灵感，回车直接生成…"
                 }
-                className="min-w-0 flex-1 bg-transparent px-2 text-[13.5px] text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+                className="min-w-0 flex-1 h-8 resize-none overflow-y-auto bg-transparent px-2 py-1.5 text-[13.5px] leading-5 text-foreground placeholder:text-muted-foreground/60 focus:outline-none studio-scroll"
               />
+
+              {lineCount > 1 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    flushValue()
+                    onChangeExpanded(true)
+                  }}
+                  className="hidden sm:inline-flex h-6 shrink-0 items-center rounded-full popover-tile-interactive px-2 font-mono text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
+                  title="多行提示词：点击展开完整编辑"
+                >
+                  {lineCount}行
+                </button>
+              )}
 
               {/* Right: Parameter Summary Expand Trigger + Generate CTA + Back to Top */}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => onChangeExpanded(true)}
+                    onClick={() => {
+                      flushValue()
+                      onChangeExpanded(true)
+                    }}
                     className="hidden sm:inline-flex h-8 shrink-0 items-center gap-1 rounded-full popover-tile-interactive px-3 text-[11px] font-medium text-muted-foreground hover:text-foreground cursor-pointer"
                   >
                     <span className="font-mono max-w-[148px] truncate">
@@ -391,7 +437,10 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
 
               <button
                 type="button"
-                onClick={() => onChangeExpanded(true)}
+                onClick={() => {
+                  flushValue()
+                  onChangeExpanded(true)
+                }}
                 className="inline-flex sm:hidden h-8 w-8 shrink-0 items-center justify-center rounded-full popover-tile-interactive text-muted-foreground hover:text-foreground cursor-pointer"
                 aria-label="展开创作面板"
               >
@@ -403,7 +452,8 @@ export const BottomComposerDock: React.FC<BottomComposerDockProps> = ({
                 disabled={isSubmitting || anyUploadingRef}
                 onClick={(e) => {
                   animateShutterBtn(e.currentTarget)
-                  onSubmitGenerate()
+                  const flushed = flushValue()
+                  onSubmitGenerate(flushed)
                 }}
                 className="h-8 shrink-0 rounded-full px-4 text-xs font-medium gap-1.5"
               >

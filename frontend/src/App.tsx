@@ -5,12 +5,20 @@ import {
   useRef,
   useState,
 } from "react"
+import {
+  type InfiniteData,
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import { AlertCircle, CheckCircle2, Info } from "lucide-react"
 import { AnalyticsQueueView } from "@/components/AnalyticsQueueView"
 import { BottomComposerDock } from "@/components/BottomComposerDock"
 import { CommandPaletteModal } from "@/components/CommandPaletteModal"
 import { ImageLightbox } from "@/components/ImageLightbox"
 import { InspirationHubView } from "@/components/InspirationHubView"
+import { LogsDialog } from "@/components/LogsDialog"
 import { MasonryArtworkStream } from "@/components/MasonryArtworkStream"
 import { OmnibarComposer } from "@/components/OmnibarComposer"
 import { PromptWorkbenchModal } from "@/components/PromptWorkbenchModal"
@@ -24,12 +32,17 @@ import {
 import { StudioRail } from "@/components/StudioRail"
 import { StudioSidebar } from "@/components/StudioSidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { subscribeClientErrorCount } from "@/lib/logger"
 import { gsap, prefersReducedMotion, STUDIO_EASE, useGSAP } from "@/lib/motion"
 import {
   apiFetch,
   buildDeveloperPreview,
   convertCachedRefOnServer,
+  fetchLogs,
+  fetchRecordsPage,
+  getThumbUrl,
   loadPromptHistory,
+  mergeTaskRecord,
   organizeRecordsOnServer,
   pushPromptHistory,
   uploadLocalRefFile,
@@ -39,13 +52,13 @@ import type {
   AppConfig,
   ComposerLayoutMode,
   DiskUsageStats,
-  ImageHostInfo,
   ImageHostProvider,
-  ModelInfo,
   ProjectFolder,
   PromptHistoryItem,
   PromptTemplate,
   RatioPresetGroup,
+  RecordCounts,
+  RecordsPageResponse,
   ReferenceImageEntry,
   RefImageMode,
   SavedImage,
@@ -60,7 +73,18 @@ interface ToastItem {
   type: "info" | "success" | "error"
 }
 
+const RECORDS_PAGE_SIZE = 80
+
+function sortRecordsDesc(list: TaskRecord[]): TaskRecord[] {
+  return [...list].sort((a, b) => {
+    const dt = (b.create_time || 0) - (a.create_time || 0)
+    if (dt !== 0) return dt
+    return b.id > a.id ? 1 : b.id < a.id ? -1 : 0
+  })
+}
+
 export function App() {
+  const queryClient = useQueryClient()
   const appRootRef = useRef<HTMLDivElement | null>(null)
   const { contextSafe } = useGSAP({ scope: appRootRef })
 
@@ -137,6 +161,10 @@ export function App() {
     [showToast]
   )
 
+  // Unread frontend error badge count for portable logs trigger
+  const [unreadLogErrors, setUnreadLogErrors] = useState<number>(0)
+  useEffect(() => subscribeClientErrorCount(setUnreadLogErrors), [])
+
   // Workspace Navigation & Layout Mode
   const [activeTab, setActiveTab] = useState<StudioNavTab>("imagine")
   const [layoutMode, setLayoutMode] = useState<ComposerLayoutMode>(() => {
@@ -158,7 +186,7 @@ export function App() {
     })
   }, [])
 
-  // Calm workspace view cross-settle on tab or layout switch (preserves sticky positioning via clearProps)
+  // Calm workspace view cross-settle on tab or layout switch
   useGSAP(
     () => {
       const key = `${activeTab}:${layoutMode}`
@@ -188,21 +216,110 @@ export function App() {
     { scope: appRootRef, dependencies: [activeTab, layoutMode] }
   )
 
-  // Server data
-  const [info, setInfo] = useState<ServerInfoResponse | null>(null)
-  const [config, setConfig] = useState<AppConfig | null>(null)
-  const [diskStats, setDiskStats] = useState<DiskUsageStats | null>(null)
-  const [models, setModels] = useState<ModelInfo[]>([])
-  const [imageHosts, setImageHosts] = useState<ImageHostInfo[]>([])
-  const [ratioPresets, setRatioPresets] = useState<RatioPresetGroup[]>([])
-  const [builtInTemplates, setBuiltInTemplates] = useState<PromptTemplate[]>([])
-  const [records, setRecords] = useState<TaskRecord[]>([])
+  // Server-backed Gallery Filter State (driven by TanStack Query infinite pagination)
+  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [projectFilter, setProjectFilter] = useState<string>("all")
+  const [modelFilter, setModelFilter] = useState<string>("all")
+  const [searchQuery, setSearchQuery] = useState<string>("")
+  const [debouncedSearch, setDebouncedSearch] = useState<string>("")
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim())
+    }, 220)
+    return () => window.clearTimeout(timer)
+  }, [searchQuery])
+
+  // TanStack Query: Server info & configuration
+  const infoQuery = useQuery<ServerInfoResponse>({
+    queryKey: ["studio-info"],
+    queryFn: ({ signal }) => apiFetch<ServerInfoResponse>("/api/info", { signal }),
+    staleTime: 60_000,
+  })
+
+  const configQuery = useQuery<AppConfig>({
+    queryKey: ["studio-config"],
+    queryFn: ({ signal }) => apiFetch<AppConfig>("/api/config", { signal }),
+    staleTime: 60_000,
+  })
+
+  // TanStack Query: Paginated lightweight records list
+  const recordsQueryKey = useMemo(
+    () => [
+      "studio-records",
+      statusFilter,
+      projectFilter,
+      modelFilter,
+      debouncedSearch,
+    ],
+    [statusFilter, projectFilter, modelFilter, debouncedSearch]
+  )
+
+  const recordsQuery = useInfiniteQuery<RecordsPageResponse>({
+    queryKey: recordsQueryKey,
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      fetchRecordsPage(
+        {
+          limit: RECORDS_PAGE_SIZE,
+          offset: typeof pageParam === "number" ? pageParam : 0,
+          status: statusFilter,
+          projectId: projectFilter,
+          model: modelFilter,
+          q: debouncedSearch,
+          includeStats: pageParam === 0,
+        },
+        signal
+      ),
+    getNextPageParam: (lastPage) =>
+      lastPage.has_more ? lastPage.next_offset : undefined,
+    placeholderData: keepPreviousData,
+    staleTime: 10_000,
+  })
+
+  const info = infoQuery.data ?? null
+  const config = configQuery.data ?? null
+  const [diskStatsOverride, setDiskStatsOverride] =
+    useState<DiskUsageStats | null>(null)
+
+  const firstRecordsPage = recordsQuery.data?.pages?.[0]
+  const diskStats =
+    diskStatsOverride || firstRecordsPage?.disk_stats || info?.disk_stats || null
+
+  const models = useMemo(() => info?.models || [], [info?.models])
+  const imageHosts = useMemo(() => info?.image_hosts || [], [info?.image_hosts])
+  const ratioPresets = useMemo(
+    () => info?.ratio_presets || [],
+    [info?.ratio_presets]
+  )
+  const builtInTemplates = useMemo(
+    () => info?.builtin_templates || [],
+    [info?.builtin_templates]
+  )
+
+  const records = useMemo<TaskRecord[]>(() => {
+    const pages = recordsQuery.data?.pages
+    if (!pages || pages.length === 0) return []
+    const seen = new Map<string, TaskRecord>()
+    for (const page of pages) {
+      for (const r of page.records || []) {
+        const prev = seen.get(r.id)
+        seen.set(r.id, prev ? mergeTaskRecord(prev, r) : r)
+      }
+    }
+    return sortRecordsDesc(Array.from(seen.values()))
+  }, [recordsQuery.data?.pages])
+
+  const serverCounts: RecordCounts | undefined = firstRecordsPage?.counts
+  const serverModels: string[] | undefined = firstRecordsPage?.distinct_models
+  const totalMatched: number | undefined = firstRecordsPage?.total
 
   // Creation Studio state
   const [selectedModel, setSelectedModel] =
     useState<string>("gpt-image-2.6-flare")
   const [customModel, setCustomModel] = useState<string>("")
   const [prompt, setPrompt] = useState<string>("")
+  const [promptRevision, setPromptRevision] = useState<number>(0)
   const [promptHistory, setPromptHistory] = useState<PromptHistoryItem[]>(() =>
     loadPromptHistory()
   )
@@ -218,7 +335,7 @@ export function App() {
   const [autoCompatFallback, setAutoCompatFallback] = useState<boolean>(true)
   const [activeProjectId, setActiveProjectId] = useState<string>("")
 
-  // Reference Image Strategy ("upload" default | "compress_base64" optional | "raw_base64" optional)
+  // Reference Image Strategy ("upload" default | "compress_base64" | "raw_base64")
   const [refMode, setRefMode] = useState<RefImageMode>("upload")
   const [imageHostProvider, setImageHostProvider] =
     useState<ImageHostProvider>("auto")
@@ -231,6 +348,53 @@ export function App() {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false)
   const [refreshingIds, setRefreshingIds] = useState<Record<string, boolean>>({})
 
+  // Race-isolation refs & object URL tracker
+  const submittingRef = useRef<boolean>(false)
+  const reuseSeqRef = useRef<number>(0)
+  const reuseAbortRef = useRef<AbortController | null>(null)
+  const reconvertSeqRef = useRef<number>(0)
+  const reconvertAbortRef = useRef<AbortController | null>(null)
+  const sliderReconvertTimerRef = useRef<number | null>(null)
+  const createdBlobUrlsRef = useRef<Set<string>>(new Set())
+  const initHydratedRef = useRef<boolean>(false)
+  const invalidateTimerRef = useRef<number | null>(null)
+
+  const registerBlobUrl = useCallback((url: string) => {
+    if (url.startsWith("blob:")) {
+      createdBlobUrlsRef.current.add(url)
+    }
+  }, [])
+
+  const revokeBlobUrl = useCallback((url?: string) => {
+    if (url && url.startsWith("blob:") && createdBlobUrlsRef.current.has(url)) {
+      URL.revokeObjectURL(url)
+      createdBlobUrlsRef.current.delete(url)
+    }
+  }, [])
+
+  useEffect(() => {
+    const tracked = createdBlobUrlsRef.current
+    return () => {
+      reuseAbortRef.current?.abort()
+      reconvertAbortRef.current?.abort()
+      if (sliderReconvertTimerRef.current) {
+        window.clearTimeout(sliderReconvertTimerRef.current)
+      }
+      if (invalidateTimerRef.current) {
+        window.clearTimeout(invalidateTimerRef.current)
+      }
+      for (const u of tracked) {
+        URL.revokeObjectURL(u)
+      }
+      tracked.clear()
+    }
+  }, [])
+
+  const setPromptProgrammatic = useCallback((next: string) => {
+    setPrompt(next)
+    setPromptRevision((r) => r + 1)
+  }, [])
+
   // Modals & Lightbox states
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false)
   const [settingsTab, setSettingsTab] = useState<string>("api")
@@ -239,6 +403,7 @@ export function App() {
   const [importTaskOpen, setImportTaskOpen] = useState<boolean>(false)
   const [zenWorkbenchOpen, setZenWorkbenchOpen] = useState<boolean>(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState<boolean>(false)
+  const [logsOpen, setLogsOpen] = useState<boolean>(false)
   const [annotatingEntryId, setAnnotatingEntryId] = useState<string | null>(null)
 
   const [lightboxRecordId, setLightboxRecordId] = useState<string | null>(null)
@@ -252,6 +417,62 @@ export function App() {
     useState<boolean>(false)
   const [bottomDockExpanded, setBottomDockExpanded] = useState<boolean>(false)
   const [isBatchSelecting, setIsBatchSelecting] = useState<boolean>(false)
+
+  // Live composer snapshot ref so callbacks stay stable and never capture stale closures
+  const composerRef = useRef({
+    prompt,
+    selectedModel,
+    customModel,
+    selectedSize,
+    quality,
+    background,
+    batchCount,
+    oversea,
+    autoCompatFallback,
+    activeProjectId,
+    refMode,
+    imageHostProvider,
+    litterboxExpiry,
+    compressMaxDim,
+    compressQuality,
+    referenceImages,
+    config,
+    models,
+    ratioPresets,
+    activeTab,
+    layoutMode,
+    isScrolledPastComposer,
+    lightboxRecordId,
+    sseConnected,
+  })
+  useEffect(() => {
+    composerRef.current = {
+      prompt,
+      selectedModel,
+      customModel,
+      selectedSize,
+      quality,
+      background,
+      batchCount,
+      oversea,
+      autoCompatFallback,
+      activeProjectId,
+      refMode,
+      imageHostProvider,
+      litterboxExpiry,
+      compressMaxDim,
+      compressQuality,
+      referenceImages,
+      config,
+      models,
+      ratioPresets,
+      activeTab,
+      layoutMode,
+      isScrolledPastComposer,
+      lightboxRecordId,
+      sseConnected,
+    }
+  })
 
   const animateScrollToTop = contextSafe((el: HTMLDivElement | null) => {
     if (!el) return
@@ -285,7 +506,7 @@ export function App() {
     }
   }, [isBatchSelecting])
 
-  // Global Keyboard Shortcuts: Ctrl/Cmd+K (Command Palette), Ctrl/Cmd+J (Composer / Bottom Dock), Esc & Alt+1..4 (Tabs)
+  // Global Keyboard Shortcuts
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -327,7 +548,8 @@ export function App() {
         !annotatingEntryId &&
         !lightboxRecordId &&
         !settingsOpen &&
-        !commandPaletteOpen
+        !commandPaletteOpen &&
+        !logsOpen
       ) {
         setBottomDockExpanded(false)
         return
@@ -360,31 +582,8 @@ export function App() {
     lightboxRecordId,
     settingsOpen,
     commandPaletteOpen,
+    logsOpen,
     scrollToImagineTop,
-  ])
-
-  // Keep latest ref options in a ref for async callbacks
-  const refOptsRef = useRef({
-    refMode,
-    imageHostProvider,
-    litterboxExpiry,
-    compressMaxDim,
-    compressQuality,
-  })
-  useEffect(() => {
-    refOptsRef.current = {
-      refMode,
-      imageHostProvider,
-      litterboxExpiry,
-      compressMaxDim,
-      compressQuality,
-    }
-  }, [
-    refMode,
-    imageHostProvider,
-    litterboxExpiry,
-    compressMaxDim,
-    compressQuality,
   ])
 
   const selectSizeOrRatioFromValue = useCallback(
@@ -418,72 +617,137 @@ export function App() {
     []
   )
 
-  const refreshRecords = useCallback(async () => {
-    try {
-      const recData = await apiFetch<{
-        records: TaskRecord[]
-        disk_stats?: DiskUsageStats
-      }>("/api/records")
-      setRecords(recData.records || [])
-      if (recData.disk_stats) {
-        setDiskStats(recData.disk_stats)
-      }
-    } catch (err) {
-      console.error("刷新记录失败:", err)
-    }
-  }, [])
-
-  // Initial Bootstrap
+  // Hydrate creation defaults once when initial /api/info and /api/config load
   useEffect(() => {
-    let mounted = true
-    ;(async () => {
-      try {
-        const [infoRes, cfgRes, recRes] = await Promise.all([
-          apiFetch<ServerInfoResponse>("/api/info"),
-          apiFetch<AppConfig>("/api/config"),
-          apiFetch<{ records: TaskRecord[]; disk_stats?: DiskUsageStats }>(
-            "/api/records"
-          ),
-        ])
-        if (!mounted) return
-        setInfo(infoRes)
-        setConfig(cfgRes)
-        setDiskStats(recRes.disk_stats || infoRes.disk_stats)
-        setModels(infoRes.models || [])
-        setImageHosts(infoRes.image_hosts || [])
-        setRatioPresets(infoRes.ratio_presets || [])
-        setBuiltInTemplates(infoRes.builtin_templates || [])
-        setRecords(recRes.records || [])
+    if (initHydratedRef.current) return
+    if (!infoQuery.data || !configQuery.data) return
+    initHydratedRef.current = true
+    const cfgRes = configQuery.data
+    const infoRes = infoQuery.data
 
-        setSelectedModel(cfgRes.default_model || "gpt-image-2.6-flare")
-        setOversea(!!cfgRes.oversea)
-        setAutoCompatFallback(cfgRes.auto_compat_fallback !== false)
-        setRefMode(cfgRes.ref_image_mode || "upload")
-        setImageHostProvider(cfgRes.image_host_provider || "auto")
-        setLitterboxExpiry(cfgRes.litterbox_expiry || "12h")
-        setCompressMaxDim(cfgRes.compress_max_dim || 1536)
-        setCompressQuality(cfgRes.compress_quality || 85)
+    setSelectedModel(cfgRes.default_model || "gpt-image-2.6-flare")
+    setOversea(!!cfgRes.oversea)
+    setAutoCompatFallback(cfgRes.auto_compat_fallback !== false)
+    setRefMode(cfgRes.ref_image_mode || "upload")
+    setImageHostProvider(cfgRes.image_host_provider || "auto")
+    setLitterboxExpiry(cfgRes.litterbox_expiry || "12h")
+    setCompressMaxDim(cfgRes.compress_max_dim || 1536)
+    setCompressQuality(cfgRes.compress_quality || 85)
 
-        const initSize =
-          cfgRes.default_size && cfgRes.default_size !== "auto"
-            ? cfgRes.default_size
-            : "1024x1024"
-        selectSizeOrRatioFromValue(initSize, infoRes.ratio_presets || [])
+    const initSize =
+      cfgRes.default_size && cfgRes.default_size !== "auto"
+        ? cfgRes.default_size
+        : "1024x1024"
+    selectSizeOrRatioFromValue(initSize, infoRes.ratio_presets || [])
 
-        if (!cfgRes.api_key || !cfgRes.api_key.trim()) {
-          setSettingsTab("api")
-          setSettingsOpen(true)
-        }
-      } catch (err: any) {
-        showToast("初始化加载失败: " + err.message, "error")
-      }
-    })()
-    return () => {
-      mounted = false
+    if (!cfgRes.api_key || !cfgRes.api_key.trim()) {
+      setSettingsTab("api")
+      setSettingsOpen(true)
     }
-  }, [selectSizeOrRatioFromValue, showToast])
+  }, [infoQuery.data, configQuery.data, selectSizeOrRatioFromValue])
 
-  // Real-Time Server-Sent Events (SSE) subscription
+  useEffect(() => {
+    if (infoQuery.error) {
+      showToast(
+        "初始化加载失败: " + (infoQuery.error as Error).message,
+        "error"
+      )
+    }
+  }, [infoQuery.error, showToast])
+
+  // Surgical TanStack Query Cache Helpers
+  const scheduleSoftInvalidateRecords = useCallback(() => {
+    if (invalidateTimerRef.current) {
+      window.clearTimeout(invalidateTimerRef.current)
+    }
+    invalidateTimerRef.current = window.setTimeout(() => {
+      invalidateTimerRef.current = null
+      void queryClient.invalidateQueries({
+        queryKey: ["studio-records"],
+        refetchType: "active",
+      })
+    }, 900)
+  }, [queryClient])
+
+  const patchRecordsInCache = useCallback(
+    (incomingList: TaskRecord[]) => {
+      if (!incomingList || incomingList.length === 0) return
+      const incomingMap = new Map<string, TaskRecord>()
+      for (const r of incomingList) {
+        if (r?.id) incomingMap.set(r.id, r)
+      }
+      if (incomingMap.size === 0) return
+
+      queryClient.setQueriesData<InfiniteData<RecordsPageResponse>>(
+        { queryKey: ["studio-records"] },
+        (old) => {
+          if (!old || !old.pages || old.pages.length === 0) return old
+          const seenIds = new Set<string>()
+          const updatedPages = old.pages.map((page) => {
+            let changed = false
+            const nextRecords = page.records.map((rec) => {
+              const inc = incomingMap.get(rec.id)
+              if (!inc) return rec
+              seenIds.add(rec.id)
+              const merged = mergeTaskRecord(rec, inc)
+              if (merged !== rec) changed = true
+              return merged
+            })
+            return changed ? { ...page, records: nextRecords } : page
+          })
+
+          // Prepend brand-new records into page 0
+          const brandNew: TaskRecord[] = []
+          for (const inc of incomingList) {
+            if (inc?.id && !seenIds.has(inc.id)) {
+              brandNew.push(inc)
+            }
+          }
+          if (brandNew.length > 0) {
+            const p0 = updatedPages[0]
+            updatedPages[0] = {
+              ...p0,
+              records: sortRecordsDesc([...brandNew, ...p0.records]),
+              total: (p0.total || 0) + brandNew.length,
+            }
+          }
+          return { ...old, pages: updatedPages }
+        }
+      )
+    },
+    [queryClient]
+  )
+
+  const removeRecordsFromCache = useCallback(
+    (ids: string[]) => {
+      if (!ids || ids.length === 0) return
+      const delSet = new Set(ids)
+      queryClient.setQueriesData<InfiniteData<RecordsPageResponse>>(
+        { queryKey: ["studio-records"] },
+        (old) => {
+          if (!old || !old.pages) return old
+          let removedAny = false
+          const nextPages = old.pages.map((page) => {
+            const filtered = page.records.filter((r) => !delSet.has(r.id))
+            if (filtered.length !== page.records.length) {
+              removedAny = true
+              return { ...page, records: filtered }
+            }
+            return page
+          })
+          return removedAny ? { ...old, pages: nextPages } : old
+        }
+      )
+    },
+    [queryClient]
+  )
+
+  const refreshRecords = useCallback(async () => {
+    setDiskStatsOverride(null)
+    await queryClient.invalidateQueries({ queryKey: ["studio-records"] })
+  }, [queryClient])
+
+  // Real-Time Server-Sent Events (SSE) subscription patching TanStack Query cache surgically
   useEffect(() => {
     let es: EventSource | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -499,26 +763,24 @@ export function App() {
         try {
           const msg = JSON.parse(ev.data)
           if (msg.type === "connected" && msg.payload?.disk_stats) {
-            setDiskStats(msg.payload.disk_stats)
+            setDiskStatsOverride(msg.payload.disk_stats)
           } else if (msg.type === "record_updated" && msg.payload) {
             const updated: TaskRecord = msg.payload
-            setRecords((prev) => {
-              const idx = prev.findIndex((r) => r.id === updated.id)
-              const next =
-                idx === -1
-                  ? [updated, ...prev]
-                  : prev.map((r, i) => (i === idx ? updated : r))
-              return next.sort((a, b) => {
-                const dt = (b.create_time || 0) - (a.create_time || 0)
-                if (dt !== 0) return dt
-                return b.id > a.id ? 1 : b.id < a.id ? -1 : 0
-              })
-            })
+            patchRecordsInCache([updated])
+            if (
+              updated.state === "succeeded" ||
+              updated.state === "error" ||
+              updated.state === "failed" ||
+              updated.state === "timeout" ||
+              updated.state === "canceled"
+            ) {
+              scheduleSoftInvalidateRecords()
+            }
           } else if (msg.type === "records_deleted" && msg.payload?.ids) {
-            const delSet = new Set<string>(msg.payload.ids)
-            setRecords((prev) => prev.filter((r) => !delSet.has(r.id)))
+            removeRecordsFromCache(msg.payload.ids)
+            scheduleSoftInvalidateRecords()
           } else if (msg.type === "stats_updated" && msg.payload) {
-            setDiskStats(msg.payload)
+            setDiskStatsOverride(msg.payload)
           }
         } catch {
           // ignore malformed event
@@ -539,19 +801,25 @@ export function App() {
       if (reconnectTimer) clearTimeout(reconnectTimer)
       es?.close()
     }
-  }, [])
+  }, [
+    patchRecordsInCache,
+    removeRecordsFromCache,
+    scheduleSoftInvalidateRecords,
+  ])
+
+  const activeCount = useMemo(() => {
+    if (serverCounts) return serverCounts.active
+    return records.filter(
+      (r) => r.state === "pending" || r.state === "running"
+    ).length
+  }, [records, serverCounts])
 
   // Fallback polling only if SSE disconnected while tasks are active
-  const activeCount = useMemo(
-    () =>
-      records.filter((r) => r.state === "pending" || r.state === "running")
-        .length,
-    [records]
-  )
-
   useEffect(() => {
     if (activeCount === 0 || sseConnected) return
-    const timer = setInterval(refreshRecords, 3000)
+    const timer = setInterval(() => {
+      void refreshRecords()
+    }, 3000)
     return () => clearInterval(timer)
   }, [activeCount, sseConnected, refreshRecords])
 
@@ -559,7 +827,7 @@ export function App() {
   const handleFilesSelected = useCallback(
     async (fileList: FileList | File[]) => {
       const files = Array.from(fileList)
-      const opts = refOptsRef.current
+      const opts = composerRef.current
       for (const file of files) {
         if (!file.type.startsWith("image/")) {
           showToast(`已跳过非图片文件: ${file.name}`, "error")
@@ -567,6 +835,7 @@ export function App() {
         }
         const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
         const objectPreview = URL.createObjectURL(file)
+        registerBlobUrl(objectPreview)
         const pendingLabel =
           opts.refMode === "upload"
             ? "正在无损上传图床..."
@@ -597,6 +866,9 @@ export function App() {
           })
 
           const finalPreview = res.preview_url || objectPreview
+          if (res.preview_url && res.preview_url !== objectPreview) {
+            revokeBlobUrl(objectPreview)
+          }
           setReferenceImages((prev) =>
             prev.map((item) =>
               item.id === entryId
@@ -622,6 +894,9 @@ export function App() {
           )
         } catch (err: any) {
           const payload = err.payload || {}
+          if (payload.preview_url && payload.preview_url !== objectPreview) {
+            revokeBlobUrl(objectPreview)
+          }
           setReferenceImages((prev) =>
             prev.map((item) =>
               item.id === entryId
@@ -647,14 +922,15 @@ export function App() {
         }
       }
     },
-    [showToast]
+    [showToast, registerBlobUrl, revokeBlobUrl]
   )
 
-  // Apply an annotated/cropped Reference Image from RefImageAnnotatorModal
+  // Apply an annotated/cropped Reference Image
   const handleApplyAnnotatedFile = useCallback(
     async (entry: ReferenceImageEntry, file: File) => {
-      const opts = refOptsRef.current
+      const opts = composerRef.current
       const editedPreview = URL.createObjectURL(file)
+      registerBlobUrl(editedPreview)
       const preservedOriginal = entry.original_preview || entry.preview
 
       setReferenceImages((prev) =>
@@ -684,6 +960,9 @@ export function App() {
           compressMaxDim: opts.compressMaxDim,
           compressQuality: opts.compressQuality,
         })
+        if (res.preview_url && res.preview_url !== editedPreview) {
+          revokeBlobUrl(editedPreview)
+        }
         setReferenceImages((prev) =>
           prev.map((item) =>
             item.id === entry.id
@@ -725,7 +1004,7 @@ export function App() {
         showToast("标注参考图上传失败: " + err.message, "error")
       }
     },
-    [showToast]
+    [showToast, registerBlobUrl, revokeBlobUrl]
   )
 
   // Global Ctrl+V / Cmd+V Clipboard Image Paste
@@ -744,7 +1023,7 @@ export function App() {
       if (imageFiles.length > 0) {
         e.preventDefault()
         setActiveTab("imagine")
-        handleFilesSelected(imageFiles)
+        void handleFilesSelected(imageFiles)
         showToast(`已从剪贴板粘贴 ${imageFiles.length} 张参考图`, "info")
       }
     }
@@ -752,7 +1031,7 @@ export function App() {
     return () => window.removeEventListener("paste", onPaste)
   }, [handleFilesSelected, showToast])
 
-  const handlePasteFromClipboardButton = async () => {
+  const handlePasteFromClipboardButton = useCallback(async () => {
     if (!navigator.clipboard?.read) {
       showToast("请直接在页面中按 Ctrl+V 粘贴图片", "info")
       return
@@ -780,19 +1059,32 @@ export function App() {
     } catch {
       showToast("浏览器限制直接读取剪贴板，请直接按快捷键 Ctrl+V 粘贴", "info")
     }
-  }
+  }, [handleFilesSelected, showToast])
 
-  // Re-convert all local reference images in place when user switches refMode or compression/host options
+  // Race-isolated re-conversion of all local reference images (with AbortController + sequence guard)
   const reconvertLocalRefs = useCallback(
     async (
       targetMode: RefImageMode,
-      nextProvider = imageHostProvider,
-      nextExpiry = litterboxExpiry,
-      nextMaxDim = compressMaxDim,
-      nextQuality = compressQuality
+      nextProvider?: ImageHostProvider,
+      nextExpiry?: string,
+      nextMaxDim?: number,
+      nextQuality?: number
     ) => {
-      const convertible = referenceImages.filter((r) => Boolean(r.local_ref))
+      const curState = composerRef.current
+      const provider = nextProvider ?? curState.imageHostProvider
+      const expiry = nextExpiry ?? curState.litterboxExpiry
+      const maxDim = nextMaxDim ?? curState.compressMaxDim
+      const qualityVal = nextQuality ?? curState.compressQuality
+
+      const convertible = curState.referenceImages.filter((r) =>
+        Boolean(r.local_ref)
+      )
       if (convertible.length === 0) return
+
+      reconvertAbortRef.current?.abort()
+      const ac = new AbortController()
+      reconvertAbortRef.current = ac
+      const seq = ++reconvertSeqRef.current
 
       setReferenceImages((prev) =>
         prev.map((r) =>
@@ -811,15 +1103,18 @@ export function App() {
       )
 
       for (const item of convertible) {
+        if (seq !== reconvertSeqRef.current || ac.signal.aborted) return
         try {
           const res = await convertCachedRefOnServer({
             localRef: item.local_ref,
             mode: targetMode,
-            provider: nextProvider,
-            litterboxExpiry: nextExpiry,
-            compressMaxDim: nextMaxDim,
-            compressQuality: nextQuality,
+            provider,
+            litterboxExpiry: expiry,
+            compressMaxDim: maxDim,
+            compressQuality: qualityVal,
+            signal: ac.signal,
           })
+          if (seq !== reconvertSeqRef.current || ac.signal.aborted) return
           setReferenceImages((prev) =>
             prev.map((cur) =>
               cur.id === item.id
@@ -840,6 +1135,13 @@ export function App() {
             )
           )
         } catch (err: any) {
+          if (
+            err?.name === "AbortError" ||
+            seq !== reconvertSeqRef.current ||
+            ac.signal.aborted
+          ) {
+            return
+          }
           setReferenceImages((prev) =>
             prev.map((cur) =>
               cur.id === item.id
@@ -855,88 +1157,127 @@ export function App() {
         }
       }
     },
-    [
-      referenceImages,
-      imageHostProvider,
-      litterboxExpiry,
-      compressMaxDim,
-      compressQuality,
-    ]
+    []
   )
 
-  const handleChangeRefMode = async (nextMode: RefImageMode) => {
-    setRefMode(nextMode)
-    await reconvertLocalRefs(nextMode)
-  }
+  const scheduleSliderReconvert = useCallback(
+    (nextMaxDim: number, nextQuality: number) => {
+      if (sliderReconvertTimerRef.current) {
+        window.clearTimeout(sliderReconvertTimerRef.current)
+      }
+      sliderReconvertTimerRef.current = window.setTimeout(() => {
+        sliderReconvertTimerRef.current = null
+        if (composerRef.current.refMode === "compress_base64") {
+          void reconvertLocalRefs(
+            "compress_base64",
+            undefined,
+            undefined,
+            nextMaxDim,
+            nextQuality
+          )
+        }
+      }, 300)
+    },
+    [reconvertLocalRefs]
+  )
 
-  const handleRetrySingleRef = async (entry: ReferenceImageEntry) => {
-    if (!entry.local_ref) return
-    setReferenceImages((prev) =>
-      prev.map((r) =>
-        r.id === entry.id
-          ? { ...r, uploading: true, error: undefined, label: "正在重试..." }
-          : r
+  const handleChangeRefMode = useCallback(
+    async (nextMode: RefImageMode) => {
+      setRefMode(nextMode)
+      await reconvertLocalRefs(nextMode)
+    },
+    [reconvertLocalRefs]
+  )
+
+  const handleRetrySingleRef = useCallback(
+    async (entry: ReferenceImageEntry) => {
+      if (!entry.local_ref) return
+      const curState = composerRef.current
+      setReferenceImages((prev) =>
+        prev.map((r) =>
+          r.id === entry.id
+            ? { ...r, uploading: true, error: undefined, label: "正在重试..." }
+            : r
+        )
       )
-    )
-    try {
-      const res = await convertCachedRefOnServer({
-        localRef: entry.local_ref,
-        mode: refMode,
-        provider: imageHostProvider,
-        litterboxExpiry,
-        compressMaxDim,
-        compressQuality,
+      try {
+        const res = await convertCachedRefOnServer({
+          localRef: entry.local_ref,
+          mode: curState.refMode,
+          provider: curState.imageHostProvider,
+          litterboxExpiry: curState.litterboxExpiry,
+          compressMaxDim: curState.compressMaxDim,
+          compressQuality: curState.compressQuality,
+        })
+        setReferenceImages((prev) =>
+          prev.map((r) =>
+            r.id === entry.id
+              ? {
+                  ...r,
+                  mode: res.mode,
+                  value: res.value,
+                  remote_url: res.url,
+                  provider: res.provider,
+                  size_bytes: res.size_bytes,
+                  label: res.label || "已就绪",
+                  uploading: false,
+                  error: undefined,
+                }
+              : r
+          )
+        )
+      } catch (err: any) {
+        setReferenceImages((prev) =>
+          prev.map((r) =>
+            r.id === entry.id
+              ? { ...r, uploading: false, error: err.message, label: "上传失败" }
+              : r
+          )
+        )
+        showToast(err.message, "error")
+      }
+    },
+    [showToast]
+  )
+
+  const handleRemoveRef = useCallback(
+    (id: string) => {
+      setReferenceImages((prev) => {
+        const target = prev.find((r) => r.id === id)
+        if (target) {
+          revokeBlobUrl(target.preview)
+          revokeBlobUrl(target.original_preview)
+        }
+        return prev.filter((r) => r.id !== id)
       })
-      setReferenceImages((prev) =>
-        prev.map((r) =>
-          r.id === entry.id
-            ? {
-                ...r,
-                mode: res.mode,
-                value: res.value,
-                remote_url: res.url,
-                provider: res.provider,
-                size_bytes: res.size_bytes,
-                label: res.label || "已就绪",
-                uploading: false,
-                error: undefined,
-              }
-            : r
-        )
-      )
-    } catch (err: any) {
-      setReferenceImages((prev) =>
-        prev.map((r) =>
-          r.id === entry.id
-            ? { ...r, uploading: false, error: err.message, label: "上传失败" }
-            : r
-        )
-      )
-      showToast(err.message, "error")
-    }
-  }
+    },
+    [revokeBlobUrl]
+  )
 
-  const handleAddRefUrl = (rawUrl: string) => {
-    const trimmed = rawUrl.trim()
-    if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-      showToast("请输入以 http:// 或 https:// 开头的图片直链 URL", "error")
-      return
-    }
-    setReferenceImages((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        mode: "url",
-        value: trimmed,
-        preview: trimmed,
-        original_preview: trimmed,
-        remote_url: trimmed,
-        label: "直链 URL",
-      },
-    ])
-  }
+  const handleAddRefUrl = useCallback(
+    (rawUrl: string) => {
+      const trimmed = rawUrl.trim()
+      if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+        showToast("请输入以 http:// 或 https:// 开头的图片直链 URL", "error")
+        return
+      }
+      setReferenceImages((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          mode: "url",
+          value: trimmed,
+          preview: trimmed,
+          original_preview: trimmed,
+          remote_url: trimmed,
+          label: "直链 URL",
+        },
+      ])
+    },
+    [showToast]
+  )
 
-  const handleMoveRef = (index: number, direction: -1 | 1) => {
+  const handleMoveRef = useCallback((index: number, direction: -1 | 1) => {
     setReferenceImages((prev) => {
       const target = index + direction
       if (target < 0 || target >= prev.length) return prev
@@ -945,622 +1286,814 @@ export function App() {
       next.splice(target, 0, moved)
       return next
     })
-  }
+  }, [])
 
   // Use a generated gallery image directly as a Reference Image
-  const handleUseGeneratedAsRef = async (img: SavedImage, _rec: TaskRecord) => {
-    const stayInBottomDock =
-      activeTab === "imagine" &&
-      layoutMode === "omnibar" &&
-      isScrolledPastComposer
-    setActiveTab("imagine")
-    setSplitMobilePane("studio")
-    if (!stayInBottomDock) {
-      scrollToImagineTop()
-    } else if (!lightboxRecordId) {
-      requestAnimationFrame(() => {
-        document.getElementById("bottom-dock-prompt-input")?.focus()
-      })
-    }
-
-    if (img.local_file) {
-      const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-      const preview = `/images/${encodeURIComponent(img.local_file)}`
-      setReferenceImages((prev) => [
-        ...prev,
-        {
-          id: entryId,
-          mode: refMode,
-          value: "",
-          preview,
-          original_preview: preview,
-          label: refMode === "upload" ? "正在上传图床..." : "正在载入...",
-          uploading: true,
-        },
-      ])
-      try {
-        const res = await convertCachedRefOnServer({
-          sourceLocalFile: img.local_file,
-          mode: refMode,
-          provider: imageHostProvider,
-          litterboxExpiry,
-          compressMaxDim,
-          compressQuality,
+  const handleUseGeneratedAsRef = useCallback(
+    async (img: SavedImage, _rec: TaskRecord) => {
+      const curState = composerRef.current
+      const stayInBottomDock =
+        curState.activeTab === "imagine" &&
+        curState.layoutMode === "omnibar" &&
+        curState.isScrolledPastComposer
+      setActiveTab("imagine")
+      setSplitMobilePane("studio")
+      if (!stayInBottomDock) {
+        scrollToImagineTop()
+      } else if (!curState.lightboxRecordId) {
+        requestAnimationFrame(() => {
+          document.getElementById("bottom-dock-prompt-input")?.focus()
         })
-        const finalPreview = res.preview_url || preview
-        setReferenceImages((prev) =>
-          prev.map((cur) =>
-            cur.id === entryId
-              ? {
-                  ...cur,
-                  mode: res.mode,
-                  value: res.value,
-                  preview: finalPreview,
-                  original_preview: finalPreview,
-                  local_ref: res.local_ref,
-                  remote_url: res.url,
-                  provider: res.provider,
-                  size_bytes: res.size_bytes,
-                  width: res.width,
-                  height: res.height,
-                  label: res.label || "已就绪",
-                  uploading: false,
-                }
-              : cur
-          )
-        )
-        showToast("已将该作品载入参考图栏，可继续迭代微调", "success")
-      } catch (err: any) {
-        if (img.remote_url) {
+      }
+
+      if (img.local_file) {
+        const entryId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+        const preview = getThumbUrl(img.local_file, img.remote_url, 160)
+        setReferenceImages((prev) => [
+          ...prev,
+          {
+            id: entryId,
+            mode: curState.refMode,
+            value: "",
+            preview,
+            original_preview: `/images/${encodeURIComponent(img.local_file)}`,
+            label:
+              curState.refMode === "upload" ? "正在上传图床..." : "正在载入...",
+            uploading: true,
+          },
+        ])
+        try {
+          const res = await convertCachedRefOnServer({
+            sourceLocalFile: img.local_file,
+            mode: curState.refMode,
+            provider: curState.imageHostProvider,
+            litterboxExpiry: curState.litterboxExpiry,
+            compressMaxDim: curState.compressMaxDim,
+            compressQuality: curState.compressQuality,
+          })
+          const finalPreview = res.preview_url || preview
           setReferenceImages((prev) =>
             prev.map((cur) =>
               cur.id === entryId
                 ? {
                     ...cur,
-                    mode: "url",
-                    value: img.remote_url,
-                    remote_url: img.remote_url,
-                    label: "远程原图直链",
+                    mode: res.mode,
+                    value: res.value,
+                    preview: finalPreview,
+                    original_preview: finalPreview,
+                    local_ref: res.local_ref,
+                    remote_url: res.url,
+                    provider: res.provider,
+                    size_bytes: res.size_bytes,
+                    width: res.width,
+                    height: res.height,
+                    label: res.label || "已就绪",
                     uploading: false,
                   }
                 : cur
             )
           )
-          showToast("已使用该作品的远程直链作为参考图", "info")
-        } else {
-          setReferenceImages((prev) => prev.filter((cur) => cur.id !== entryId))
-          showToast("载入参考图失败: " + err.message, "error")
+          showToast("已将该作品载入参考图栏，可继续迭代微调", "success")
+        } catch (err: any) {
+          if (img.remote_url) {
+            setReferenceImages((prev) =>
+              prev.map((cur) =>
+                cur.id === entryId
+                  ? {
+                      ...cur,
+                      mode: "url",
+                      value: img.remote_url,
+                      remote_url: img.remote_url,
+                      label: "远程原图直链",
+                      uploading: false,
+                    }
+                  : cur
+              )
+            )
+            showToast("已使用该作品的远程直链作为参考图", "info")
+          } else {
+            setReferenceImages((prev) =>
+              prev.filter((cur) => cur.id !== entryId)
+            )
+            showToast("载入参考图失败: " + err.message, "error")
+          }
         }
+        return
       }
-      return
-    }
 
-    if (img.remote_url) {
-      handleAddRefUrl(img.remote_url)
-      showToast("已将该作品添加为参考图", "success")
-    }
-  }
+      if (img.remote_url) {
+        handleAddRefUrl(img.remote_url)
+        showToast("已将该作品添加为参考图", "success")
+      }
+    },
+    [scrollToImagineTop, handleAddRefUrl, showToast]
+  )
 
   // Ratio & Size handlers
-  const handleSelectRatio = (grp: RatioPresetGroup) => {
-    setSelectedRatio(grp.ratio)
-    const sizes = grp.sizes || []
-    const matched =
-      sizes.find((s) => s.tier === preferredTier) ||
-      sizes.find((s) => s.value === grp.default_size) ||
-      sizes[0]
-    if (matched) {
-      setSelectedSize(matched.value)
-    }
-  }
+  const handleSelectRatio = useCallback(
+    (grp: RatioPresetGroup) => {
+      setSelectedRatio(grp.ratio)
+      const sizes = grp.sizes || []
+      const matched =
+        sizes.find((s) => s.tier === preferredTier) ||
+        sizes.find((s) => s.value === grp.default_size) ||
+        sizes[0]
+      if (matched) {
+        setSelectedSize(matched.value)
+      }
+    },
+    [preferredTier]
+  )
 
-  const handleApplyCustomSize = (overrideW?: number, overrideH?: number) => {
-    const rawW = overrideW ?? customW
-    const rawH = overrideH ?? customH
-    if (!rawW || !rawH || isNaN(rawW) || isNaN(rawH)) {
-      showToast("请输入有效的宽度和高度整数", "error")
-      return
-    }
-    const w = Math.max(16, Math.min(3840, Math.round(rawW / 16) * 16))
-    const h = Math.max(16, Math.min(3840, Math.round(rawH / 16) * 16))
-    setCustomW(w)
-    setCustomH(h)
-    const pixels = w * h
-    if (pixels < 655360 || pixels > 8294400) {
-      showToast(
-        `${w}×${h} 总像素为 ${pixels.toLocaleString()}，需在 [655,360 ~ 8,294,400] 范围内`,
-        "error"
-      )
-      return
-    }
-    setSelectedRatio("custom")
-    setSelectedSize(`${w}x${h}`)
-    showToast(`已对齐 16px 倍数并应用尺寸: ${w}x${h}`, "success")
-  }
+  const handleApplyCustomSize = useCallback(
+    (overrideW?: number, overrideH?: number) => {
+      const rawW = overrideW ?? customW
+      const rawH = overrideH ?? customH
+      if (!rawW || !rawH || isNaN(rawW) || isNaN(rawH)) {
+        showToast("请输入有效的宽度和高度整数", "error")
+        return
+      }
+      const w = Math.max(16, Math.min(3840, Math.round(rawW / 16) * 16))
+      const h = Math.max(16, Math.min(3840, Math.round(rawH / 16) * 16))
+      setCustomW(w)
+      setCustomH(h)
+      const pixels = w * h
+      if (pixels < 655360 || pixels > 8294400) {
+        showToast(
+          `${w}×${h} 总像素为 ${pixels.toLocaleString()}，需在 [655,360 ~ 8,294,400] 范围内`,
+          "error"
+        )
+        return
+      }
+      setSelectedRatio("custom")
+      setSelectedSize(`${w}x${h}`)
+      showToast(`已对齐 16px 倍数并应用尺寸: ${w}x${h}`, "success")
+    },
+    [customW, customH, showToast]
+  )
 
   // Save Config (persists API key, host settings, templates, and projects)
-  const handleSaveConfig = async (
-    partial: Partial<AppConfig>,
-    silent = false
-  ) => {
-    const merged: AppConfig = {
-      api_key: config?.api_key || "",
-      base_url: config?.base_url || "https://duomiapi.com",
-      default_model: customModel.trim() || selectedModel,
-      default_size: selectedSize,
-      oversea,
-      poll_interval: config?.poll_interval || 3,
-      poll_timeout: config?.poll_timeout || 300,
-      auto_download: config?.auto_download !== false,
-      ref_image_mode: refMode,
-      image_host_provider: imageHostProvider,
-      litterbox_expiry: litterboxExpiry,
-      custom_upload_url: config?.custom_upload_url || "",
-      custom_upload_field: config?.custom_upload_field || "file",
-      custom_upload_auth: config?.custom_upload_auth || "",
-      custom_upload_json_path: config?.custom_upload_json_path || "",
-      compress_max_dim: compressMaxDim,
-      compress_quality: compressQuality,
-      auto_compat_fallback: autoCompatFallback,
-      prompt_templates: config?.prompt_templates || [],
-      projects: config?.projects || [],
-      ...partial,
-    }
-    const saved = await apiFetch<AppConfig>("/api/config", {
-      method: "POST",
-      body: JSON.stringify(merged),
-    })
-    setConfig(saved)
-    setRefMode(saved.ref_image_mode || "upload")
-    setImageHostProvider(saved.image_host_provider || "auto")
-    setLitterboxExpiry(saved.litterbox_expiry || "12h")
-    setCompressMaxDim(saved.compress_max_dim || 1536)
-    setCompressQuality(saved.compress_quality || 85)
-    setAutoCompatFallback(saved.auto_compat_fallback !== false)
-    if (!silent) {
-      showToast("设置已持久化保存至 duomi_data/config.json", "success")
-    }
-  }
+  const handleSaveConfig = useCallback(
+    async (partial: Partial<AppConfig>, silent = false) => {
+      const cur = composerRef.current
+      const cfg = cur.config
+      const merged: AppConfig = {
+        api_key: cfg?.api_key || "",
+        base_url: cfg?.base_url || "https://duomiapi.com",
+        default_model: cur.customModel.trim() || cur.selectedModel,
+        default_size: cur.selectedSize,
+        oversea: cur.oversea,
+        poll_interval: cfg?.poll_interval || 3,
+        poll_timeout: cfg?.poll_timeout || 300,
+        auto_download: cfg?.auto_download !== false,
+        ref_image_mode: cur.refMode,
+        image_host_provider: cur.imageHostProvider,
+        litterbox_expiry: cur.litterboxExpiry,
+        custom_upload_url: cfg?.custom_upload_url || "",
+        custom_upload_field: cfg?.custom_upload_field || "file",
+        custom_upload_auth: cfg?.custom_upload_auth || "",
+        custom_upload_json_path: cfg?.custom_upload_json_path || "",
+        compress_max_dim: cur.compressMaxDim,
+        compress_quality: cur.compressQuality,
+        auto_compat_fallback: cur.autoCompatFallback,
+        prompt_templates: cfg?.prompt_templates || [],
+        projects: cfg?.projects || [],
+        ...partial,
+      }
+      const saved = await apiFetch<AppConfig>("/api/config", {
+        method: "POST",
+        body: JSON.stringify(merged),
+      })
+      queryClient.setQueryData(["studio-config"], saved)
+      setRefMode(saved.ref_image_mode || "upload")
+      setImageHostProvider(saved.image_host_provider || "auto")
+      setLitterboxExpiry(saved.litterbox_expiry || "12h")
+      setCompressMaxDim(saved.compress_max_dim || 1536)
+      setCompressQuality(saved.compress_quality || 85)
+      setAutoCompatFallback(saved.auto_compat_fallback !== false)
+      if (!silent) {
+        showToast("设置已持久化保存至 duomi_data/config.json", "success")
+      }
+    },
+    [queryClient, showToast]
+  )
 
   // Project Albums CRUD & Record Organization
   const projects = useMemo<ProjectFolder[]>(
     () => config?.projects || [],
     [config?.projects]
   )
+  const projectsRef = useRef(projects)
+  useEffect(() => {
+    projectsRef.current = projects
+  }, [projects])
 
-  const handleCreateProject = async (name: string, color: string) => {
-    const trimmed = name.trim()
-    if (!trimmed) return
-    const nextProj: ProjectFolder = {
-      id: `proj_${Date.now().toString(36)}`,
-      name: trimmed,
-      color: color || "amber",
-      created_at: Math.floor(Date.now() / 1000),
-    }
-    await handleSaveConfig({ projects: [...projects, nextProj] }, true)
-    showToast(`已新建项目画册「${trimmed}」`, "success")
-  }
-
-  const handleDeleteProject = async (projId: string) => {
-    await handleSaveConfig(
-      { projects: projects.filter((p) => p.id !== projId) },
-      true
-    )
-    if (activeProjectId === projId) setActiveProjectId("")
-    // Clear project_id on records belonging to deleted album
-    const affectedIds = records
-      .filter((r) => r.project_id === projId)
-      .map((r) => r.id)
-    if (affectedIds.length > 0) {
-      await organizeRecordsOnServer({ ids: affectedIds, project_id: "" }).catch(
-        () => {}
+  const handleCreateProject = useCallback(
+    async (name: string, color: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      const nextProj: ProjectFolder = {
+        id: `proj_${Date.now().toString(36)}`,
+        name: trimmed,
+        color: color || "amber",
+        created_at: Math.floor(Date.now() / 1000),
+      }
+      await handleSaveConfig(
+        { projects: [...projectsRef.current, nextProj] },
+        true
       )
-    }
-    showToast("已删除该画册分组（作品文件本身完好保留）", "info")
-  }
+      showToast(`已新建项目画册「${trimmed}」`, "success")
+    },
+    [handleSaveConfig, showToast]
+  )
 
-  const handleAssignProject = async (ids: string[], projectId: string) => {
-    if (ids.length === 0) return
-    try {
-      const res = await organizeRecordsOnServer({
-        ids,
-        project_id: projectId,
-      })
-      const map = new Map(res.records.map((r) => [r.id, r]))
-      setRecords((prev) => prev.map((r) => map.get(r.id) || r))
-      const targetName =
-        projects.find((p) => p.id === projectId)?.name || "未归档"
-      showToast(`已将 ${res.updated_count} 项作品移入「${targetName}」`, "success")
-    } catch (err: any) {
-      showToast(err.message, "error")
-    }
-  }
-
-  const handleBatchStar = async (ids: string[], starred: boolean) => {
-    if (ids.length === 0) return
-    try {
-      const res = await organizeRecordsOnServer({ ids, starred })
-      const map = new Map(res.records.map((r) => [r.id, r]))
-      setRecords((prev) => prev.map((r) => map.get(r.id) || r))
-      showToast(
-        starred
-          ? `已批量星标 ${res.updated_count} 项作品`
-          : `已取消星标 ${res.updated_count} 项作品`,
-        "success"
+  const handleDeleteProject = useCallback(
+    async (projId: string) => {
+      await handleSaveConfig(
+        { projects: projectsRef.current.filter((p) => p.id !== projId) },
+        true
       )
-    } catch (err: any) {
-      showToast(err.message, "error")
-    }
-  }
-
-  const handleOrganizeSingle = async (
-    recId: string,
-    patch: { project_id?: string; note?: string }
-  ) => {
-    const res = await organizeRecordsOnServer({ ids: [recId], ...patch })
-    const map = new Map(res.records.map((r) => [r.id, r]))
-    setRecords((prev) => prev.map((r) => map.get(r.id) || r))
-  }
-
-  // Submit Generation
-  const handleSubmitGenerate = async () => {
-    const trimmedPrompt = prompt.trim()
-    if (!trimmedPrompt) {
-      showToast("请输入画面描述词 (Prompt)", "error")
-      return
-    }
-    if (!config?.api_key?.trim()) {
-      showToast("请先配置多米 API 密钥", "error")
-      setSettingsTab("api")
-      setSettingsOpen(true)
-      return
-    }
-
-    const failedRefs = referenceImages.filter((r) => r.error || !r.value)
-    if (failedRefs.length > 0) {
-      showToast(
-        "存在尚未上传成功的参考图，请点击重试、移除，或切换为「压缩转Base64」选项",
-        "error"
-      )
-      return
-    }
-
-    const finalModel =
-      customModel.trim() || selectedModel || "gpt-image-2.6-flare"
-    const finalQuality = quality === "default" ? "" : quality
-    const n = Math.max(1, Math.min(10, Number(batchCount) || 1))
-
-    setIsSubmitting(true)
-    try {
-      const res = await apiFetch<{
-        id: string
-        submitted_count?: number
-        warning_msg?: string
-        partial_error?: string
-        records?: TaskRecord[]
-      }>("/api/generate", {
-        method: "POST",
-        body: JSON.stringify({
-          model: finalModel,
-          prompt: trimmedPrompt,
-          size: selectedSize,
-          project_id: activeProjectId,
-          ref_mode: refMode,
-          image: referenceImages.map((item) => item.value),
-          ref_items: referenceImages.map((item) => ({
-            value: item.value,
-            local_ref: item.local_ref || "",
-            remote_url: item.remote_url || "",
-            mode: item.mode,
-            provider: item.provider || "",
-            label: item.label,
-          })),
-          quality: finalQuality,
-          background,
-          n,
-          oversea,
-          auto_compat_fallback: autoCompatFallback,
-        }),
-      })
-
-      if (res.records && res.records.length > 0) {
-        const createdList = res.records
-        setRecords((prev) => {
-          const map = new Map<string, TaskRecord>()
-          for (const r of prev) map.set(r.id, r)
-          for (const r of createdList) map.set(r.id, r)
-          return Array.from(map.values()).sort((a, b) => {
-            const dt = (b.create_time || 0) - (a.create_time || 0)
-            if (dt !== 0) return dt
-            return b.id > a.id ? 1 : b.id < a.id ? -1 : 0
+      setActiveProjectId((cur) => (cur === projId ? "" : cur))
+      try {
+        const page = await fetchRecordsPage({ limit: 500, projectId: projId })
+        const affectedIds = (page.records || []).map((r) => r.id)
+        if (affectedIds.length > 0) {
+          const res = await organizeRecordsOnServer({
+            ids: affectedIds,
+            project_id: "",
           })
+          patchRecordsInCache(res.records)
+          scheduleSoftInvalidateRecords()
+        }
+      } catch {
+        // ignore cleanup error
+      }
+      showToast("已删除该画册分组（作品文件本身完好保留）", "info")
+    },
+    [
+      handleSaveConfig,
+      patchRecordsInCache,
+      scheduleSoftInvalidateRecords,
+      showToast,
+    ]
+  )
+
+  const handleAssignProject = useCallback(
+    async (ids: string[], projectId: string) => {
+      if (ids.length === 0) return
+      try {
+        const res = await organizeRecordsOnServer({
+          ids,
+          project_id: projectId,
         })
+        patchRecordsInCache(res.records)
+        scheduleSoftInvalidateRecords()
+        const targetName =
+          projectsRef.current.find((p) => p.id === projectId)?.name || "未归档"
+        showToast(
+          `已将 ${res.updated_count} 项作品移入「${targetName}」`,
+          "success"
+        )
+      } catch (err: any) {
+        showToast(err.message, "error")
+      }
+    },
+    [patchRecordsInCache, scheduleSoftInvalidateRecords, showToast]
+  )
+
+  const handleBatchStar = useCallback(
+    async (ids: string[], starred: boolean) => {
+      if (ids.length === 0) return
+      try {
+        const res = await organizeRecordsOnServer({ ids, starred })
+        patchRecordsInCache(res.records)
+        scheduleSoftInvalidateRecords()
+        showToast(
+          starred
+            ? `已批量星标 ${res.updated_count} 项作品`
+            : `已取消星标 ${res.updated_count} 项作品`,
+          "success"
+        )
+      } catch (err: any) {
+        showToast(err.message, "error")
+      }
+    },
+    [patchRecordsInCache, scheduleSoftInvalidateRecords, showToast]
+  )
+
+  const handleOrganizeSingle = useCallback(
+    async (recId: string, patch: { project_id?: string; note?: string }) => {
+      const res = await organizeRecordsOnServer({ ids: [recId], ...patch })
+      patchRecordsInCache(res.records)
+      scheduleSoftInvalidateRecords()
+    },
+    [patchRecordsInCache, scheduleSoftInvalidateRecords]
+  )
+
+  // Atomic, Re-entrancy-Locked Generation Submission (eliminates double submit & prompt cross-talk)
+  const handleSubmitGenerate = useCallback(
+    async (overridePrompt?: string) => {
+      if (submittingRef.current) return
+
+      // Capture an immutable snapshot of all composer parameters at click/Ctrl+Enter instant
+      const snap = composerRef.current
+      const rawPrompt =
+        typeof overridePrompt === "string" ? overridePrompt : snap.prompt
+      const trimmedPrompt = rawPrompt.trim()
+      if (!trimmedPrompt) {
+        showToast("请输入画面描述词 (Prompt)", "error")
+        return
+      }
+      if (!snap.config?.api_key?.trim()) {
+        showToast("请先配置多米 API 密钥", "error")
+        setSettingsTab("api")
+        setSettingsOpen(true)
+        return
       }
 
-      setPromptHistory(
-        pushPromptHistory({
-          prompt: trimmedPrompt,
-          model: finalModel,
-          size: selectedSize,
-        })
-      )
+      const refsSnap = snap.referenceImages.map((item) => ({ ...item }))
+      if (refsSnap.some((r) => r.uploading)) {
+        showToast("参考图仍在处理中，请稍候片刻再提交", "info")
+        return
+      }
+      const failedRefs = refsSnap.filter((r) => r.error || !r.value)
+      if (failedRefs.length > 0) {
+        showToast(
+          "存在尚未上传成功的参考图，请点击重试、移除，或切换为「压缩转Base64」选项",
+          "error"
+        )
+        return
+      }
 
-      const count = res.submitted_count || 1
-      showToast(
-        count > 1
-          ? `已并发提交 ${count} 张异步冲印任务，正在实时显影`
-          : `生图任务已提交 (ID: ${(res.id || "").slice(0, 8)}...)`,
-        "success"
-      )
-      if (res.warning_msg) {
-        showToast(res.warning_msg, "info")
+      const finalModel =
+        snap.customModel.trim() || snap.selectedModel || "gpt-image-2.6-flare"
+      const finalQuality = snap.quality === "default" ? "" : snap.quality
+      const finalSize = snap.selectedSize
+      const finalBg = snap.background
+      const finalOversea = snap.oversea
+      const finalCompat = snap.autoCompatFallback
+      const finalProjectId = snap.activeProjectId
+      const finalRefMode = snap.refMode
+      const n = Math.max(1, Math.min(10, Number(snap.batchCount) || 1))
+
+      submittingRef.current = true
+      setIsSubmitting(true)
+      try {
+        const res = await apiFetch<{
+          id: string
+          submitted_count?: number
+          warning_msg?: string
+          partial_error?: string
+          records?: TaskRecord[]
+        }>("/api/generate", {
+          method: "POST",
+          body: JSON.stringify({
+            model: finalModel,
+            prompt: trimmedPrompt,
+            size: finalSize,
+            project_id: finalProjectId,
+            ref_mode: finalRefMode,
+            image: refsSnap.map((item) => item.value),
+            ref_items: refsSnap.map((item) => ({
+              value: item.value,
+              local_ref: item.local_ref || "",
+              remote_url: item.remote_url || "",
+              mode: item.mode,
+              provider: item.provider || "",
+              label: item.label,
+            })),
+            quality: finalQuality,
+            background: finalBg,
+            n,
+            oversea: finalOversea,
+            auto_compat_fallback: finalCompat,
+          }),
+        })
+
+        if (res.records && res.records.length > 0) {
+          patchRecordsInCache(res.records)
+          scheduleSoftInvalidateRecords()
+        }
+
+        setPromptHistory(
+          pushPromptHistory({
+            prompt: trimmedPrompt,
+            model: finalModel,
+            size: finalSize,
+          })
+        )
+
+        const count = res.submitted_count || 1
+        showToast(
+          count > 1
+            ? `已并发提交 ${count} 张异步冲印任务，正在实时显影`
+            : `生图任务已提交 (ID: ${(res.id || "").slice(0, 8)}...)`,
+          "success"
+        )
+        if (res.warning_msg) {
+          showToast(res.warning_msg, "info")
+        }
+        if (res.partial_error) {
+          showToast(`部分任务提示: ${res.partial_error}`, "error")
+        }
+        setActiveTab("imagine")
+        setSplitMobilePane("gallery")
+        scrollToImagineTop()
+        if (!composerRef.current.sseConnected) {
+          await refreshRecords()
+        }
+      } catch (err: any) {
+        showToast(err.message, "error")
+      } finally {
+        submittingRef.current = false
+        setIsSubmitting(false)
       }
-      if (res.partial_error) {
-        showToast(`部分任务提示: ${res.partial_error}`, "error")
+    },
+    [
+      patchRecordsInCache,
+      scheduleSoftInvalidateRecords,
+      scrollToImagineTop,
+      refreshRecords,
+      showToast,
+    ]
+  )
+
+  // Race-Safe 1-Click Remix / Reuse Record (with sequence token + AbortController + clean ref reset)
+  const handleReuseRecord = useCallback(
+    async (rec: TaskRecord, includeRefs: boolean) => {
+      // Cancel any in-flight previous reuse or reconvert operation so stale awaits can never overwrite
+      reuseAbortRef.current?.abort()
+      reconvertAbortRef.current?.abort()
+      const ac = new AbortController()
+      reuseAbortRef.current = ac
+      const seq = ++reuseSeqRef.current
+
+      const snap = composerRef.current
+      setPromptProgrammatic(rec.prompt || "")
+
+      const isKnown = snap.models.some((m) => m.id === rec.model)
+      if (isKnown) {
+        setSelectedModel(rec.model)
+        setCustomModel("")
+      } else if (rec.model) {
+        setCustomModel(rec.model)
       }
+      if (rec.size) {
+        selectSizeOrRatioFromValue(rec.size, snap.ratioPresets)
+      }
+      setQuality(rec.quality || "default")
+      setBackground(rec.background || "auto")
+      setOversea(!!rec.oversea)
+      setActiveProjectId(rec.project_id || "")
+
+      const stayInBottomDock =
+        snap.activeTab === "imagine" &&
+        snap.layoutMode === "omnibar" &&
+        snap.isScrolledPastComposer
       setActiveTab("imagine")
-      setSplitMobilePane("gallery")
-      scrollToImagineTop()
-      if (!sseConnected) {
-        await refreshRecords()
+      setSplitMobilePane("studio")
+      if (!stayInBottomDock) {
+        scrollToImagineTop()
+      } else if (!snap.lightboxRecordId) {
+        requestAnimationFrame(() => {
+          document.getElementById("bottom-dock-prompt-input")?.focus()
+        })
       }
-    } catch (err: any) {
-      showToast(err.message, "error")
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
 
-  // Reuse Record (1-click Remix including Reference Images!)
-  const handleReuseRecord = async (rec: TaskRecord, includeRefs: boolean) => {
-    setPrompt(rec.prompt || "")
-    const isKnown = models.some((m) => m.id === rec.model)
-    if (isKnown) {
-      setSelectedModel(rec.model)
-      setCustomModel("")
-    } else if (rec.model) {
-      setCustomModel(rec.model)
-    }
-    if (rec.size) {
-      selectSizeOrRatioFromValue(rec.size, ratioPresets)
-    }
-    setQuality(rec.quality || "default")
-    setBackground(rec.background || "auto")
-    setOversea(!!rec.oversea)
-    if (rec.project_id) {
-      setActiveProjectId(rec.project_id)
-    }
-    const stayInBottomDock =
-      activeTab === "imagine" &&
-      layoutMode === "omnibar" &&
-      isScrolledPastComposer
-    setActiveTab("imagine")
-    setSplitMobilePane("studio")
-    if (!stayInBottomDock) {
-      scrollToImagineTop()
-    } else if (!lightboxRecordId) {
-      requestAnimationFrame(() => {
-        document.getElementById("bottom-dock-prompt-input")?.focus()
-      })
-    }
-
-    if (includeRefs && rec.ref_items && rec.ref_items.length > 0) {
-      const restored: ReferenceImageEntry[] = []
-      for (const ri of rec.ref_items) {
-        if (ri.local_ref) {
-          try {
-            const conv = await convertCachedRefOnServer({
-              localRef: ri.local_ref,
-              mode: refMode,
-              provider: imageHostProvider,
-              litterboxExpiry,
-              compressMaxDim,
-              compressQuality,
-            })
-            const previewUrl = conv.preview_url || `/images/${ri.local_ref}`
-            restored.push({
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              mode: conv.mode,
-              value: conv.value,
-              preview: previewUrl,
-              original_preview: previewUrl,
-              local_ref: conv.local_ref || ri.local_ref,
-              remote_url: conv.url,
-              provider: conv.provider,
-              size_bytes: conv.size_bytes,
-              width: conv.width,
-              height: conv.height,
-              label: conv.label || "已恢复参考图",
-            })
-            continue
-          } catch {
-            // fallback to remote_url
+      // Clear previous reference images cleanly when reusing a text-to-image record or !includeRefs
+      const refItems = includeRefs ? rec.ref_items || [] : []
+      if (refItems.length === 0) {
+        setReferenceImages((prev) => {
+          for (const p of prev) {
+            revokeBlobUrl(p.preview)
+            revokeBlobUrl(p.original_preview)
           }
+          return []
+        })
+        showToast("已将该作品参数装填至创作舱", "success")
+        return
+      }
+
+      // Immediately mount placeholder reference slots so user sees instant feedback & old refs are wiped
+      const placeholders: ReferenceImageEntry[] = refItems.map((ri, idx) => {
+        const preview = ri.local_ref
+          ? getThumbUrl(ri.local_ref, ri.remote_url, 160)
+          : ri.remote_url || ""
+        return {
+          id: `reuse-${seq}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+          mode: ri.local_ref ? snap.refMode : "url",
+          value: ri.local_ref ? "" : ri.remote_url || "",
+          preview,
+          original_preview: ri.local_ref
+            ? `/images/${ri.local_ref}`
+            : ri.remote_url || "",
+          local_ref: ri.local_ref,
+          remote_url: ri.remote_url,
+          label: ri.local_ref ? "正在恢复参考图..." : "直链 URL",
+          uploading: Boolean(ri.local_ref),
         }
-        if (ri.remote_url) {
-          restored.push({
-            id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            mode: "url",
-            value: ri.remote_url,
-            preview: ri.remote_url,
-            original_preview: ri.remote_url,
-            remote_url: ri.remote_url,
-            label: "直链 URL",
+      })
+
+      setReferenceImages((prev) => {
+        for (const p of prev) {
+          revokeBlobUrl(p.preview)
+          revokeBlobUrl(p.original_preview)
+        }
+        return placeholders
+      })
+
+      let okCount = 0
+      let failCount = 0
+
+      for (let i = 0; i < refItems.length; i++) {
+        if (seq !== reuseSeqRef.current || ac.signal.aborted) return
+        const ri = refItems[i]
+        const slotId = placeholders[i].id
+        if (!ri.local_ref) {
+          if (ri.remote_url) okCount++
+          continue
+        }
+        try {
+          const conv = await convertCachedRefOnServer({
+            localRef: ri.local_ref,
+            mode: snap.refMode,
+            provider: snap.imageHostProvider,
+            litterboxExpiry: snap.litterboxExpiry,
+            compressMaxDim: snap.compressMaxDim,
+            compressQuality: snap.compressQuality,
+            signal: ac.signal,
           })
+          if (seq !== reuseSeqRef.current || ac.signal.aborted) return
+          const previewUrl = conv.preview_url || `/images/${ri.local_ref}`
+          okCount++
+          setReferenceImages((prev) =>
+            prev.map((item) =>
+              item.id === slotId
+                ? {
+                    ...item,
+                    mode: conv.mode,
+                    value: conv.value,
+                    preview: previewUrl,
+                    original_preview: previewUrl,
+                    local_ref: conv.local_ref || ri.local_ref,
+                    remote_url: conv.url,
+                    provider: conv.provider,
+                    size_bytes: conv.size_bytes,
+                    width: conv.width,
+                    height: conv.height,
+                    label: conv.label || "已恢复参考图",
+                    uploading: false,
+                    error: undefined,
+                  }
+                : item
+            )
+          )
+        } catch (err: any) {
+          if (
+            err?.name === "AbortError" ||
+            seq !== reuseSeqRef.current ||
+            ac.signal.aborted
+          ) {
+            return
+          }
+          failCount++
+          // Never silently substitute an expired temporary host URL; show explicit retryable error
+          setReferenceImages((prev) =>
+            prev.map((item) =>
+              item.id === slotId
+                ? {
+                    ...item,
+                    value: "",
+                    uploading: false,
+                    error: err?.message || "恢复参考图失败",
+                    label: "恢复失败",
+                  }
+                : item
+            )
+          )
         }
       }
-      setReferenceImages(restored)
-      showToast(
-        restored.length > 0
-          ? `已完整载入同款参数并恢复 ${restored.length} 张参考图`
-          : "已将该作品参数装填至创作舱",
-        "success"
-      )
-    } else {
-      showToast("已将该作品参数装填至创作舱", "success")
-    }
-  }
+
+      if (seq !== reuseSeqRef.current || ac.signal.aborted) return
+      if (failCount > 0) {
+        showToast(
+          `已载入参数：${okCount} 张参考图就绪，${failCount} 张需重试或切换 Base64 模式`,
+          "error"
+        )
+      } else {
+        showToast(
+          `已完整载入同款参数并恢复 ${okCount} 张参考图`,
+          "success"
+        )
+      }
+    },
+    [
+      setPromptProgrammatic,
+      selectSizeOrRatioFromValue,
+      scrollToImagineTop,
+      revokeBlobUrl,
+      showToast,
+    ]
+  )
 
   // Retry failed task directly
-  const handleRetryRecord = async (rec: TaskRecord) => {
-    const restoredRefs: Array<{
-      value: string
-      local_ref: string
-      remote_url: string
-      mode: string
-      provider: string
-      label: string
-    }> = []
+  const handleRetryRecord = useCallback(
+    async (rec: TaskRecord) => {
+      const snap = composerRef.current
+      const restoredRefs: Array<{
+        value: string
+        local_ref: string
+        remote_url: string
+        mode: string
+        provider: string
+        label: string
+      }> = []
 
-    if (rec.ref_items?.length) {
-      for (const ri of rec.ref_items) {
-        if (ri.local_ref) {
-          try {
-            const conv = await convertCachedRefOnServer({
-              localRef: ri.local_ref,
-              mode: refMode,
-              provider: imageHostProvider,
-              litterboxExpiry,
-              compressMaxDim,
-              compressQuality,
-            })
+      if (rec.ref_items?.length) {
+        for (const ri of rec.ref_items) {
+          if (ri.local_ref) {
+            try {
+              const conv = await convertCachedRefOnServer({
+                localRef: ri.local_ref,
+                mode: snap.refMode,
+                provider: snap.imageHostProvider,
+                litterboxExpiry: snap.litterboxExpiry,
+                compressMaxDim: snap.compressMaxDim,
+                compressQuality: snap.compressQuality,
+              })
+              restoredRefs.push({
+                value: conv.value,
+                local_ref: conv.local_ref || ri.local_ref,
+                remote_url: conv.url || "",
+                mode: conv.mode,
+                provider: conv.provider || "",
+                label: conv.label || "",
+              })
+              continue
+            } catch {
+              // Let backend recover from local_ref if upload failed on client side
+              restoredRefs.push({
+                value: "",
+                local_ref: ri.local_ref,
+                remote_url: "",
+                mode: snap.refMode,
+                provider: snap.imageHostProvider,
+                label: ri.label || "",
+              })
+              continue
+            }
+          }
+          if (ri.remote_url) {
             restoredRefs.push({
-              value: conv.value,
-              local_ref: conv.local_ref || ri.local_ref,
-              remote_url: conv.url || "",
-              mode: conv.mode,
-              provider: conv.provider || "",
-              label: conv.label || "",
+              value: ri.remote_url,
+              local_ref: ri.local_ref || "",
+              remote_url: ri.remote_url,
+              mode: "url",
+              provider: "",
+              label: "直链 URL",
             })
-            continue
-          } catch {
-            // fallback
           }
         }
-        if (ri.remote_url) {
-          restoredRefs.push({
-            value: ri.remote_url,
-            local_ref: ri.local_ref || "",
-            remote_url: ri.remote_url,
-            mode: "url",
-            provider: "",
-            label: "直链 URL",
-          })
+      }
+
+      try {
+        const res = await apiFetch<{ records?: TaskRecord[] }>("/api/generate", {
+          method: "POST",
+          body: JSON.stringify({
+            model: rec.model,
+            prompt: rec.prompt,
+            size: rec.size,
+            project_id: rec.project_id || "",
+            ref_mode: snap.refMode,
+            image: restoredRefs.map((r) => r.value),
+            ref_items: restoredRefs,
+            quality: rec.quality,
+            background: rec.background,
+            n: 1,
+            oversea: rec.oversea,
+            auto_compat_fallback: snap.autoCompatFallback,
+          }),
+        })
+        if (res.records?.length) {
+          patchRecordsInCache(res.records)
+          scheduleSoftInvalidateRecords()
         }
+        showToast("已按原参数重新提交任务", "success")
+      } catch (err: any) {
+        showToast("重新提交失败: " + err.message, "error")
       }
-    }
+    },
+    [patchRecordsInCache, scheduleSoftInvalidateRecords, showToast]
+  )
 
-    try {
-      await apiFetch("/api/generate", {
-        method: "POST",
-        body: JSON.stringify({
-          model: rec.model,
-          prompt: rec.prompt,
-          size: rec.size,
-          project_id: rec.project_id || "",
-          ref_mode: refMode,
-          image: restoredRefs.map((r) => r.value),
-          ref_items: restoredRefs,
-          quality: rec.quality,
-          background: rec.background,
-          n: 1,
-          oversea: rec.oversea,
-          auto_compat_fallback: autoCompatFallback,
-        }),
-      })
-      showToast("已按原参数重新提交任务", "success")
-    } catch (err: any) {
-      showToast("重新提交失败: " + err.message, "error")
-    }
-  }
-
-  const handleRefreshSingle = async (taskId: string) => {
-    setRefreshingIds((prev) => ({ ...prev, [taskId]: true }))
-    try {
-      await apiFetch("/api/tasks/query", {
-        method: "POST",
-        body: JSON.stringify({ task_id: taskId }),
-      })
-      showToast("已同步任务最新状态", "success")
-    } catch (err: any) {
-      showToast(err.message, "error")
-    } finally {
-      setRefreshingIds((prev) => ({ ...prev, [taskId]: false }))
-    }
-  }
-
-  const handleCancelPolling = async (taskId: string) => {
-    try {
-      await apiFetch("/api/records/cancel", {
-        method: "POST",
-        body: JSON.stringify({ id: taskId }),
-      })
-      showToast("已停止该任务的本地轮询", "info")
-    } catch (err: any) {
-      showToast(err.message, "error")
-    }
-  }
-
-  const handleToggleStar = async (rec: TaskRecord) => {
-    try {
-      const updated = await apiFetch<TaskRecord>("/api/records/star", {
-        method: "POST",
-        body: JSON.stringify({ id: rec.id, starred: !rec.starred }),
-      })
-      setRecords((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
-    } catch (err: any) {
-      showToast(err.message, "error")
-    }
-  }
-
-  const handleDownloadMissingLocal = async (rec: TaskRecord) => {
-    try {
-      await apiFetch("/api/records/download", {
-        method: "POST",
-        body: JSON.stringify({ id: rec.id }),
-      })
-      showToast("已将原图下载至 duomi_data/images/", "success")
-    } catch (err: any) {
-      showToast(err.message, "error")
-    }
-  }
-
-  const handleDeleteSingle = async (rec: TaskRecord) => {
-    try {
-      const res = await apiFetch<{ deleted: string; disk_stats?: DiskUsageStats }>(
-        `/api/records?id=${encodeURIComponent(rec.id)}&delete_files=true`,
-        { method: "DELETE" }
-      )
-      setRecords((prev) => prev.filter((r) => r.id !== rec.id))
-      if (res.disk_stats) setDiskStats(res.disk_stats)
-      if (lightboxRecordId === rec.id) {
-        setLightboxRecordId(null)
+  const handleRefreshSingle = useCallback(
+    async (taskId: string) => {
+      setRefreshingIds((prev) => ({ ...prev, [taskId]: true }))
+      try {
+        await apiFetch("/api/tasks/query", {
+          method: "POST",
+          body: JSON.stringify({ task_id: taskId }),
+        })
+        showToast("已同步任务最新状态", "success")
+      } catch (err: any) {
+        showToast(err.message, "error")
+      } finally {
+        setRefreshingIds((prev) => ({ ...prev, [taskId]: false }))
       }
-      showToast("已删除记录及对应本地图片", "info")
-    } catch (err: any) {
-      showToast(err.message, "error")
-    }
-  }
+    },
+    [showToast]
+  )
 
-  const handleBatchDelete = async (ids: string[]) => {
-    try {
-      const res = await apiFetch<{
-        deleted_count: number
-        disk_stats?: DiskUsageStats
-      }>("/api/records/batch-delete", {
-        method: "POST",
-        body: JSON.stringify({ ids, delete_files: true }),
-      })
-      const delSet = new Set(ids)
-      setRecords((prev) => prev.filter((r) => !delSet.has(r.id)))
-      if (res.disk_stats) setDiskStats(res.disk_stats)
-      showToast(`已批量删除 ${res.deleted_count} 条记录`, "info")
-    } catch (err: any) {
-      showToast(err.message, "error")
-    }
-  }
+  const handleCancelPolling = useCallback(
+    async (taskId: string) => {
+      try {
+        await apiFetch("/api/records/cancel", {
+          method: "POST",
+          body: JSON.stringify({ id: taskId }),
+        })
+        showToast("已停止该任务的本地轮询", "info")
+      } catch (err: any) {
+        showToast(err.message, "error")
+      }
+    },
+    [showToast]
+  )
 
-  const handleClearFailed = async () => {
+  const handleToggleStar = useCallback(
+    async (rec: TaskRecord) => {
+      try {
+        const updated = await apiFetch<TaskRecord>("/api/records/star", {
+          method: "POST",
+          body: JSON.stringify({ id: rec.id, starred: !rec.starred }),
+        })
+        patchRecordsInCache([updated])
+        scheduleSoftInvalidateRecords()
+      } catch (err: any) {
+        showToast(err.message, "error")
+      }
+    },
+    [patchRecordsInCache, scheduleSoftInvalidateRecords, showToast]
+  )
+
+  const handleDownloadMissingLocal = useCallback(
+    async (rec: TaskRecord) => {
+      try {
+        await apiFetch("/api/records/download", {
+          method: "POST",
+          body: JSON.stringify({ id: rec.id }),
+        })
+        showToast("已将原图下载至 duomi_data/images/", "success")
+      } catch (err: any) {
+        showToast(err.message, "error")
+      }
+    },
+    [showToast]
+  )
+
+  const handleDeleteSingle = useCallback(
+    async (rec: TaskRecord) => {
+      try {
+        const res = await apiFetch<{
+          deleted: string
+          disk_stats?: DiskUsageStats
+        }>(
+          `/api/records?id=${encodeURIComponent(rec.id)}&delete_files=true`,
+          { method: "DELETE" }
+        )
+        removeRecordsFromCache([rec.id])
+        scheduleSoftInvalidateRecords()
+        if (res.disk_stats) setDiskStatsOverride(res.disk_stats)
+        setLightboxRecordId((cur) => (cur === rec.id ? null : cur))
+        showToast("已删除记录及对应本地图片", "info")
+      } catch (err: any) {
+        showToast(err.message, "error")
+      }
+    },
+    [removeRecordsFromCache, scheduleSoftInvalidateRecords, showToast]
+  )
+
+  const handleBatchDelete = useCallback(
+    async (ids: string[]) => {
+      try {
+        const res = await apiFetch<{
+          deleted_count: number
+          disk_stats?: DiskUsageStats
+        }>("/api/records/batch-delete", {
+          method: "POST",
+          body: JSON.stringify({ ids, delete_files: true }),
+        })
+        removeRecordsFromCache(ids)
+        scheduleSoftInvalidateRecords()
+        if (res.disk_stats) setDiskStatsOverride(res.disk_stats)
+        showToast(`已批量删除 ${res.deleted_count} 条记录`, "info")
+      } catch (err: any) {
+        showToast(err.message, "error")
+      }
+    },
+    [removeRecordsFromCache, scheduleSoftInvalidateRecords, showToast]
+  )
+
+  const handleClearFailed = useCallback(async () => {
     try {
       const res = await apiFetch<{
         deleted_count: number
@@ -1569,72 +2102,126 @@ export function App() {
         method: "POST",
         body: JSON.stringify({ clear_failed: true, delete_files: true }),
       })
-      if (res.disk_stats) setDiskStats(res.disk_stats)
+      if (res.disk_stats) setDiskStatsOverride(res.disk_stats)
       await refreshRecords()
       showToast(`已清理 ${res.deleted_count} 条失败/超时记录`, "success")
     } catch (err: any) {
       showToast(err.message, "error")
     }
-  }
+  }, [refreshRecords, showToast])
 
-  const handleOpenLocalFolder = async (targetFile?: string) => {
-    try {
-      const res = await apiFetch<{
-        opened: boolean
-        path: string
-        message: string
-      }>("/api/open-folder", {
-        method: "POST",
-        body: JSON.stringify({ target_file: targetFile || "" }),
-      })
-      if (res.opened) {
-        showToast(res.message, "success")
-      } else {
-        copyText(res.path, `已复制本地路径: ${res.path}`)
+  const handleOpenLocalFolder = useCallback(
+    async (targetFile?: string, targetDir?: "images" | "logs" | "thumbs" | "data") => {
+      try {
+        const res = await apiFetch<{
+          opened: boolean
+          path: string
+          message: string
+        }>("/api/open-folder", {
+          method: "POST",
+          body: JSON.stringify({
+            target_file: targetFile || "",
+            target_dir: targetDir || "",
+          }),
+        })
+        if (res.opened) {
+          showToast(res.message, "success")
+        } else {
+          copyText(res.path, `已复制本地路径: ${res.path}`)
+        }
+      } catch (err: any) {
+        showToast(err.message, "error")
       }
+    },
+    [copyText, showToast]
+  )
+
+  const handleQuickCopyLogs = useCallback(async () => {
+    try {
+      const res = await fetchLogs({ limit: 400 })
+      copyText(res.plain_text, "已一键复制脱敏诊断日志")
     } catch (err: any) {
-      showToast(err.message, "error")
+      showToast("获取日志失败: " + (err?.message || "未知错误"), "error")
     }
-  }
+  }, [copyText, showToast])
+
+  const handleOpenLightbox = useCallback(
+    (rec: TaskRecord, idx: number, openCompare = false) => {
+      setLightboxInitialCompare(openCompare)
+      setLightboxRecordId(rec.id)
+      setLightboxImgIdx(idx)
+    },
+    []
+  )
+
+  const handleOpenImportTask = useCallback(() => {
+    setImportTaskOpen(true)
+  }, [])
+
+  const handleRefreshAllToast = useCallback(async () => {
+    await refreshRecords()
+    showToast("已同步最新记录", "info")
+  }, [refreshRecords, showToast])
+
+  const handleLoadMore = useCallback(() => {
+    if (recordsQuery.hasNextPage && !recordsQuery.isFetchingNextPage) {
+      void recordsQuery.fetchNextPage()
+    }
+  }, [recordsQuery])
 
   // Recipe / Template handlers
-  const handleApplyTemplate = (tpl: PromptTemplate, withParams: boolean) => {
-    setPrompt(tpl.prompt)
-    if (withParams) {
-      if (tpl.model) {
-        const known = models.some((m) => m.id === tpl.model)
-        if (known) {
-          setSelectedModel(tpl.model)
-          setCustomModel("")
-        } else {
-          setCustomModel(tpl.model)
+  const handleApplyTemplate = useCallback(
+    (tpl: PromptTemplate, withParams: boolean) => {
+      const snap = composerRef.current
+      setPromptProgrammatic(tpl.prompt)
+      if (withParams) {
+        if (tpl.model) {
+          const known = snap.models.some((m) => m.id === tpl.model)
+          if (known) {
+            setSelectedModel(tpl.model)
+            setCustomModel("")
+          } else {
+            setCustomModel(tpl.model)
+          }
         }
+        if (tpl.size) {
+          selectSizeOrRatioFromValue(tpl.size, snap.ratioPresets)
+        }
+        setQuality(tpl.quality || "default")
+        setBackground(tpl.background || "auto")
       }
-      if (tpl.size) {
-        selectSizeOrRatioFromValue(tpl.size, ratioPresets)
-      }
-      setQuality(tpl.quality || "default")
-      setBackground(tpl.background || "auto")
-    }
-    setActiveTab("imagine")
-    setSplitMobilePane("studio")
-    scrollToImagineTop()
-    showToast(`已装填灵感配方「${tpl.title}」`, "success")
-  }
+      setActiveTab("imagine")
+      setSplitMobilePane("studio")
+      scrollToImagineTop()
+      showToast(`已装填灵感配方「${tpl.title}」`, "success")
+    },
+    [
+      setPromptProgrammatic,
+      selectSizeOrRatioFromValue,
+      scrollToImagineTop,
+      showToast,
+    ]
+  )
 
-  const handleSaveCustomTemplate = async (tpl: PromptTemplate) => {
-    const existing = config?.prompt_templates || []
-    await handleSaveConfig({
-      prompt_templates: [tpl, ...existing],
-    })
-  }
+  const handleSaveCustomTemplate = useCallback(
+    async (tpl: PromptTemplate) => {
+      const existing = composerRef.current.config?.prompt_templates || []
+      await handleSaveConfig({
+        prompt_templates: [tpl, ...existing],
+      })
+    },
+    [handleSaveConfig]
+  )
 
-  const handleDeleteCustomTemplate = async (id: string) => {
-    const existing = config?.prompt_templates || []
-    await handleSaveConfig({
-      prompt_templates: existing.filter((t) => t.id !== id),
-    })
-  }
+  const handleDeleteCustomTemplate = useCallback(
+    async (id: string) => {
+      const existing = composerRef.current.config?.prompt_templates || []
+      await handleSaveConfig({
+        prompt_templates: existing.filter((t) => t.id !== id),
+      })
+    },
+    [handleSaveConfig]
+  )
 
   // Lightbox & Annotator memos
   const succeededRecords = useMemo(
@@ -1716,6 +2303,8 @@ export function App() {
     [referenceImages]
   )
 
+  const totalGalleryCount = serverCounts?.all ?? records.length
+
   const renderOmnibarComposer = (
     floating = false,
     onCollapseOverlay?: () => void
@@ -1727,6 +2316,7 @@ export function App() {
       customModel={customModel}
       onChangeCustomModel={setCustomModel}
       prompt={prompt}
+      promptRevision={promptRevision}
       onChangePrompt={setPrompt}
       promptHistory={promptHistory}
       onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
@@ -1739,48 +2329,30 @@ export function App() {
       onChangeImageHostProvider={(p) => {
         setImageHostProvider(p)
         if (refMode === "upload") {
-          reconvertLocalRefs("upload", p, litterboxExpiry)
+          void reconvertLocalRefs("upload", p, litterboxExpiry)
         }
       }}
       litterboxExpiry={litterboxExpiry}
       onChangeLitterboxExpiry={(exp) => {
         setLitterboxExpiry(exp)
         if (refMode === "upload") {
-          reconvertLocalRefs("upload", imageHostProvider, exp)
+          void reconvertLocalRefs("upload", imageHostProvider, exp)
         }
       }}
       compressMaxDim={compressMaxDim}
       onChangeCompressMaxDim={(dim) => {
         setCompressMaxDim(dim)
-        if (refMode === "compress_base64") {
-          reconvertLocalRefs(
-            "compress_base64",
-            imageHostProvider,
-            litterboxExpiry,
-            dim,
-            compressQuality
-          )
-        }
+        scheduleSliderReconvert(dim, compressQuality)
       }}
       compressQuality={compressQuality}
       onChangeCompressQuality={(q) => {
         setCompressQuality(q)
-        if (refMode === "compress_base64") {
-          reconvertLocalRefs(
-            "compress_base64",
-            imageHostProvider,
-            litterboxExpiry,
-            compressMaxDim,
-            q
-          )
-        }
+        scheduleSliderReconvert(compressMaxDim, q)
       }}
       referenceImages={referenceImages}
       onFilesSelected={handleFilesSelected}
       onAddRefUrl={handleAddRefUrl}
-      onRemoveRef={(id) =>
-        setReferenceImages((prev) => prev.filter((r) => r.id !== id))
-      }
+      onRemoveRef={handleRemoveRef}
       onMoveRef={handleMoveRef}
       onRetryRef={handleRetrySingleRef}
       onAnnotateRef={(entry) => setAnnotatingEntryId(entry.id)}
@@ -1839,15 +2411,17 @@ export function App() {
           layoutMode={layoutMode}
           onToggleLayoutMode={toggleLayoutMode}
           activeQueueCount={activeCount}
-          totalGalleryCount={records.length}
+          totalGalleryCount={totalGalleryCount}
           hasApiKey={hasApiKey}
           sseConnected={sseConnected}
+          unreadLogErrors={unreadLogErrors}
           theme={theme}
           onToggleTheme={() =>
             setTheme((prev) => (prev === "dark" ? "light" : "dark"))
           }
           onOpenCommandPalette={() => setCommandPaletteOpen(true)}
-          onOpenLocalFolder={() => handleOpenLocalFolder()}
+          onOpenLogs={() => setLogsOpen(true)}
+          onOpenLocalFolder={() => void handleOpenLocalFolder()}
           onOpenSettings={(tab = "api") => {
             setSettingsTab(tab)
             setSettingsOpen(true)
@@ -1876,35 +2450,44 @@ export function App() {
                   }}
                   className="h-full overflow-y-auto studio-scroll"
                 >
-                  {/* Shadowless Static Creation Canvas (Option A: max-w-[1040px] inside .studio-container) */}
+                  {/* Shadowless Static Creation Canvas */}
                   <div className="studio-container relative z-0 pt-5 pb-3">
                     {renderOmnibarComposer(false)}
                   </div>
 
-                  {/* Unified Plumb-Line Sticky Filter Bar + Native Aspect-Ratio Masonry Stream */}
+                  {/* Unified Plumb-Line Sticky Filter Bar + TanStack Virtualized Masonry Stream */}
                   <MasonryArtworkStream
                     mode="imagine"
                     embeddedScroll={false}
+                    scrollContainerRef={imagineScrollRef}
                     onSelectModeChange={setIsBatchSelecting}
                     records={records}
+                    serverCounts={serverCounts}
+                    serverModels={serverModels}
+                    totalMatched={totalMatched}
+                    hasMore={Boolean(recordsQuery.hasNextPage)}
+                    isLoadingMore={recordsQuery.isFetchingNextPage}
+                    isFetchingRecords={recordsQuery.isFetching}
+                    onLoadMore={handleLoadMore}
+                    statusFilter={statusFilter}
+                    onChangeStatusFilter={setStatusFilter}
+                    projectFilter={projectFilter}
+                    onChangeProjectFilter={setProjectFilter}
+                    modelFilter={modelFilter}
+                    onChangeModelFilter={setModelFilter}
+                    searchQuery={searchQuery}
+                    onChangeSearchQuery={setSearchQuery}
                     projects={projects}
                     onCreateProject={handleCreateProject}
                     onDeleteProject={handleDeleteProject}
                     onAssignProject={handleAssignProject}
                     onBatchStar={handleBatchStar}
                     refreshingIds={refreshingIds}
-                    onRefreshAll={async () => {
-                      await refreshRecords()
-                      showToast("已同步记录", "info")
-                    }}
+                    onRefreshAll={handleRefreshAllToast}
                     onRefreshSingle={handleRefreshSingle}
                     onCancelPolling={handleCancelPolling}
                     onToggleStar={handleToggleStar}
-                    onOpenLightbox={(rec, idx, openCompare = false) => {
-                      setLightboxInitialCompare(openCompare)
-                      setLightboxRecordId(rec.id)
-                      setLightboxImgIdx(idx)
-                    }}
+                    onOpenLightbox={handleOpenLightbox}
                     onUseGeneratedAsRef={handleUseGeneratedAsRef}
                     onReuseRecord={handleReuseRecord}
                     onRetryRecord={handleRetryRecord}
@@ -1912,7 +2495,7 @@ export function App() {
                     onDeleteSingle={handleDeleteSingle}
                     onBatchDelete={handleBatchDelete}
                     onClearFailed={handleClearFailed}
-                    onOpenImportTask={() => setImportTaskOpen(true)}
+                    onOpenImportTask={handleOpenImportTask}
                     onCopyText={copyText}
                   />
                 </div>
@@ -1923,14 +2506,11 @@ export function App() {
                   expanded={bottomDockExpanded}
                   onChangeExpanded={setBottomDockExpanded}
                   prompt={prompt}
+                  promptRevision={promptRevision}
                   onChangePrompt={setPrompt}
                   referenceImages={referenceImages}
                   onFilesSelected={handleFilesSelected}
-                  onRemoveRef={(id) =>
-                    setReferenceImages((prev) =>
-                      prev.filter((r) => r.id !== id)
-                    )
-                  }
+                  onRemoveRef={handleRemoveRef}
                   shortModelLabel={dockShortModelLabel}
                   tierShortLabel={dockTierShortLabel}
                   batchCount={batchCount}
@@ -1971,227 +2551,229 @@ export function App() {
                         : "text-muted-foreground"
                     )}
                   >
-                    画廊 ({records.length})
+                    画廊 ({totalGalleryCount})
                   </button>
                 </div>
 
-                  <div
-                    className={cn(
-                      "h-full overflow-hidden",
-                      splitMobilePane !== "studio" && "hidden lg:block"
-                    )}
-                  >
-                    <StudioSidebar
-                      models={models}
-                      selectedModel={selectedModel}
-                      onSelectModel={setSelectedModel}
-                      customModel={customModel}
-                      onChangeCustomModel={setCustomModel}
-                      prompt={prompt}
-                      onChangePrompt={setPrompt}
-                      onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
-                      onOpenTemplates={() => setActiveTab("recipes")}
-                      onSaveAsTemplate={() => setTemplatesOpen(true)}
-                      refMode={refMode}
-                      onChangeRefMode={handleChangeRefMode}
-                      imageHosts={imageHosts}
-                      imageHostProvider={imageHostProvider}
-                      onChangeImageHostProvider={(p) => {
-                        setImageHostProvider(p)
-                        if (refMode === "upload") {
-                          reconvertLocalRefs("upload", p, litterboxExpiry)
-                        }
-                      }}
-                      litterboxExpiry={litterboxExpiry}
-                      onChangeLitterboxExpiry={(exp) => {
-                        setLitterboxExpiry(exp)
-                        if (refMode === "upload") {
-                          reconvertLocalRefs("upload", imageHostProvider, exp)
-                        }
-                      }}
-                      compressMaxDim={compressMaxDim}
-                      onChangeCompressMaxDim={(dim) => {
-                        setCompressMaxDim(dim)
-                        if (refMode === "compress_base64") {
-                          reconvertLocalRefs(
-                            "compress_base64",
-                            imageHostProvider,
-                            litterboxExpiry,
-                            dim,
-                            compressQuality
-                          )
-                        }
-                      }}
-                      compressQuality={compressQuality}
-                      onChangeCompressQuality={(q) => {
-                        setCompressQuality(q)
-                        if (refMode === "compress_base64") {
-                          reconvertLocalRefs(
-                            "compress_base64",
-                            imageHostProvider,
-                            litterboxExpiry,
-                            compressMaxDim,
-                            q
-                          )
-                        }
-                      }}
-                      referenceImages={referenceImages}
-                      onFilesSelected={handleFilesSelected}
-                      onAddRefUrl={handleAddRefUrl}
-                      onRemoveRef={(id) =>
-                        setReferenceImages((prev) =>
-                          prev.filter((r) => r.id !== id)
-                        )
+                <div
+                  className={cn(
+                    "h-full overflow-hidden",
+                    splitMobilePane !== "studio" && "hidden lg:block"
+                  )}
+                >
+                  <StudioSidebar
+                    models={models}
+                    selectedModel={selectedModel}
+                    onSelectModel={setSelectedModel}
+                    customModel={customModel}
+                    onChangeCustomModel={setCustomModel}
+                    prompt={prompt}
+                    promptRevision={promptRevision}
+                    onChangePrompt={setPrompt}
+                    onOpenZenWorkbench={() => setZenWorkbenchOpen(true)}
+                    onOpenTemplates={() => setActiveTab("recipes")}
+                    onSaveAsTemplate={() => setTemplatesOpen(true)}
+                    refMode={refMode}
+                    onChangeRefMode={handleChangeRefMode}
+                    imageHosts={imageHosts}
+                    imageHostProvider={imageHostProvider}
+                    onChangeImageHostProvider={(p) => {
+                      setImageHostProvider(p)
+                      if (refMode === "upload") {
+                        void reconvertLocalRefs("upload", p, litterboxExpiry)
                       }
-                      onMoveRef={handleMoveRef}
-                      onRetryRef={handleRetrySingleRef}
-                      onAnnotateRef={(entry) => setAnnotatingEntryId(entry.id)}
-                      onPasteFromClipboardButton={handlePasteFromClipboardButton}
-                      onCopyText={copyText}
-                      onOpenSettingsTab={(t) => {
-                        setSettingsTab(t)
-                        setSettingsOpen(true)
-                      }}
-                      ratioPresets={ratioPresets}
-                      selectedRatio={selectedRatio}
-                      selectedSize={selectedSize}
-                      onSelectRatio={handleSelectRatio}
-                      onSelectPresetSize={(val, tier) => {
-                        setSelectedSize(val)
-                        if (tier && tier !== "auto") {
-                          setPreferredTier(tier)
-                        }
-                      }}
-                      onSelectCustomRatioMode={() => setSelectedRatio("custom")}
-                      customW={customW}
-                      customH={customH}
-                      onChangeCustomW={setCustomW}
-                      onChangeCustomH={setCustomH}
-                      onApplyCustomSize={handleApplyCustomSize}
-                      quality={quality}
-                      onChangeQuality={setQuality}
-                      background={background}
-                      onChangeBackground={setBackground}
-                      oversea={oversea}
-                      onChangeOversea={setOversea}
-                      autoCompatFallback={autoCompatFallback}
-                      onChangeAutoCompatFallback={setAutoCompatFallback}
-                      batchCount={batchCount}
-                      onChangeBatchCount={setBatchCount}
-                      isSubmitting={isSubmitting}
-                      onSubmitGenerate={handleSubmitGenerate}
-                      onOpenDevPreview={() => setDevPreviewOpen(true)}
-                    />
-                  </div>
-
-                  <div
-                    className={cn(
-                      "h-full overflow-hidden",
-                      splitMobilePane !== "gallery" && "hidden lg:block"
-                    )}
-                  >
-                    <MasonryArtworkStream
-                      mode="imagine"
-                      records={records}
-                      projects={projects}
-                      onCreateProject={handleCreateProject}
-                      onDeleteProject={handleDeleteProject}
-                      onAssignProject={handleAssignProject}
-                      onBatchStar={handleBatchStar}
-                      refreshingIds={refreshingIds}
-                      onRefreshAll={refreshRecords}
-                      onRefreshSingle={handleRefreshSingle}
-                      onCancelPolling={handleCancelPolling}
-                      onToggleStar={handleToggleStar}
-                      onOpenLightbox={(rec, idx, openCompare = false) => {
-                        setLightboxInitialCompare(openCompare)
-                        setLightboxRecordId(rec.id)
-                        setLightboxImgIdx(idx)
-                      }}
-                      onUseGeneratedAsRef={handleUseGeneratedAsRef}
-                      onReuseRecord={handleReuseRecord}
-                      onRetryRecord={handleRetryRecord}
-                      onDownloadMissingLocal={handleDownloadMissingLocal}
-                      onDeleteSingle={handleDeleteSingle}
-                      onBatchDelete={handleBatchDelete}
-                      onClearFailed={handleClearFailed}
-                      onOpenImportTask={() => setImportTaskOpen(true)}
-                      onCopyText={copyText}
-                    />
-                  </div>
+                    }}
+                    litterboxExpiry={litterboxExpiry}
+                    onChangeLitterboxExpiry={(exp) => {
+                      setLitterboxExpiry(exp)
+                      if (refMode === "upload") {
+                        void reconvertLocalRefs("upload", imageHostProvider, exp)
+                      }
+                    }}
+                    compressMaxDim={compressMaxDim}
+                    onChangeCompressMaxDim={(dim) => {
+                      setCompressMaxDim(dim)
+                      scheduleSliderReconvert(dim, compressQuality)
+                    }}
+                    compressQuality={compressQuality}
+                    onChangeCompressQuality={(q) => {
+                      setCompressQuality(q)
+                      scheduleSliderReconvert(compressMaxDim, q)
+                    }}
+                    referenceImages={referenceImages}
+                    onFilesSelected={handleFilesSelected}
+                    onAddRefUrl={handleAddRefUrl}
+                    onRemoveRef={handleRemoveRef}
+                    onMoveRef={handleMoveRef}
+                    onRetryRef={handleRetrySingleRef}
+                    onAnnotateRef={(entry) => setAnnotatingEntryId(entry.id)}
+                    onPasteFromClipboardButton={handlePasteFromClipboardButton}
+                    onCopyText={copyText}
+                    onOpenSettingsTab={(t) => {
+                      setSettingsTab(t)
+                      setSettingsOpen(true)
+                    }}
+                    ratioPresets={ratioPresets}
+                    selectedRatio={selectedRatio}
+                    selectedSize={selectedSize}
+                    onSelectRatio={handleSelectRatio}
+                    onSelectPresetSize={(val, tier) => {
+                      setSelectedSize(val)
+                      if (tier && tier !== "auto") {
+                        setPreferredTier(tier)
+                      }
+                    }}
+                    onSelectCustomRatioMode={() => setSelectedRatio("custom")}
+                    customW={customW}
+                    customH={customH}
+                    onChangeCustomW={setCustomW}
+                    onChangeCustomH={setCustomH}
+                    onApplyCustomSize={handleApplyCustomSize}
+                    quality={quality}
+                    onChangeQuality={setQuality}
+                    background={background}
+                    onChangeBackground={setBackground}
+                    oversea={oversea}
+                    onChangeOversea={setOversea}
+                    autoCompatFallback={autoCompatFallback}
+                    onChangeAutoCompatFallback={setAutoCompatFallback}
+                    batchCount={batchCount}
+                    onChangeBatchCount={setBatchCount}
+                    isSubmitting={isSubmitting}
+                    onSubmitGenerate={handleSubmitGenerate}
+                    onOpenDevPreview={() => setDevPreviewOpen(true)}
+                  />
                 </div>
-              ))}
 
-            {/* TAB 2: DEDICATED ASSETS & PROJECT ALBUMS */}
-            {activeTab === "gallery" && (
-              <div className="h-full overflow-hidden">
-                <MasonryArtworkStream
-                  mode="gallery"
-                  records={records}
-                  projects={projects}
-                  onCreateProject={handleCreateProject}
-                  onDeleteProject={handleDeleteProject}
-                  onAssignProject={handleAssignProject}
-                  onBatchStar={handleBatchStar}
-                  refreshingIds={refreshingIds}
-                  onRefreshAll={async () => {
-                    await refreshRecords()
-                    showToast("已刷新全部作品资产", "info")
-                  }}
-                  onRefreshSingle={handleRefreshSingle}
-                  onCancelPolling={handleCancelPolling}
-                  onToggleStar={handleToggleStar}
-                  onOpenLightbox={(rec, idx, openCompare = false) => {
-                    setLightboxInitialCompare(openCompare)
-                    setLightboxRecordId(rec.id)
-                    setLightboxImgIdx(idx)
-                  }}
-                  onUseGeneratedAsRef={handleUseGeneratedAsRef}
-                  onReuseRecord={handleReuseRecord}
-                  onRetryRecord={handleRetryRecord}
-                  onDownloadMissingLocal={handleDownloadMissingLocal}
-                  onDeleteSingle={handleDeleteSingle}
-                  onBatchDelete={handleBatchDelete}
-                  onClearFailed={handleClearFailed}
-                  onOpenImportTask={() => setImportTaskOpen(true)}
-                  onCopyText={copyText}
-                />
+                <div
+                  className={cn(
+                    "h-full overflow-hidden",
+                    splitMobilePane !== "gallery" && "hidden lg:block"
+                  )}
+                >
+                  <MasonryArtworkStream
+                    mode="imagine"
+                    records={records}
+                    serverCounts={serverCounts}
+                    serverModels={serverModels}
+                    totalMatched={totalMatched}
+                    hasMore={Boolean(recordsQuery.hasNextPage)}
+                    isLoadingMore={recordsQuery.isFetchingNextPage}
+                    isFetchingRecords={recordsQuery.isFetching}
+                    onLoadMore={handleLoadMore}
+                    statusFilter={statusFilter}
+                    onChangeStatusFilter={setStatusFilter}
+                    projectFilter={projectFilter}
+                    onChangeProjectFilter={setProjectFilter}
+                    modelFilter={modelFilter}
+                    onChangeModelFilter={setModelFilter}
+                    searchQuery={searchQuery}
+                    onChangeSearchQuery={setSearchQuery}
+                    projects={projects}
+                    onCreateProject={handleCreateProject}
+                    onDeleteProject={handleDeleteProject}
+                    onAssignProject={handleAssignProject}
+                    onBatchStar={handleBatchStar}
+                    refreshingIds={refreshingIds}
+                    onRefreshAll={refreshRecords}
+                    onRefreshSingle={handleRefreshSingle}
+                    onCancelPolling={handleCancelPolling}
+                    onToggleStar={handleToggleStar}
+                    onOpenLightbox={handleOpenLightbox}
+                    onUseGeneratedAsRef={handleUseGeneratedAsRef}
+                    onReuseRecord={handleReuseRecord}
+                    onRetryRecord={handleRetryRecord}
+                    onDownloadMissingLocal={handleDownloadMissingLocal}
+                    onDeleteSingle={handleDeleteSingle}
+                    onBatchDelete={handleBatchDelete}
+                    onClearFailed={handleClearFailed}
+                    onOpenImportTask={handleOpenImportTask}
+                    onCopyText={copyText}
+                  />
+                </div>
               </div>
-            )}
+            ))}
 
-            {/* TAB 3: INSPIRATION & CURATED RECIPES HUB */}
-            {activeTab === "recipes" && (
-              <InspirationHubView
-                builtInTemplates={builtInTemplates}
-                customTemplates={config?.prompt_templates || []}
-                currentPrompt={prompt}
-                currentModel={customModel.trim() || selectedModel}
-                currentSize={selectedSize}
-                currentQuality={quality}
-                currentBackground={background}
-                onUseRecipe={handleApplyTemplate}
-                onSaveCustomTemplate={handleSaveCustomTemplate}
-                onDeleteCustomTemplate={handleDeleteCustomTemplate}
-                onCopyText={copyText}
-              />
-            )}
-
-            {/* TAB 4: TELEMETRY, QUEUE & PORTABLE STORAGE STEWARD */}
-            {activeTab === "analytics" && (
-              <AnalyticsQueueView
+          {/* TAB 2: DEDICATED ASSETS & PROJECT ALBUMS */}
+          {activeTab === "gallery" && (
+            <div className="h-full overflow-hidden">
+              <MasonryArtworkStream
+                mode="gallery"
                 records={records}
-                diskStats={diskStats}
-                dataDir={info?.data_dir || "./duomi_data"}
-                sseConnected={sseConnected}
+                serverCounts={serverCounts}
+                serverModels={serverModels}
+                totalMatched={totalMatched}
+                hasMore={Boolean(recordsQuery.hasNextPage)}
+                isLoadingMore={recordsQuery.isFetchingNextPage}
+                isFetchingRecords={recordsQuery.isFetching}
+                onLoadMore={handleLoadMore}
+                statusFilter={statusFilter}
+                onChangeStatusFilter={setStatusFilter}
+                projectFilter={projectFilter}
+                onChangeProjectFilter={setProjectFilter}
+                modelFilter={modelFilter}
+                onChangeModelFilter={setModelFilter}
+                searchQuery={searchQuery}
+                onChangeSearchQuery={setSearchQuery}
+                projects={projects}
+                onCreateProject={handleCreateProject}
+                onDeleteProject={handleDeleteProject}
+                onAssignProject={handleAssignProject}
+                onBatchStar={handleBatchStar}
                 refreshingIds={refreshingIds}
-                onUpdateDiskStats={setDiskStats}
+                onRefreshAll={handleRefreshAllToast}
                 onRefreshSingle={handleRefreshSingle}
                 onCancelPolling={handleCancelPolling}
+                onToggleStar={handleToggleStar}
+                onOpenLightbox={handleOpenLightbox}
+                onUseGeneratedAsRef={handleUseGeneratedAsRef}
+                onReuseRecord={handleReuseRecord}
+                onRetryRecord={handleRetryRecord}
+                onDownloadMissingLocal={handleDownloadMissingLocal}
+                onDeleteSingle={handleDeleteSingle}
+                onBatchDelete={handleBatchDelete}
                 onClearFailed={handleClearFailed}
-                onOpenLocalFolder={() => handleOpenLocalFolder()}
+                onOpenImportTask={handleOpenImportTask}
                 onCopyText={copyText}
-                onToast={showToast}
               />
+            </div>
+          )}
+
+          {/* TAB 3: INSPIRATION & CURATED RECIPES HUB */}
+          {activeTab === "recipes" && (
+            <InspirationHubView
+              builtInTemplates={builtInTemplates}
+              customTemplates={config?.prompt_templates || []}
+              currentPrompt={prompt}
+              currentModel={customModel.trim() || selectedModel}
+              currentSize={selectedSize}
+              currentQuality={quality}
+              currentBackground={background}
+              onUseRecipe={handleApplyTemplate}
+              onSaveCustomTemplate={handleSaveCustomTemplate}
+              onDeleteCustomTemplate={handleDeleteCustomTemplate}
+              onCopyText={copyText}
+            />
+          )}
+
+          {/* TAB 4: TELEMETRY, QUEUE & PORTABLE STORAGE STEWARD */}
+          {activeTab === "analytics" && (
+            <AnalyticsQueueView
+              records={records}
+              diskStats={diskStats}
+              dataDir={info?.data_dir || "./duomi_data"}
+              sseConnected={sseConnected}
+              refreshingIds={refreshingIds}
+              onUpdateDiskStats={setDiskStatsOverride}
+              onRefreshSingle={handleRefreshSingle}
+              onCancelPolling={handleCancelPolling}
+              onClearFailed={handleClearFailed}
+              onOpenLocalFolder={() => void handleOpenLocalFolder()}
+              onOpenLogs={() => setLogsOpen(true)}
+              onQuickCopyLogs={() => void handleQuickCopyLogs()}
+              onCopyText={copyText}
+              onToast={showToast}
+            />
           )}
         </main>
 
@@ -2204,8 +2786,18 @@ export function App() {
           imageHosts={imageHosts}
           diskStats={diskStats}
           onSaveConfig={(p) => handleSaveConfig(p, false)}
-          onOpenLocalFolder={() => handleOpenLocalFolder()}
+          onOpenLocalFolder={() => void handleOpenLocalFolder()}
+          onOpenLogs={() => setLogsOpen(true)}
+          onOpenLogsFolder={() => void handleOpenLocalFolder(undefined, "logs")}
           onCopyText={copyText}
+        />
+
+        <LogsDialog
+          open={logsOpen}
+          onOpenChange={setLogsOpen}
+          onOpenLogsFolder={() => void handleOpenLocalFolder(undefined, "logs")}
+          onCopyText={copyText}
+          onToast={showToast}
         />
 
         <TemplatesDialog
@@ -2246,6 +2838,7 @@ export function App() {
           open={zenWorkbenchOpen}
           onOpenChange={setZenWorkbenchOpen}
           prompt={prompt}
+          promptRevision={promptRevision}
           onChangePrompt={setPrompt}
           referenceImages={referenceImages}
           promptHistory={promptHistory}
@@ -2286,7 +2879,8 @@ export function App() {
           }}
           onOpenImportTask={() => setImportTaskOpen(true)}
           onOpenDevPreview={() => setDevPreviewOpen(true)}
-          onOpenLocalFolder={() => handleOpenLocalFolder()}
+          onOpenLogs={() => setLogsOpen(true)}
+          onOpenLocalFolder={() => void handleOpenLocalFolder()}
         />
 
         <ImageLightbox
@@ -2320,7 +2914,7 @@ export function App() {
           onOrganizeRecord={handleOrganizeSingle}
           onUseGeneratedAsRef={handleUseGeneratedAsRef}
           onReuseRecord={handleReuseRecord}
-          onOpenLocalFolder={handleOpenLocalFolder}
+          onOpenLocalFolder={(f) => void handleOpenLocalFolder(f)}
           onCopyText={copyText}
           onToast={showToast}
         />

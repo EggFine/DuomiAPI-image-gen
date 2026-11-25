@@ -601,7 +601,7 @@ func TestOrganizeProjectAlbumsAndOrphanCacheCleanup(t *testing.T) {
 	ts := httptest.NewServer(appSrv.Handler())
 	defer ts.Close()
 
-	// 1. Verify /api/info reports v3.2.2 and built-in studio recipes
+	// 1. Verify /api/info reports v3.3.0 and built-in studio recipes
 	infoResp, err := http.Get(ts.URL + "/api/info")
 	if err != nil || infoResp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/info failed: %v", err)
@@ -609,8 +609,8 @@ func TestOrganizeProjectAlbumsAndOrphanCacheCleanup(t *testing.T) {
 	var infoBody map[string]any
 	_ = json.NewDecoder(infoResp.Body).Decode(&infoBody)
 	infoResp.Body.Close()
-	if infoBody["version"] != "v3.2.2" {
-		t.Fatalf("expected version v3.2.2, got %v", infoBody["version"])
+	if infoBody["version"] != "v3.3.0" {
+		t.Fatalf("expected version v3.3.0, got %v", infoBody["version"])
 	}
 
 	// 2. Organize rec-proj-a into project "proj_alpha" with note & star
@@ -656,5 +656,356 @@ func TestOrganizeProjectAlbumsAndOrphanCacheCleanup(t *testing.T) {
 		t.Fatalf("expected referenced ref file to remain intact: %v", err)
 	}
 }
+
+func makeSyntheticTransparentPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			alpha := uint8(255)
+			if x < w/3 && y < h/3 {
+				alpha = 0
+			}
+			img.SetNRGBA(x, y, color.NRGBA{
+				R: uint8((x * 3) % 255),
+				G: uint8((y * 5) % 255),
+				B: 180,
+				A: alpha,
+			})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode transparent png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestThumbnailCacheAndServeRoute(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "duomi_data"))
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	opaquePNG := makeSyntheticPNG(t, 1200, 900)
+	alphaPNG := makeSyntheticTransparentPNG(t, 1200, 900)
+	if err := os.WriteFile(filepath.Join(store.ImagesDir(), "big_opaque.png"), opaquePNG, 0644); err != nil {
+		t.Fatalf("write opaque png: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(store.ImagesDir(), "big_alpha.png"), alphaPNG, 0644); err != nil {
+		t.Fatalf("write alpha png: %v", err)
+	}
+
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:     "rec-thumb-1",
+		Model:  "gpt-image-2.6-sunburst",
+		Prompt: "thumb test",
+		State:  "succeeded",
+		Images: []SavedImage{{LocalFile: "big_opaque.png", Width: 1200, Height: 900, SizeBytes: int64(len(opaquePNG))}},
+	})
+
+	appSrv := NewAppServer(store, NewDuomiClient())
+	ts := httptest.NewServer(appSrv.Handler())
+	defer ts.Close()
+
+	// 1. Opaque large PNG -> cached JPEG thumbnail <= 480px wide inside duomi_data/thumbs/
+	resp1, err := http.Get(ts.URL + "/thumbs/big_opaque.png?w=480")
+	if err != nil || resp1.StatusCode != http.StatusOK {
+		t.Fatalf("GET /thumbs/big_opaque.png failed: err=%v resp=%v", err, resp1)
+	}
+	body1, _ := io.ReadAll(resp1.Body)
+	resp1.Body.Close()
+	if ct := resp1.Header.Get("Content-Type"); !strings.Contains(ct, "jpeg") {
+		t.Fatalf("expected opaque thumb to be jpeg, got Content-Type=%q", ct)
+	}
+	cfg1, _, err := image.DecodeConfig(bytes.NewReader(body1))
+	if err != nil {
+		t.Fatalf("decode opaque thumb failed: %v", err)
+	}
+	if cfg1.Width != 480 || cfg1.Height != 360 {
+		t.Fatalf("expected opaque thumb 480x360, got %dx%d", cfg1.Width, cfg1.Height)
+	}
+
+	// Verify thumbnail file actually exists in portable duomi_data/thumbs/
+	entries, err := os.ReadDir(store.ThumbsDir())
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected cached thumb inside %s, got err=%v count=%d", store.ThumbsDir(), err, len(entries))
+	}
+
+	// 2. Transparent PNG -> preserves PNG format with alpha
+	resp2, err := http.Get(ts.URL + "/thumbs/big_alpha.png?w=160")
+	if err != nil || resp2.StatusCode != http.StatusOK {
+		t.Fatalf("GET /thumbs/big_alpha.png failed: err=%v resp=%v", err, resp2)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	resp2.Body.Close()
+	if ct := resp2.Header.Get("Content-Type"); !strings.Contains(ct, "png") {
+		t.Fatalf("expected transparent thumb to stay png, got Content-Type=%q", ct)
+	}
+	cfg2, _, err := image.DecodeConfig(bytes.NewReader(body2))
+	if err != nil || cfg2.Width != 160 || cfg2.Height != 120 {
+		t.Fatalf("expected transparent thumb 160x120, got %dx%d err=%v", cfg2.Width, cfg2.Height, err)
+	}
+
+	// 3. Deleting the record removes its generated thumbnails as well
+	if err := store.DeleteRecord("rec-thumb-1", true); err != nil {
+		t.Fatalf("DeleteRecord failed: %v", err)
+	}
+	opaqueHash := thumbRelHash("big_opaque.png")
+	remainingEntries, _ := os.ReadDir(store.ThumbsDir())
+	for _, e := range remainingEntries {
+		if strings.Contains(e.Name(), opaqueHash) {
+			t.Fatalf("expected thumbnails for deleted image to be removed, found %s", e.Name())
+		}
+	}
+}
+
+func TestAsyncStoreFlushSanitizeAndPagination(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "duomi_data")
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	hugeB64 := "data:image/png;base64," + strings.Repeat("QUFBQUFBQUFB", 500)
+	sanitized := SanitizeRawResponse(`{"b64_json":"` + strings.Repeat("BBBBBBBB", 500) + `","preview":"` + hugeB64 + `"}`)
+	if strings.Contains(sanitized, strings.Repeat("QUFB", 40)) || strings.Contains(sanitized, strings.Repeat("BBBB", 40)) {
+		t.Fatalf("SanitizeRawResponse failed to strip base64 blobs: %s", sanitized)
+	}
+
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:          "rec-p1",
+		Model:       "gpt-image-2.6-sunburst",
+		Prompt:      "cyberpunk Tokyo neon rain",
+		State:       "succeeded",
+		Starred:     true,
+		ProjectID:   "proj_1",
+		CreateTime:  1000,
+		UpdateTime:  1000,
+		RawResponse: `{"task_id":"rec-p1","preview":"` + hugeB64 + `"}`,
+	})
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:         "rec-p2",
+		Model:      "gpt-image-2.6-flare",
+		Prompt:     "minimalist alpine cabin",
+		State:      "succeeded",
+		CreateTime: 2000,
+		UpdateTime: 2000,
+	})
+	_ = store.UpsertRecord(&TaskRecord{
+		ID:         "rec-p3",
+		Model:      "gpt-image-2.6-sunburst",
+		Prompt:     "failed neon test",
+		State:      "error",
+		CreateTime: 3000,
+		UpdateTime: 3000,
+	})
+
+	// Flush async persist loop to disk and verify reload
+	if err := store.Flush(); err != nil {
+		t.Fatalf("store.Flush failed: %v", err)
+	}
+	reloaded, err := NewStore(dir)
+	if err != nil {
+		t.Fatalf("reload store failed: %v", err)
+	}
+	defer reloaded.Close()
+	if got := len(reloaded.ListRecords()); got != 3 {
+		t.Fatalf("expected 3 records after flush/reload, got %d", got)
+	}
+
+	// Verify UpdateRecordFromSync preserves user-owned Starred/ProjectID/Note and refuses to resurrect deleted records
+	updated, changed, existed := reloaded.UpdateRecordFromSync("rec-p1", false, "gpt-image-2.6-sunburst", func(rec *TaskRecord) bool {
+		rec.Progress = 88
+		rec.State = "running"
+		return true
+	})
+	if !existed || !changed || updated == nil || !updated.Starred || updated.ProjectID != "proj_1" || updated.Progress != 88 {
+		t.Fatalf("UpdateRecordFromSync did not preserve user fields: updated=%+v changed=%v existed=%v", updated, changed, existed)
+	}
+	_ = reloaded.DeleteRecord("rec-p3", false)
+	ghost, _, ghostExisted := reloaded.UpdateRecordFromSync("rec-p3", false, "gpt-image-2.6-sunburst", func(rec *TaskRecord) bool {
+		rec.State = "succeeded"
+		return true
+	})
+	if ghostExisted || ghost != nil {
+		t.Fatalf("UpdateRecordFromSync resurrected deleted record rec-p3")
+	}
+
+	// Verify paginated lightweight GET /api/records omits raw_response and sets has_raw_response
+	appSrv := NewAppServer(reloaded, NewDuomiClient())
+	ts := httptest.NewServer(appSrv.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/records?limit=1&offset=0&q=cyberpunk")
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/records paginated failed: err=%v resp=%v", err, resp)
+	}
+	var page struct {
+		Records []TaskRecord `json:"records"`
+		Total   int          `json:"total"`
+		HasMore bool         `json:"has_more"`
+		Counts  RecordCounts `json:"counts"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&page)
+	resp.Body.Close()
+	if page.Total != 1 || len(page.Records) != 1 || page.Records[0].ID != "rec-p1" {
+		t.Fatalf("unexpected paginated response: %+v", page)
+	}
+	if page.Records[0].RawResponse != "" || !page.Records[0].HasRawResponse {
+		t.Fatalf("expected slim record with empty RawResponse and HasRawResponse=true, got raw=%q has=%v", page.Records[0].RawResponse, page.Records[0].HasRawResponse)
+	}
+
+	// Verify /api/records/detail returns sanitized RawResponse on demand
+	detResp, err := http.Get(ts.URL + "/api/records/detail?id=rec-p1")
+	if err != nil || detResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/records/detail failed: err=%v", err)
+	}
+	var detail TaskRecord
+	_ = json.NewDecoder(detResp.Body).Decode(&detail)
+	detResp.Body.Close()
+	if detail.RawResponse == "" || strings.Contains(detail.RawResponse, strings.Repeat("QUFB", 40)) {
+		t.Fatalf("expected non-empty sanitized raw_response from detail endpoint, got: %q", detail.RawResponse)
+	}
+}
+
+func TestTmpFilesURLFixAndTolerantParsers(t *testing.T) {
+	// 1. Regression test for tmpfiles double /dl/dl/ bug
+	cases := map[string]string{
+		"http://tmpfiles.org/12345/ref.png":     "https://tmpfiles.org/dl/12345/ref.png",
+		"https://tmpfiles.org/12345/ref.png":    "https://tmpfiles.org/dl/12345/ref.png",
+		"https://tmpfiles.org/dl/12345/ref.png": "https://tmpfiles.org/dl/12345/ref.png",
+		"http://tmpfiles.org/dl/999/test.jpg":   "https://tmpfiles.org/dl/999/test.jpg",
+	}
+	for input, want := range cases {
+		if got := normalizeTmpFilesDirectURL(input); got != want {
+			t.Fatalf("normalizeTmpFilesDirectURL(%q) = %q, want %q", input, got, want)
+		}
+	}
+
+	// 2. Tolerant parseCreateTaskResponse: nested data.task_id & inline images & business error
+	tid, imgs, apiErr, err := parseCreateTaskResponse([]byte(`{"code":200,"data":{"task_id":"nested-task-77"}}`))
+	if err != nil || apiErr != "" || tid != "nested-task-77" || len(imgs) != 0 {
+		t.Fatalf("nested create parse failed: tid=%q imgs=%d apiErr=%q err=%v", tid, len(imgs), apiErr, err)
+	}
+	_, inlineImgs, _, err := parseCreateTaskResponse([]byte(`{"data":[{"url":"https://cdn.example.com/inline.png"}]}`))
+	if err != nil || len(inlineImgs) != 1 || inlineImgs[0].URL != "https://cdn.example.com/inline.png" {
+		t.Fatalf("inline create parse failed: imgs=%+v err=%v", inlineImgs, err)
+	}
+	_, _, bizErr, err := parseCreateTaskResponse([]byte(`{"code":500,"msg":"insufficient balance"}`))
+	if err != nil || !strings.Contains(bizErr, "insufficient balance") {
+		t.Fatalf("business error parse failed: bizErr=%q err=%v", bizErr, err)
+	}
+
+	// 3. Tolerant parseTaskQueryResponse: string progress "65%", ISO timestamp, "completed" -> "succeeded"
+	parsed, err := parseTaskQueryResponse([]byte(`{
+		"code": 200,
+		"data": {
+			"task_id": "t-tolerant-1",
+			"status": "completed",
+			"progress": "65%",
+			"create_time": "2026-11-25T08:00:00Z",
+			"data": {
+				"images": [{"url": "https://cdn.example.com/final.png"}]
+			}
+		}
+	}`), "fallback-id")
+	if err != nil {
+		t.Fatalf("parseTaskQueryResponse failed: %v", err)
+	}
+	if parsed.ID != "t-tolerant-1" || parsed.State != "succeeded" || parsed.Progress != 65 || parsed.CreateTime == 0 {
+		t.Fatalf("unexpected tolerant query parse result: %+v", parsed)
+	}
+	if len(parsed.Data.Images) != 1 || parsed.Data.Images[0].URL != "https://cdn.example.com/final.png" {
+		t.Fatalf("expected 1 extracted image, got %+v", parsed.Data.Images)
+	}
+}
+
+func TestPortableLoggerRedactionAndEndpoints(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "duomi_data"))
+	if err != nil {
+		t.Fatalf("NewStore failed: %v", err)
+	}
+	defer store.Close()
+
+	logger, err := NewAppLogger(store.LogsDir())
+	if err != nil {
+		t.Fatalf("NewAppLogger failed: %v", err)
+	}
+	defer logger.Close()
+
+	secretKey := "duomi_live_secret_9876543210abcdef"
+	logger.RegisterSecrets(secretKey)
+	store.SetLogger(logger)
+
+	client := NewDuomiClient()
+	client.SetLogger(logger)
+	appSrv := NewAppServerWithLogger(store, client, logger)
+
+	// Emit a log containing multiple sensitive patterns + base64 blob
+	logger.Error("duomi",
+		"request failed with Authorization: Bearer "+secretKey+" and sk-abcdef1234567890 and data:image/png;base64,"+strings.Repeat("AAAA", 40),
+		map[string]any{"api_key": secretKey},
+		"",
+	)
+
+	// Check portable log file exists under duomi_data/logs/ and redacts secrets
+	files := logger.ListFiles()
+	if len(files) == 0 {
+		t.Fatalf("expected log file in %s", store.LogsDir())
+	}
+	logDiskBytes, err := os.ReadFile(filepath.Join(store.LogsDir(), files[0].Name))
+	if err != nil {
+		t.Fatalf("read log file failed: %v", err)
+	}
+	logText := string(logDiskBytes)
+	if strings.Contains(logText, secretKey) || strings.Contains(logText, "sk-abcdef1234567890") || strings.Contains(logText, strings.Repeat("AAAA", 30)) {
+		t.Fatalf("sensitive credential or base64 leaked into disk log: %s", logText)
+	}
+
+	ts := httptest.NewServer(appSrv.Handler())
+	defer ts.Close()
+
+	// POST /api/logs/client
+	clientLogPayload := `{"level":"ERROR","source":"frontend","message":"Unhandled error with key ` + secretKey + `","stack":"Error: boom\n  at App.tsx:42"}`
+	postResp, err := http.Post(ts.URL+"/api/logs/client", "application/json", strings.NewReader(clientLogPayload))
+	if err != nil || postResp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/logs/client failed: err=%v resp=%v", err, postResp)
+	}
+	postResp.Body.Close()
+
+	// GET /api/logs
+	getResp, err := http.Get(ts.URL + "/api/logs?limit=50")
+	if err != nil || getResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/logs failed: err=%v resp=%v", err, getResp)
+	}
+	var logsBody struct {
+		Entries   []LogEntry    `json:"entries"`
+		Files     []LogFileInfo `json:"files"`
+		PlainText string        `json:"plain_text"`
+	}
+	_ = json.NewDecoder(getResp.Body).Decode(&logsBody)
+	getResp.Body.Close()
+	if len(logsBody.Entries) < 2 || len(logsBody.Files) == 0 {
+		t.Fatalf("expected >= 2 log entries and >= 1 file, got entries=%d files=%d", len(logsBody.Entries), len(logsBody.Files))
+	}
+	if strings.Contains(logsBody.PlainText, secretKey) {
+		t.Fatalf("secret leaked in GET /api/logs plain_text")
+	}
+
+	// GET /api/logs/download
+	dlResp, err := http.Get(ts.URL + "/api/logs/download")
+	if err != nil || dlResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/logs/download failed: err=%v resp=%v", err, dlResp)
+	}
+	dlBytes, _ := io.ReadAll(dlResp.Body)
+	dlResp.Body.Close()
+	if len(dlBytes) == 0 || strings.Contains(string(dlBytes), secretKey) {
+		t.Fatalf("unexpected log download payload or secret leak")
+	}
+}
+
 
 

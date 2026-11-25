@@ -1,5 +1,31 @@
 # 更新日志 (Changelog)
 
+## [v3.3.0] - 2026-11-25
+
+### ⚡ 海量图库零卡顿（TanStack 虚拟化 + 缩略图缓存）· 彻底根治窜提示词 · 生成可靠性加固 · 便携脱敏日志系统
+
+- **1. 解决图片一多就卡顿（引入 `@tanstack/react-virtual` + `@tanstack/react-query` + 本地缩略图缓存）**：
+  - **前端虚拟化瀑布流 (`@tanstack/react-virtual`)**：重写 `MasonryArtworkStream` 为基于 `useVirtualizer` 的多列虚拟化瀑布流/卡片/列表渲染，无论历史图库累积 500 张还是 5,000 张，DOM 始终仅挂载视口附近约 15~25 张卡片，并保持 `0px` 准线对齐与平滑滚动自动加载下一页。
+  - **消除每秒整屏重渲染与输入卡顿**：将「生成中」1 秒耗时计时器彻底抽离为单卡级独立组件 `LiveElapsedTimer`（仅挂载于运行中卡片）；卡片组件 `ArtworkCard` 与整个瀑布流 `MasonryArtworkStream` 均完成 `React.memo` 记忆化及回调稳定化，移除每张图的 GSAP 显影钩子与单卡 Radix Tooltip，彻底消除打字或轮询时触发整屏重排的卡顿。
+  - **前端分页与精确 SSE 缓存修补 (`@tanstack/react-query`)**：列表改为按页加载（`80` 条/页）配合服务端搜索/状态/画册/模型筛选，SSE 实时更新通过 `mergeTaskRecord` 单调精确修补缓存，灯箱底部胶片条使用 160px 缩略图，原始 JSON 改为点击时按需请求 `/api/records/detail`。
+  - **后端本地便携缩略图缓存 (`duomi_data/thumbs/` + `GET /thumbs/...`)**：新增纯 Go 抗锯齿面积平均缩放缓存（160 / 480 / 720px 三档，保留透明 PNG Alpha 通道，不透明大图自动输出轻量 JPEG），限制最大 4 路并发解码并按 key 单飞去重，任务落盘后异步预热、删图时联动清理；列表接口默认剥离膨胀的 `raw_response`（启动自动瘦身历史 `records.json`），将高频 `records.json` 持久化重构为 **锁外异步防抖合并写入** + 唯一临时文件 `fsync` + Windows 杀软共享冲突指数退避重试原子替换，磁盘统计增加 10 秒缓存。
+
+- **2. 彻底根治「容易窜提示词」与中文输入法/并发竞态**：
+  - **统一 IME 组合输入隔离 (`useCompositionInput`)**：为顶部 `OmnibarComposer`、底部悬浮 `BottomComposerDock`、沉浸长文工作台 `PromptWorkbenchModal` 与双栏 `StudioSidebar` 全面接入 `compositionstart` / `compositionend` 与 `isComposing` / `keyCode === 229` 护栏，彻底消除中文拼音输入期间因 SSE 推送或高度重排导致的选词打断、光标跳动与串词问题。
+  - **修复底部小输入栏吞换行符**：将 `BottomComposerDock` 内部的 `<input type="text">` 升级为单行外观 `<textarea rows={1}>`（多行提示词自动展示行数标记），编辑多行提示词不再静默丢失 `\n`。
+  - **复用、重转与提交全链路竞态隔离**：为 `handleReuseRecord` 与 `reconvertLocalRefs` 增加序号令牌 + `AbortController` 取消机制（复用到文生图记录时显式清空旧参考图，不再静默串入上一次参考图或过期临时链接；滑块调节增加 300ms 防抖）；为 `handleSubmitGenerate` 增加同步重入锁 `submittingRef` 与不可变参数快照；后端并发多张提交为每个 goroutine 深拷贝独立请求与标签/参考图切片，轮询回写改用 `UpdateRecordFromSync` 原子保留用户星标/画册/备注且绝不复活已删除记录。
+
+- **3. 排查并修复「现在再生成就失败」核心隐患**：
+  - **修复 `Tmpfiles` 图床双 `/dl/dl/` 404 Bug**：修复 `uploadToTmpFiles` 重复替换 URL 路径导致图床直链失效的问题；统一所有图床与多米 API 请求为连接池复用 `http.Client`，为自动容灾加入 **2 分钟失败节点冷却机制**（自动将国内超时节点后置，避免每次上传白等 24 秒），并将参考图上传超时由 30s 放宽至 60s。
+  - **多米 API 容错解析与自动重试加固**：重写任务创建与查询解析器（`parseCreateTaskResponse` / `parseTaskQueryResponse`），兼容字符串/浮点进度（如 `"65%"`）、ISO/毫秒时间戳、嵌套 `data` 信封、`completed`/`finished` 等状态别名与业务错误码；对瞬时网络抖动与 HTTP `429/502/503/504` 增加有界自动重试（绝不重试 401/403），扩展高分辨率/尺寸参数兼容回退逻辑，并支持在 `Value` 为空时由后端通过本地 `local_ref` 自动恢复提交；加固原图下载原子落盘与 HTML 错误页拦截。
+  - **消除大记录量下的持久化失败**：修复 Windows 环境下高频同步写 `records.json` 触发 `Access is denied` 导致 `/api/generate` 提交失败的问题。
+
+- **4. 新增纯绿色便携日志与故障诊断系统 (`duomi_data/logs/`)**：
+  - **后端按天/按大小自动滚动脱敏日志 (`AppLogger`)**：完整记录 API 请求/响应摘要、图床上传容灾过程、轮询状态迁移与 Panic/错误堆栈，按天（单文件上限 10MB、保留 14 天/30 个文件）写入可执行文件同级的 `duomi_data/logs/studio-YYYY-MM-DD.log`；所有磁盘日志与接口输出均自动脱敏隐藏 API Key、`Authorization` / `Bearer` 令牌与巨型 Base64 图像载荷。
+  - **前端异常捕获与一键复制诊断日志 (`LogsDialog`)**：新增全局 `window.onerror`、`unhandledrejection`、React `ErrorBoundary` 与失败接口自动上报；在顶栏、命令面板 (`Ctrl+K`)、状态页与设置存储页提供一键入口，支持按级别/模块/关键词检索、下载历史 `.log` 文件、直接打开 `duomi_data/logs/` 目录及 **「一键复制诊断日志」** 方便直接粘贴排查。
+
+---
+
 ## [v3.2.2] - 2026-11-10
 
 ### 🛠️ 层叠上下文隔离修复 · 横向优先均衡瀑布流重排

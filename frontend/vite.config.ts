@@ -18,6 +18,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://127.0.0.1:18080',
       '/images': 'http://127.0.0.1:18080',
+      '/thumbs': 'http://127.0.0.1:18080',
     },
   },
 })

@@ -37,7 +37,11 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { parsePixelDimensions } from "@/lib/studio-utils"
+import { getThumbUrl, parsePixelDimensions } from "@/lib/studio-utils"
+import {
+  isComposingEvent,
+  useCompositionInput,
+} from "@/lib/useCompositionInput"
 import { cn } from "@/lib/utils"
 import type {
   ImageHostInfo,
@@ -88,6 +92,7 @@ interface StudioSidebarProps {
   onChangeCustomModel: (v: string) => void
 
   prompt: string
+  promptRevision?: number
   onChangePrompt: (v: string) => void
   onOpenZenWorkbench?: () => void
   onOpenTemplates: () => void
@@ -140,7 +145,7 @@ interface StudioSidebarProps {
   batchCount: number
   onChangeBatchCount: (n: number) => void
   isSubmitting: boolean
-  onSubmitGenerate: () => void
+  onSubmitGenerate: (overridePrompt?: string) => void
   onOpenDevPreview: () => void
 }
 
@@ -151,6 +156,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
   customModel,
   onChangeCustomModel,
   prompt,
+  promptRevision,
   onChangePrompt,
   onOpenZenWorkbench,
   onOpenTemplates,
@@ -208,14 +214,27 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
     Boolean(customModel.trim())
   )
 
+  const {
+    value: localPrompt,
+    valueRef: localPromptRef,
+    handleChange: handlePromptChange,
+    handleCompositionStart,
+    handleCompositionEnd,
+    setProgrammaticValue: setPromptDirect,
+    flushValue,
+    isComposingKey,
+  } = useCompositionInput(prompt, onChangePrompt, promptRevision)
+
   const promptMetrics = useMemo(() => {
-    const chars = Array.from(prompt).length
-    const utf8Bytes = new TextEncoder().encode(prompt).length
+    const chars = Array.from(localPrompt).length
+    const utf8Bytes = new TextEncoder().encode(localPrompt).length
     const mentionsMultiPhotos =
       batchCount === 1 &&
-      /(生成[二三四五六七八九十2-9]张|[2-9]张独立|六宫格|四宫格)/.test(prompt)
+      /(生成[二三四五六七八九十2-9]张|[2-9]张独立|六宫格|四宫格)/.test(
+        localPrompt
+      )
     return { chars, utf8Bytes, mentionsMultiPhotos }
-  }, [prompt, batchCount])
+  }, [localPrompt, batchCount])
 
   const activeRatioGroup = useMemo(
     () =>
@@ -352,7 +371,10 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
               {onOpenZenWorkbench && (
                 <button
                   type="button"
-                  onClick={onOpenZenWorkbench}
+                  onClick={() => {
+                    flushValue()
+                    onOpenZenWorkbench()
+                  }}
                   className="inline-flex items-center gap-1 rounded-full bg-foreground/[0.045] px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-foreground/[0.085] hover:text-foreground transition-colors cursor-pointer"
                 >
                   <Maximize2 className="h-3 w-3" />
@@ -371,8 +393,11 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
               <button
                 id="btn-save-prompt-template"
                 type="button"
-                onClick={onSaveAsTemplate}
-                disabled={!prompt.trim()}
+                onClick={() => {
+                  flushValue()
+                  onSaveAsTemplate()
+                }}
+                disabled={!localPrompt.trim()}
                 className="inline-flex items-center gap-1 rounded-full bg-foreground/[0.045] px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-foreground/[0.085] hover:text-foreground disabled:opacity-40 transition-colors cursor-pointer"
               >
                 <BookmarkPlus className="h-3 w-3" />
@@ -384,13 +409,17 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
           <div className="relative">
             <Textarea
               id="input-prompt"
-              value={prompt}
-              onChange={(e) => onChangePrompt(e.target.value)}
+              value={localPrompt}
+              onChange={handlePromptChange}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
               onKeyDown={(e) => {
+                if (isComposingKey(e)) return
                 if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                   e.preventDefault()
                   if (!isSubmitting && !anyUploadingRef) {
-                    onSubmitGenerate()
+                    const flushed = flushValue()
+                    onSubmitGenerate(flushed)
                   }
                 }
               }}
@@ -435,19 +464,19 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
                 key={item.label}
                 type="button"
                 onClick={() => {
-                  const cur = prompt.trim()
-                  onChangePrompt(cur ? `${cur}\n${item.text}` : item.text)
+                  const cur = localPromptRef.current.trim()
+                  setPromptDirect(cur ? `${cur}\n${item.text}` : item.text)
                 }}
                 className="rounded-full bg-foreground/[0.04] px-2.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.08] hover:text-foreground cursor-pointer"
               >
                 {item.label}
               </button>
             ))}
-            {prompt && (
+            {localPrompt && (
               <button
                 id="btn-clear-prompt"
                 type="button"
-                onClick={() => onChangePrompt("")}
+                onClick={() => setPromptDirect("")}
                 className="ml-auto text-[11px] text-muted-foreground hover:text-destructive cursor-pointer"
               >
                 清空
@@ -690,6 +719,7 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
                 value={refUrlInput}
                 onChange={(e) => setRefUrlInput(e.target.value)}
                 onKeyDown={(e) => {
+                  if (isComposingEvent(e)) return
                   if (e.key === "Enter") {
                     e.preventDefault()
                     if (refUrlInput.trim()) {
@@ -729,20 +759,23 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
                     )}
                   >
                     <img
-                      src={item.preview}
+                      src={
+                        item.local_ref && !item.annotated
+                          ? getThumbUrl(item.local_ref, item.preview, 160)
+                          : item.preview
+                      }
                       alt={`图${idx + 1}`}
                       className="h-full w-full object-cover"
                     />
 
                     <button
                       type="button"
-                      onClick={() =>
-                        onChangePrompt(
-                          prompt.trim()
-                            ? `${prompt} 图${idx + 1}`
-                            : `图${idx + 1}`
+                      onClick={() => {
+                        const cur = localPromptRef.current
+                        setPromptDirect(
+                          cur.trim() ? `${cur} 图${idx + 1}` : `图${idx + 1}`
                         )
-                      }
+                      }}
                       title="插入引用"
                       className="absolute left-1 top-1 rounded-full bg-black/65 backdrop-blur-md px-2 py-0.5 font-mono text-[10px] font-medium text-white hover:bg-white hover:text-zinc-950 transition-colors cursor-pointer"
                     >
@@ -1119,7 +1152,10 @@ export const StudioSidebar: React.FC<StudioSidebarProps> = ({
           type="button"
           size="lg"
           disabled={isSubmitting || anyUploadingRef}
-          onClick={onSubmitGenerate}
+          onClick={() => {
+            const flushed = flushValue()
+            onSubmitGenerate(flushed)
+          }}
           className="w-full h-10"
         >
           {anyUploadingRef ? (

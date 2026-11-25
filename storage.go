@@ -11,6 +11,7 @@ import (
 	_ "image/png"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -88,44 +89,83 @@ type SavedRefImage struct {
 
 // TaskRecord stores full metadata, parameters, and status for a generation task.
 type TaskRecord struct {
-	ID          string          `json:"id"` // Duomi task_id
-	BatchID     string          `json:"batch_id,omitempty"`
-	ProjectID   string          `json:"project_id,omitempty"`
-	Tags        []string        `json:"tags,omitempty"`
-	Note        string          `json:"note,omitempty"`
-	Model       string          `json:"model"`
-	Prompt      string          `json:"prompt"`
-	Size        string          `json:"size,omitempty"`
-	Quality     string          `json:"quality,omitempty"`
-	Background  string          `json:"background,omitempty"`
-	N           int             `json:"n,omitempty"`
-	Oversea     bool            `json:"oversea,omitempty"`
-	CallbackURL string          `json:"callback_url,omitempty"`
-	RefMode     string          `json:"ref_mode,omitempty"`
-	RefCount    int             `json:"ref_count,omitempty"` // number of reference images
-	RefPreviews []string        `json:"ref_previews,omitempty"`
-	RefItems    []SavedRefImage `json:"ref_items,omitempty"`
-	Starred     bool            `json:"starred,omitempty"`
-	State       string          `json:"state"` // pending, running, succeeded, error, failed, timeout, canceled
-	Progress    int             `json:"progress"`
-	Description string          `json:"description,omitempty"`
-	WarningMsg  string          `json:"warning_msg,omitempty"`
-	ErrorMsg    string          `json:"error_msg,omitempty"`
-	Images      []SavedImage    `json:"images"`
-	CreateTime  int64           `json:"create_time"`
-	UpdateTime  int64           `json:"update_time"`
-	DurationMs  int64           `json:"duration_ms,omitempty"`
-	RawResponse string          `json:"raw_response,omitempty"`
+	ID             string          `json:"id"` // Duomi task_id
+	BatchID        string          `json:"batch_id,omitempty"`
+	ProjectID      string          `json:"project_id,omitempty"`
+	Tags           []string        `json:"tags,omitempty"`
+	Note           string          `json:"note,omitempty"`
+	Model          string          `json:"model"`
+	Prompt         string          `json:"prompt"`
+	Size           string          `json:"size,omitempty"`
+	Quality        string          `json:"quality,omitempty"`
+	Background     string          `json:"background,omitempty"`
+	N              int             `json:"n,omitempty"`
+	Oversea        bool            `json:"oversea,omitempty"`
+	CallbackURL    string          `json:"callback_url,omitempty"`
+	RefMode        string          `json:"ref_mode,omitempty"`
+	RefCount       int             `json:"ref_count,omitempty"` // number of reference images
+	RefPreviews    []string        `json:"ref_previews,omitempty"`
+	RefItems       []SavedRefImage `json:"ref_items,omitempty"`
+	Starred        bool            `json:"starred,omitempty"`
+	State          string          `json:"state"` // pending, running, succeeded, error, failed, timeout, canceled
+	Progress       int             `json:"progress"`
+	Description    string          `json:"description,omitempty"`
+	WarningMsg     string          `json:"warning_msg,omitempty"`
+	ErrorMsg       string          `json:"error_msg,omitempty"`
+	Images         []SavedImage    `json:"images"`
+	CreateTime     int64           `json:"create_time"`
+	UpdateTime     int64           `json:"update_time"`
+	DurationMs     int64           `json:"duration_ms,omitempty"`
+	HasRawResponse bool            `json:"has_raw_response,omitempty"`
+	RawResponse    string          `json:"raw_response,omitempty"`
+}
+
+// RecordCounts provides fast global filter counts across all records even under pagination.
+type RecordCounts struct {
+	All       int            `json:"all"`
+	Active    int            `json:"active"`
+	Succeeded int            `json:"succeeded"`
+	Starred   int            `json:"starred"`
+	WithRefs  int            `json:"with_refs"`
+	Failed    int            `json:"failed"`
+	ByProject map[string]int `json:"by_project"`
+}
+
+// RecordQueryOptions controls filtering, searching, and pagination for lightweight record listing.
+type RecordQueryOptions struct {
+	Limit      int
+	Offset     int
+	Status     string
+	ProjectID  string
+	Model      string
+	Query      string
+	IncludeRaw bool
+}
+
+// RecordQueryResult represents a paginated slice of task records alongside global filter counts.
+type RecordQueryResult struct {
+	Records        []*TaskRecord `json:"records"`
+	Total          int           `json:"total"`
+	HasMore        bool          `json:"has_more"`
+	NextOffset     int           `json:"next_offset"`
+	Counts         RecordCounts  `json:"counts"`
+	DistinctModels []string      `json:"distinct_models"`
 }
 
 // DiskUsageStats summarizes portable storage usage inside duomi_data/.
 type DiskUsageStats struct {
 	DataDir        string `json:"data_dir"`
 	ImagesDir      string `json:"images_dir"`
+	ThumbsDir      string `json:"thumbs_dir,omitempty"`
+	LogsDir        string `json:"logs_dir,omitempty"`
 	GeneratedCount int    `json:"generated_count"`
 	GeneratedBytes int64  `json:"generated_bytes"`
 	RefCacheCount  int    `json:"ref_cache_count"`
 	RefCacheBytes  int64  `json:"ref_cache_bytes"`
+	ThumbsCount    int    `json:"thumbs_count,omitempty"`
+	ThumbsBytes    int64  `json:"thumbs_bytes,omitempty"`
+	LogsCount      int    `json:"logs_count,omitempty"`
+	LogsBytes      int64  `json:"logs_bytes,omitempty"`
 	RecordCount    int    `json:"record_count"`
 	TotalBytes     int64  `json:"total_bytes"`
 }
@@ -138,8 +178,25 @@ type Store struct {
 	recordPath string
 	imagesDir  string
 	refsDir    string
+	thumbsDir  string
+	logsDir    string
 	config     AppConfig
 	records    map[string]*TaskRecord
+	logger     *AppLogger
+
+	// Async debounced persistence for records.json (eliminates high-frequency lock-holding disk writes)
+	dirty        bool
+	persistCh    chan struct{}
+	flushCh      chan chan error
+	stopCh       chan struct{}
+	persistDone  chan struct{}
+	closeOnce    sync.Once
+	writeMu      sync.Mutex
+
+	// Short-TTL cached disk stats to avoid walking NTFS/disk on every GET /api/records
+	statsMu        sync.Mutex
+	cachedStats    DiskUsageStats
+	statsUpdatedAt time.Time
 }
 
 // DefaultBuiltInTemplates provides curated high-consistency prompt recipes across major creative workflows.
@@ -360,6 +417,37 @@ func sanitizeAppConfig(cfg *AppConfig) {
 	}
 }
 
+var reRawB64JSON = regexp.MustCompile(`"(?:b64_json|base64|b64)"\s*:\s*"[A-Za-z0-9+/=\s]{128,}"`)
+
+// SanitizeRawResponse strips giant embedded base64 blobs and caps raw_response size so records.json never bloats.
+func SanitizeRawResponse(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if strings.Contains(s, "b64_json") || strings.Contains(s, "base64") {
+		s = reRawB64JSON.ReplaceAllStringFunc(s, func(match string) string {
+			colon := strings.Index(match, ":")
+			if colon <= 0 {
+				return `"[omitted base64]"`
+			}
+			return fmt.Sprintf(`%s"[omitted base64 %d chars]"`, match[:colon+1], len(match)-colon)
+		})
+		s = reDataURIB64.ReplaceAllStringFunc(s, func(match string) string {
+			prefix := "data:image/...;base64,"
+			if idx := strings.Index(match, ","); idx > 0 && idx < 48 {
+				prefix = match[:idx+1]
+			}
+			return fmt.Sprintf("%s[omitted %d chars]", prefix, len(match))
+		})
+	}
+	const maxRawBytes = 16384
+	if len(s) > maxRawBytes {
+		s = truncateUTF8Bytes(s, maxRawBytes) + "...(truncated)"
+	}
+	return s
+}
+
 // NewStore initializes the portable directory structure and loads config and records.
 func NewStore(dataDir string) (*Store, error) {
 	absDir, err := ResolveDefaultDataDir(dataDir)
@@ -369,23 +457,52 @@ func NewStore(dataDir string) (*Store, error) {
 
 	imagesDir := filepath.Join(absDir, "images")
 	refsDir := filepath.Join(imagesDir, "refs")
-	if err := os.MkdirAll(refsDir, 0755); err != nil {
-		return nil, fmt.Errorf("创建数据目录失败 (%s): %w", absDir, err)
+	thumbsDir := filepath.Join(absDir, "thumbs")
+	logsDir := filepath.Join(absDir, "logs")
+	for _, dir := range []string{refsDir, thumbsDir, logsDir} {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, fmt.Errorf("创建数据目录失败 (%s): %w", dir, err)
+		}
 	}
 
 	s := &Store{
-		baseDir:    absDir,
-		configPath: filepath.Join(absDir, "config.json"),
-		recordPath: filepath.Join(absDir, "records.json"),
-		imagesDir:  imagesDir,
-		refsDir:    refsDir,
-		config:     defaultAppConfig(),
-		records:    make(map[string]*TaskRecord),
+		baseDir:     absDir,
+		configPath:  filepath.Join(absDir, "config.json"),
+		recordPath:  filepath.Join(absDir, "records.json"),
+		imagesDir:   imagesDir,
+		refsDir:     refsDir,
+		thumbsDir:   thumbsDir,
+		logsDir:     logsDir,
+		config:      defaultAppConfig(),
+		records:     make(map[string]*TaskRecord),
+		persistCh:   make(chan struct{}, 1),
+		flushCh:     make(chan chan error, 8),
+		stopCh:      make(chan struct{}),
+		persistDone: make(chan struct{}),
 	}
 
 	_ = s.loadConfig()
 	_ = s.loadRecords()
+	go s.persistLoop()
 	return s, nil
+}
+
+// SetLogger attaches a portable logger to Store for storage & persistence diagnostics.
+func (s *Store) SetLogger(l *AppLogger) {
+	s.mu.Lock()
+	s.logger = l
+	cfg := s.config
+	s.mu.Unlock()
+	if l != nil {
+		l.RegisterSecrets(cfg.APIKey, cfg.CustomUploadAuthHeader)
+	}
+}
+
+func (s *Store) getLogger() *AppLogger {
+	s.mu.RLock()
+	l := s.logger
+	s.mu.RUnlock()
+	return l
 }
 
 func (s *Store) BaseDir() string {
@@ -398,6 +515,14 @@ func (s *Store) ImagesDir() string {
 
 func (s *Store) RefsDir() string {
 	return s.refsDir
+}
+
+func (s *Store) ThumbsDir() string {
+	return s.thumbsDir
+}
+
+func (s *Store) LogsDir() string {
+	return s.logsDir
 }
 
 func (s *Store) GetConfig() AppConfig {
@@ -424,8 +549,6 @@ func (s *Store) GetConfig() AppConfig {
 
 func (s *Store) SaveConfig(cfg AppConfig) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if cfg.PromptTemplates == nil && len(s.config.PromptTemplates) > 0 {
 		cfg.PromptTemplates = s.config.PromptTemplates
 	}
@@ -434,7 +557,20 @@ func (s *Store) SaveConfig(cfg AppConfig) error {
 	}
 	sanitizeAppConfig(&cfg)
 	s.config = cfg
-	return writeJSONAtomic(s.configPath, s.config)
+	logger := s.logger
+	snapshot := cfg
+	s.mu.Unlock()
+
+	if logger != nil {
+		logger.RegisterSecrets(snapshot.APIKey, snapshot.CustomUploadAuthHeader)
+	}
+	s.writeMu.Lock()
+	err := writeJSONAtomic(s.configPath, snapshot)
+	s.writeMu.Unlock()
+	if err != nil && logger != nil {
+		logger.Error("storage", "保存 config.json 失败", map[string]any{"error": err.Error()}, "")
+	}
+	return err
 }
 
 func (s *Store) loadConfig() error {
@@ -458,23 +594,53 @@ func (s *Store) loadRecords() error {
 	data, err := os.ReadFile(s.recordPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return writeJSONAtomic(s.recordPath, []*TaskRecord{})
+			return writeBytesAtomic(s.recordPath, []byte("[]"))
 		}
 		return err
 	}
 	var list []*TaskRecord
 	if err := json.Unmarshal(data, &list); err != nil {
+		// Preserve corrupt file for investigation and attempt .bak recovery
+		corruptCopy := fmt.Sprintf("%s.corrupt.%d", s.recordPath, time.Now().Unix())
+		_ = os.WriteFile(corruptCopy, data, 0644)
+		if bakData, bakErr := os.ReadFile(s.recordPath + ".bak"); bakErr == nil {
+			if uErr := json.Unmarshal(bakData, &list); uErr == nil {
+				goto loadList
+			}
+		}
 		return err
 	}
+
+loadList:
+	compacted := false
 	for _, r := range list {
-		if r != nil && r.ID != "" {
-			s.records[r.ID] = r
+		if r == nil || r.ID == "" {
+			continue
+		}
+		if r.RawResponse != "" {
+			cleaned := SanitizeRawResponse(r.RawResponse)
+			if len(cleaned) != len(r.RawResponse) {
+				r.RawResponse = cleaned
+				compacted = true
+			}
+			r.HasRawResponse = r.RawResponse != ""
+		}
+		s.records[r.ID] = r
+	}
+	if compacted {
+		s.dirty = true
+		select {
+		case s.persistCh <- struct{}{}:
+		default:
 		}
 	}
 	return nil
 }
 
 func cloneTaskRecord(rec *TaskRecord) *TaskRecord {
+	if rec == nil {
+		return nil
+	}
 	cp := *rec
 	if rec.Images != nil {
 		cp.Images = make([]SavedImage, len(rec.Images))
@@ -495,18 +661,103 @@ func cloneTaskRecord(rec *TaskRecord) *TaskRecord {
 	return &cp
 }
 
+// SlimTaskRecord returns a lightweight copy without raw_response suitable for gallery lists and SSE events.
+func SlimTaskRecord(rec *TaskRecord) *TaskRecord {
+	cp := cloneTaskRecord(rec)
+	if cp == nil {
+		return nil
+	}
+	cp.HasRawResponse = cp.HasRawResponse || cp.RawResponse != ""
+	cp.RawResponse = ""
+	return cp
+}
+
+// UpsertRecord inserts or updates a task record in memory and schedules non-blocking debounced persistence.
 func (s *Store) UpsertRecord(rec *TaskRecord) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if rec.CreateTime == 0 {
 		rec.CreateTime = time.Now().Unix()
 	}
 	if rec.UpdateTime == 0 {
 		rec.UpdateTime = time.Now().Unix()
 	}
-	s.records[rec.ID] = cloneTaskRecord(rec)
-	return s.persistRecordsLocked()
+	cp := cloneTaskRecord(rec)
+	cp.RawResponse = SanitizeRawResponse(cp.RawResponse)
+	cp.HasRawResponse = cp.RawResponse != ""
+	s.records[cp.ID] = cp
+	s.schedulePersistLocked()
+	s.mu.Unlock()
+	return nil
+}
+
+// UpdateRecordFromSync atomically applies polling/sync status updates to an existing record while strictly
+// preserving user-edited fields (Prompt, Starred, ProjectID, Note, Tags, RefItems).
+// When allowCreate is false, deleted records are never resurrected.
+func (s *Store) UpdateRecordFromSync(id string, allowCreate bool, defaultModel string, apply func(rec *TaskRecord) bool) (*TaskRecord, bool, bool) {
+	s.mu.Lock()
+	rec, exists := s.records[id]
+	if !exists {
+		if !allowCreate {
+			s.mu.Unlock()
+			return nil, false, false
+		}
+		now := time.Now().Unix()
+		rec = &TaskRecord{
+			ID:         id,
+			Model:      defaultModel,
+			Prompt:     "（通过任务 ID 查询导入）",
+			State:      "pending",
+			CreateTime: now,
+			UpdateTime: now,
+		}
+		s.records[id] = rec
+	}
+
+	// Snapshot user-owned immutable fields to guarantee sync never clobbers them
+	origPrompt := rec.Prompt
+	origModel := rec.Model
+	origSize := rec.Size
+	origQuality := rec.Quality
+	origBackground := rec.Background
+	origStarred := rec.Starred
+	origProjectID := rec.ProjectID
+	origNote := rec.Note
+	origBatchID := rec.BatchID
+	origWarning := rec.WarningMsg
+	origTags := rec.Tags
+	origRefItems := rec.RefItems
+	origRefPreviews := rec.RefPreviews
+	origRefCount := rec.RefCount
+	origRefMode := rec.RefMode
+
+	changed := apply(rec)
+
+	// Restore user-owned fields unconditionally
+	rec.Prompt = origPrompt
+	rec.Model = origModel
+	rec.Size = origSize
+	rec.Quality = origQuality
+	rec.Background = origBackground
+	rec.Starred = origStarred
+	rec.ProjectID = origProjectID
+	rec.Note = origNote
+	rec.BatchID = origBatchID
+	rec.WarningMsg = origWarning
+	rec.Tags = origTags
+	rec.RefItems = origRefItems
+	rec.RefPreviews = origRefPreviews
+	rec.RefCount = origRefCount
+	rec.RefMode = origRefMode
+
+	rec.RawResponse = SanitizeRawResponse(rec.RawResponse)
+	rec.HasRawResponse = rec.RawResponse != ""
+
+	if changed || !exists {
+		s.schedulePersistLocked()
+	}
+	snapshot := cloneTaskRecord(rec)
+	s.mu.Unlock()
+	return snapshot, true, changed || !exists
 }
 
 func (s *Store) GetRecord(id string) (*TaskRecord, bool) {
@@ -527,36 +778,162 @@ func (s *Store) ListRecords() []*TaskRecord {
 	for _, r := range s.records {
 		list = append(list, cloneTaskRecord(r))
 	}
+	sortTaskRecords(list)
+	return list
+}
+
+func sortTaskRecords(list []*TaskRecord) {
 	sort.Slice(list, func(i, j int) bool {
 		if list[i].CreateTime == list[j].CreateTime {
 			return list[i].ID > list[j].ID
 		}
 		return list[i].CreateTime > list[j].CreateTime
 	})
-	return list
+}
+
+// QueryRecords returns filtered, paginated, and slimmed task records alongside global filter counts.
+func (s *Store) QueryRecords(opts RecordQueryOptions) RecordQueryResult {
+	s.mu.RLock()
+	all := make([]*TaskRecord, 0, len(s.records))
+	counts := RecordCounts{
+		All:       len(s.records),
+		ByProject: make(map[string]int),
+	}
+	modelSet := make(map[string]struct{})
+	for _, r := range s.records {
+		all = append(all, r)
+		switch r.State {
+		case "pending", "running":
+			counts.Active++
+		case "succeeded":
+			counts.Succeeded++
+		default:
+			counts.Failed++
+		}
+		if r.Starred {
+			counts.Starred++
+		}
+		if r.RefCount > 0 || len(r.RefItems) > 0 {
+			counts.WithRefs++
+		}
+		if r.ProjectID != "" {
+			counts.ByProject[r.ProjectID]++
+		}
+		if r.Model != "" {
+			modelSet[r.Model] = struct{}{}
+		}
+	}
+
+	sortTaskRecords(all)
+
+	statusFilter := strings.ToLower(strings.TrimSpace(opts.Status))
+	projFilter := strings.TrimSpace(opts.ProjectID)
+	modelFilter := strings.TrimSpace(opts.Model)
+	q := strings.ToLower(strings.TrimSpace(opts.Query))
+
+	matched := make([]*TaskRecord, 0, len(all))
+	for _, r := range all {
+		if statusFilter != "" && statusFilter != "all" {
+			switch statusFilter {
+			case "active":
+				if r.State != "pending" && r.State != "running" {
+					continue
+				}
+			case "succeeded":
+				if r.State != "succeeded" {
+					continue
+				}
+			case "starred":
+				if !r.Starred {
+					continue
+				}
+			case "with_refs":
+				if r.RefCount <= 0 && len(r.RefItems) == 0 {
+					continue
+				}
+			case "failed":
+				if r.State != "error" && r.State != "failed" && r.State != "timeout" && r.State != "canceled" {
+					continue
+				}
+			}
+		}
+		if projFilter == "unassigned" && r.ProjectID != "" {
+			continue
+		}
+		if projFilter != "" && projFilter != "all" && projFilter != "unassigned" && r.ProjectID != projFilter {
+			continue
+		}
+		if modelFilter != "" && modelFilter != "all" && r.Model != modelFilter {
+			continue
+		}
+		if q != "" {
+			hay := strings.ToLower(r.ID + " " + r.Model + " " + r.Prompt + " " + r.Size + " " + r.Note + " " + strings.Join(r.Tags, " "))
+			if !strings.Contains(hay, q) {
+				continue
+			}
+		}
+		matched = append(matched, r)
+	}
+
+	total := len(matched)
+	offset := opts.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if opts.Limit > 0 && offset+opts.Limit < end {
+		end = offset + opts.Limit
+	}
+
+	page := make([]*TaskRecord, 0, maxInt(0, end-offset))
+	for _, r := range matched[offset:end] {
+		if opts.IncludeRaw {
+			page = append(page, cloneTaskRecord(r))
+		} else {
+			page = append(page, SlimTaskRecord(r))
+		}
+	}
+
+	distinctModels := make([]string, 0, len(modelSet))
+	for m := range modelSet {
+		distinctModels = append(distinctModels, m)
+	}
+	sort.Strings(distinctModels)
+	s.mu.RUnlock()
+
+	return RecordQueryResult{
+		Records:        page,
+		Total:          total,
+		HasMore:        end < total,
+		NextOffset:     end,
+		Counts:         counts,
+		DistinctModels: distinctModels,
+	}
 }
 
 func (s *Store) SetRecordStarred(id string, starred bool) (*TaskRecord, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rec, ok := s.records[id]
 	if !ok {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("未找到任务记录: %s", id)
 	}
 	rec.Starred = starred
-	if err := s.persistRecordsLocked(); err != nil {
-		return nil, err
-	}
-	return cloneTaskRecord(rec), nil
+	rec.UpdateTime = time.Now().Unix()
+	s.schedulePersistLocked()
+	cp := cloneTaskRecord(rec)
+	s.mu.Unlock()
+	return cp, nil
 }
 
 // OrganizeRecords updates project_id, starred, tags, or note across one or more records atomically.
 func (s *Store) OrganizeRecords(ids []string, projectID *string, starred *bool, tags *[]string, note *string) ([]*TaskRecord, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	var updated []*TaskRecord
+	now := time.Now().Unix()
 	for _, rawID := range ids {
 		id := strings.TrimSpace(rawID)
 		rec, ok := s.records[id]
@@ -581,36 +958,37 @@ func (s *Store) OrganizeRecords(ids []string, projectID *string, starred *bool, 
 		if note != nil {
 			rec.Note = strings.TrimSpace(*note)
 		}
-		rec.UpdateTime = time.Now().Unix()
+		rec.UpdateTime = now
 		updated = append(updated, cloneTaskRecord(rec))
 	}
 	if len(updated) > 0 {
-		if err := s.persistRecordsLocked(); err != nil {
-			return nil, err
-		}
+		s.schedulePersistLocked()
 	}
+	s.mu.Unlock()
 	return updated, nil
 }
 
 func (s *Store) DeleteRecord(id string, deleteFiles bool) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	rec, ok := s.records[id]
 	if !ok {
+		s.mu.Unlock()
 		return nil
 	}
 	if deleteFiles {
 		s.removeRecordFilesLocked(rec)
 	}
 	delete(s.records, id)
-	return s.persistRecordsLocked()
+	s.schedulePersistLocked()
+	s.mu.Unlock()
+	if deleteFiles {
+		s.InvalidateDiskStats()
+	}
+	return nil
 }
 
 func (s *Store) BatchDeleteRecords(ids []string, deleteFiles bool) (int, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	deleted := 0
 	for _, id := range ids {
 		trimmed := strings.TrimSpace(id)
@@ -623,17 +1001,17 @@ func (s *Store) BatchDeleteRecords(ids []string, deleteFiles bool) (int, error) 
 		}
 	}
 	if deleted > 0 {
-		if err := s.persistRecordsLocked(); err != nil {
-			return deleted, err
-		}
+		s.schedulePersistLocked()
+	}
+	s.mu.Unlock()
+	if deleted > 0 && deleteFiles {
+		s.InvalidateDiskStats()
 	}
 	return deleted, nil
 }
 
 func (s *Store) ClearFailedRecords(deleteFiles bool) ([]string, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	var removedIDs []string
 	for id, rec := range s.records {
 		if rec.State == "error" || rec.State == "failed" || rec.State == "timeout" || rec.State == "canceled" {
@@ -645,14 +1023,17 @@ func (s *Store) ClearFailedRecords(deleteFiles bool) ([]string, error) {
 		}
 	}
 	if len(removedIDs) > 0 {
-		if err := s.persistRecordsLocked(); err != nil {
-			return removedIDs, err
-		}
+		s.schedulePersistLocked()
+	}
+	s.mu.Unlock()
+	if len(removedIDs) > 0 && deleteFiles {
+		s.InvalidateDiskStats()
 	}
 	return removedIDs, nil
 }
 
-// CleanOrphanRefCache removes cached files under duomi_data/images/refs/ that are not referenced by any TaskRecord.
+// CleanOrphanRefCache removes cached files under duomi_data/images/refs/ that are not referenced by any TaskRecord,
+// along with their cached thumbnails.
 func (s *Store) CleanOrphanRefCache() (removedCount int, freedBytes int64, err error) {
 	s.mu.RLock()
 	inUse := make(map[string]bool)
@@ -684,8 +1065,12 @@ func (s *Store) CleanOrphanRefCache() (removedCount int, freedBytes int64, err e
 			}
 			if rmErr := os.Remove(full); rmErr == nil {
 				removedCount++
+				RemoveThumbnailsForRelPath(s.thumbsDir, "refs/"+name)
 			}
 		}
+	}
+	if removedCount > 0 {
+		s.InvalidateDiskStats()
 	}
 	return removedCount, freedBytes, nil
 }
@@ -695,6 +1080,7 @@ func (s *Store) removeRecordFilesLocked(rec *TaskRecord) {
 		if img.LocalFile != "" {
 			cleanName := filepath.Base(img.LocalFile)
 			_ = os.Remove(filepath.Join(s.imagesDir, cleanName))
+			RemoveThumbnailsForRelPath(s.thumbsDir, cleanName)
 		}
 	}
 }
@@ -722,9 +1108,10 @@ func (s *Store) SaveRefImageBytes(data []byte, ext string) (string, error) {
 	fileName := fmt.Sprintf("ref_%s%s", hashPrefix, cleanExt)
 	fullPath := filepath.Join(s.refsDir, fileName)
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-		if err := os.WriteFile(fullPath, data, 0644); err != nil {
+		if err := writeBytesAtomic(fullPath, data); err != nil {
 			return "", err
 		}
+		s.InvalidateDiskStats()
 	}
 	return "refs/" + fileName, nil
 }
@@ -749,15 +1136,33 @@ func InspectImageFileMetadata(fullPath string) (width int, height int, sizeBytes
 	return width, height, sizeBytes
 }
 
-// DiskStats calculates file count and byte size inside duomi_data/.
+// InvalidateDiskStats forces the next DiskStats() call to re-scan duomi_data/.
+func (s *Store) InvalidateDiskStats() {
+	s.statsMu.Lock()
+	s.statsUpdatedAt = time.Time{}
+	s.statsMu.Unlock()
+}
+
+// DiskStats calculates file count and byte size inside duomi_data/, cached for 10s to keep hot API calls instant.
 func (s *Store) DiskStats() DiskUsageStats {
 	s.mu.RLock()
 	recCount := len(s.records)
 	s.mu.RUnlock()
 
+	s.statsMu.Lock()
+	if !s.statsUpdatedAt.IsZero() && time.Since(s.statsUpdatedAt) < 10*time.Second {
+		cached := s.cachedStats
+		cached.RecordCount = recCount
+		s.statsMu.Unlock()
+		return cached
+	}
+	s.statsMu.Unlock()
+
 	stats := DiskUsageStats{
 		DataDir:     s.baseDir,
 		ImagesDir:   s.imagesDir,
+		ThumbsDir:   s.thumbsDir,
+		LogsDir:     s.logsDir,
 		RecordCount: recCount,
 	}
 
@@ -767,33 +1172,183 @@ func (s *Store) DiskStats() DiskUsageStats {
 		}
 		sz := info.Size()
 		stats.TotalBytes += sz
-		rel, relErr := filepath.Rel(s.imagesDir, path)
-		if relErr == nil && !strings.HasPrefix(rel, "..") {
-			if strings.HasPrefix(filepath.ToSlash(rel), "refs/") {
+
+		if relImg, relErr := filepath.Rel(s.imagesDir, path); relErr == nil && !strings.HasPrefix(relImg, "..") {
+			if strings.HasPrefix(filepath.ToSlash(relImg), "refs/") {
 				stats.RefCacheCount++
 				stats.RefCacheBytes += sz
 			} else {
 				stats.GeneratedCount++
 				stats.GeneratedBytes += sz
 			}
+			return nil
+		}
+		if relThumb, relErr := filepath.Rel(s.thumbsDir, path); relErr == nil && !strings.HasPrefix(relThumb, "..") {
+			stats.ThumbsCount++
+			stats.ThumbsBytes += sz
+			return nil
+		}
+		if relLog, relErr := filepath.Rel(s.logsDir, path); relErr == nil && !strings.HasPrefix(relLog, "..") {
+			stats.LogsCount++
+			stats.LogsBytes += sz
+			return nil
 		}
 		return nil
 	})
+
+	s.statsMu.Lock()
+	s.cachedStats = stats
+	s.statsUpdatedAt = time.Now()
+	s.statsMu.Unlock()
 	return stats
 }
 
-func (s *Store) persistRecordsLocked() error {
+func (s *Store) schedulePersistLocked() {
+	s.dirty = true
+	if s.persistCh != nil {
+		select {
+		case s.persistCh <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (s *Store) persistLoop() {
+	defer close(s.persistDone)
+
+	const debounceDelay = 300 * time.Millisecond
+	const maxDelay = 1500 * time.Millisecond
+
+	var timer *time.Timer
+	var timerCh <-chan time.Time
+	var firstDirtyAt time.Time
+
+	stopTimer := func() {
+		if timer != nil {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer = nil
+			timerCh = nil
+		}
+		firstDirtyAt = time.Time{}
+	}
+
+	for {
+		select {
+		case <-s.persistCh:
+			now := time.Now()
+			if firstDirtyAt.IsZero() {
+				firstDirtyAt = now
+			}
+			elapsed := now.Sub(firstDirtyAt)
+			wait := debounceDelay
+			if elapsed+wait > maxDelay {
+				wait = maxDelay - elapsed
+				if wait < 10*time.Millisecond {
+					wait = 10 * time.Millisecond
+				}
+			}
+			if timer == nil {
+				timer = time.NewTimer(wait)
+				timerCh = timer.C
+			} else {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(wait)
+			}
+
+		case <-timerCh:
+			stopTimer()
+			if err := s.flushRecordsToDisk(); err != nil {
+				if l := s.getLogger(); l != nil {
+					l.Error("storage", "异步落盘 records.json 失败", map[string]any{"error": err.Error()}, "")
+				}
+			}
+
+		case reply := <-s.flushCh:
+			stopTimer()
+			err := s.flushRecordsToDisk()
+			reply <- err
+
+		case <-s.stopCh:
+			stopTimer()
+			_ = s.flushRecordsToDisk()
+			return
+		}
+	}
+}
+
+// Flush synchronously persists any pending record modifications to records.json.
+func (s *Store) Flush() error {
+	if s.flushCh == nil {
+		return s.flushRecordsToDisk()
+	}
+	reply := make(chan error, 1)
+	select {
+	case s.flushCh <- reply:
+		return <-reply
+	case <-s.persistDone:
+		return s.flushRecordsToDisk()
+	}
+}
+
+// Close flushes all pending data and stops background persistence goroutine cleanly.
+func (s *Store) Close() error {
+	var err error
+	s.closeOnce.Do(func() {
+		err = s.Flush()
+		close(s.stopCh)
+		<-s.persistDone
+	})
+	return err
+}
+
+func (s *Store) flushRecordsToDisk() error {
+	s.mu.Lock()
+	if !s.dirty {
+		s.mu.Unlock()
+		return nil
+	}
 	list := make([]*TaskRecord, 0, len(s.records))
 	for _, r := range s.records {
-		list = append(list, r)
+		list = append(list, cloneTaskRecord(r))
 	}
-	sort.Slice(list, func(i, j int) bool {
-		if list[i].CreateTime == list[j].CreateTime {
-			return list[i].ID > list[j].ID
-		}
-		return list[i].CreateTime > list[j].CreateTime
-	})
-	return writeJSONAtomic(s.recordPath, list)
+	s.dirty = false
+	s.mu.Unlock()
+
+	sortTaskRecords(list)
+	// Compact JSON keeps records.json ~3x smaller & ~3x faster to serialize under thousands of records
+	data, err := json.Marshal(list)
+	if err != nil {
+		s.mu.Lock()
+		s.dirty = true
+		s.mu.Unlock()
+		return err
+	}
+
+	s.writeMu.Lock()
+	err = writeBytesAtomic(s.recordPath, data)
+	if err == nil {
+		// Keep a lightweight backup copy for crash/corrupt recovery (best effort)
+		_ = writeBytesAtomic(s.recordPath+".bak", data)
+	}
+	s.writeMu.Unlock()
+
+	if err != nil {
+		s.mu.Lock()
+		s.dirty = true
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func writeJSONAtomic(path string, v any) error {
@@ -801,11 +1356,47 @@ func writeJSONAtomic(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+	return writeBytesAtomic(path, data)
+}
+
+// writeBytesAtomic writes data safely via unique temp file + fsync + Windows-friendly retryable rename.
+func writeBytesAtomic(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	tmpPath := fmt.Sprintf("%s.%d.%d.tmp", path, os.Getpid(), time.Now().UnixNano())
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+
+	var renameErr error
+	backoff := 20 * time.Millisecond
+	for attempt := 0; attempt < 6; attempt++ {
+		renameErr = os.Rename(tmpPath, path)
+		if renameErr == nil {
+			return nil
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+	_ = os.Remove(tmpPath)
+	return renameErr
 }
 
 // NormalizeAPIKey strips accidental "Bearer " prefix since DuomiAPI requires raw key in Authorization header.

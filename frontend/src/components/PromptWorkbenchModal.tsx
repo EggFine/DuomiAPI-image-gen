@@ -19,8 +19,10 @@ import {
 import { Input } from "@/components/ui/input"
 import {
   formatUnixTime,
+  getThumbUrl,
   PROMPT_ARCHITECT_GROUPS,
 } from "@/lib/studio-utils"
+import { useCompositionInput } from "@/lib/useCompositionInput"
 import { cn } from "@/lib/utils"
 import type {
   PromptHistoryItem,
@@ -32,6 +34,7 @@ interface PromptWorkbenchModalProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   prompt: string
+  promptRevision?: number
   onChangePrompt: (v: string) => void
   referenceImages: ReferenceImageEntry[]
   promptHistory: PromptHistoryItem[]
@@ -41,13 +44,14 @@ interface PromptWorkbenchModalProps {
   currentBackground: string
   onSaveCustomTemplate: (tpl: PromptTemplate) => Promise<void>
   onCopyText: (text: string, msg?: string) => void
-  onSubmitGenerate: () => void
+  onSubmitGenerate: (overridePrompt?: string) => void
 }
 
 export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
   open,
   onOpenChange,
   prompt,
+  promptRevision,
   onChangePrompt,
   referenceImages,
   promptHistory,
@@ -66,12 +70,23 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
   const [recipeTitle, setRecipeTitle] = useState<string>("")
   const [showSaveBar, setShowSaveBar] = useState<boolean>(false)
 
+  const {
+    value: localPrompt,
+    valueRef: localPromptRef,
+    handleChange: handlePromptChange,
+    handleCompositionStart,
+    handleCompositionEnd,
+    setProgrammaticValue: setPromptDirect,
+    flushValue,
+    isComposingKey,
+  } = useCompositionInput(prompt, onChangePrompt, promptRevision)
+
   const stats = useMemo(() => {
-    const chars = prompt.length
-    const utf8Bytes = new TextEncoder().encode(prompt).length
-    const lines = prompt ? prompt.split("\n").length : 0
+    const chars = Array.from(localPrompt).length
+    const utf8Bytes = new TextEncoder().encode(localPrompt).length
+    const lines = localPrompt ? localPrompt.split("\n").length : 0
     return { chars, utf8Bytes, lines }
-  }, [prompt])
+  }, [localPrompt])
 
   const filteredHistory = useMemo(() => {
     const q = historySearch.trim().toLowerCase()
@@ -85,15 +100,16 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
 
   const insertAtCursor = (snippet: string, asParagraph = false) => {
     const el = textareaRef.current
+    const cur = el ? el.value : localPromptRef.current
     if (!el) {
-      const sep = prompt.trim() ? (asParagraph ? "\n\n" : "，") : ""
-      onChangePrompt(prompt.trim() ? `${prompt}${sep}${snippet}` : snippet)
+      const sep = cur.trim() ? (asParagraph ? "\n\n" : "，") : ""
+      setPromptDirect(cur.trim() ? `${cur}${sep}${snippet}` : snippet)
       return
     }
-    const start = el.selectionStart ?? prompt.length
-    const end = el.selectionEnd ?? prompt.length
-    const before = prompt.slice(0, start)
-    const after = prompt.slice(end)
+    const start = el.selectionStart ?? cur.length
+    const end = el.selectionEnd ?? cur.length
+    const before = cur.slice(0, start)
+    const after = cur.slice(end)
     const prefix =
       before.length > 0 && !before.endsWith("\n") && !before.endsWith(" ")
         ? asParagraph
@@ -101,7 +117,7 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
           : " "
         : ""
     const next = `${before}${prefix}${snippet}${after}`
-    onChangePrompt(next)
+    setPromptDirect(next)
     requestAnimationFrame(() => {
       el.focus()
       const pos = start + prefix.length + snippet.length
@@ -110,25 +126,27 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
   }
 
   const handleSmartFormat = () => {
-    if (!prompt.trim()) return
-    const formatted = prompt
+    const cur = localPromptRef.current
+    if (!cur.trim()) return
+    const formatted = cur
       .replace(/\r\n/g, "\n")
       .replace(/[ \t]+\n/g, "\n")
       .replace(/\n{3,}/g, "\n\n")
       .trim()
-    onChangePrompt(formatted)
+    setPromptDirect(formatted)
   }
 
   const handleConfirmSaveRecipe = async () => {
-    if (!recipeTitle.trim() || !prompt.trim()) return
+    const cur = flushValue().trim()
+    if (!recipeTitle.trim() || !cur) return
     setSavingRecipe(true)
     try {
       await onSaveCustomTemplate({
         id: `custom_${Date.now()}`,
         title: recipeTitle.trim(),
         category: "个人收藏",
-        summary: prompt.trim().slice(0, 68),
-        prompt: prompt.trim(),
+        summary: cur.slice(0, 68),
+        prompt: cur,
         model: currentModel,
         size: currentSize,
         quality: currentQuality !== "default" ? currentQuality : "",
@@ -144,7 +162,13 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) flushValue()
+        onOpenChange(nextOpen)
+      }}
+    >
       <DialogContent className="max-w-[95vw] sm:max-w-5xl p-0 overflow-hidden">
         <DialogTitle className="sr-only">长文工作台</DialogTitle>
         <DialogDescription className="sr-only">
@@ -189,7 +213,11 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                     className="inline-flex items-center gap-1.5 rounded-full bg-background/80 px-2.5 py-1 text-[11px] font-medium text-foreground shadow-2xs hover:bg-background transition-colors cursor-pointer"
                   >
                     <img
-                      src={r.preview}
+                      src={
+                        r.local_ref && !r.annotated
+                          ? getThumbUrl(r.local_ref, r.preview, 160)
+                          : r.preview
+                      }
                       alt=""
                       className="h-4 w-4 rounded-full object-cover"
                     />
@@ -213,8 +241,8 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                   type="button"
                   variant="ghost"
                   size="xs"
-                  disabled={!prompt}
-                  onClick={() => onCopyText(prompt, "已复制提示词")}
+                  disabled={!localPrompt}
+                  onClick={() => onCopyText(flushValue(), "已复制提示词")}
                 >
                   <Copy className="h-3.5 w-3.5" />
                   复制
@@ -224,8 +252,8 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                   variant="ghost"
                   size="xs"
                   className="text-muted-foreground hover:text-destructive"
-                  disabled={!prompt}
-                  onClick={() => onChangePrompt("")}
+                  disabled={!localPrompt}
+                  onClick={() => setPromptDirect("")}
                 >
                   <Eraser className="h-3.5 w-3.5" />
                   清空
@@ -265,8 +293,21 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
             {/* Spacious Clean Textarea */}
             <textarea
               ref={textareaRef}
-              value={prompt}
-              onChange={(e) => onChangePrompt(e.target.value)}
+              value={localPrompt}
+              onChange={handlePromptChange}
+              onCompositionStart={handleCompositionStart}
+              onCompositionEnd={handleCompositionEnd}
+              onKeyDown={(e) => {
+                if (isComposingKey(e)) return
+                if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault()
+                  const flushed = flushValue()
+                  if (flushed.trim()) {
+                    onOpenChange(false)
+                    onSubmitGenerate(flushed)
+                  }
+                }
+              }}
               placeholder="从容撰写主体、空间结构与光影细节，点击右侧词条可插入光标处..."
               className="flex-1 w-full resize-none bg-transparent px-5 py-4 text-[14px] leading-7 text-foreground placeholder:text-muted-foreground/45 focus:outline-none studio-scroll"
             />
@@ -377,7 +418,7 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
                             variant="outline"
                             size="xs"
                             className="h-6 px-2.5 text-[11px]"
-                            onClick={() => onChangePrompt(h.prompt)}
+                            onClick={() => setPromptDirect(h.prompt)}
                           >
                             填入
                           </Button>
@@ -406,7 +447,7 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
             type="button"
             variant="outline"
             size="sm"
-            disabled={!prompt.trim()}
+            disabled={!localPrompt.trim()}
             onClick={() => setShowSaveBar((p) => !p)}
           >
             <BookmarkPlus className="h-3.5 w-3.5" />
@@ -418,17 +459,21 @@ export const PromptWorkbenchModal: React.FC<PromptWorkbenchModalProps> = ({
               type="button"
               variant="ghost"
               size="sm"
-              onClick={() => onOpenChange(false)}
+              onClick={() => {
+                flushValue()
+                onOpenChange(false)
+              }}
             >
               完成
             </Button>
             <Button
               type="button"
               size="sm"
-              disabled={!prompt.trim()}
+              disabled={!localPrompt.trim()}
               onClick={() => {
+                const flushed = flushValue()
                 onOpenChange(false)
-                onSubmitGenerate()
+                onSubmitGenerate(flushed)
               }}
             >
               生成

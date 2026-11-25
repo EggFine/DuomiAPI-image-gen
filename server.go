@@ -14,11 +14,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+const AppVersion = "v3.3.0"
 
 //go:embed all:web
 var embeddedWebFS embed.FS
@@ -28,31 +31,106 @@ type sseEvent struct {
 	Payload any    `json:"payload"`
 }
 
-// AppServer coordinates HTTP API requests, SSE real-time events, background task polling, and local storage.
+// AppServer coordinates HTTP API requests, SSE real-time events, background task polling,
+// thumbnail caching, portable diagnostics logging, and local storage.
 type AppServer struct {
 	store       *Store
 	client      *DuomiClient
+	logger      *AppLogger
+	thumbs      *ThumbnailCache
 	pollingMu   sync.Mutex
 	polling     map[string]bool
 	cancelFuncs map[string]context.CancelFunc
+
+	taskLockMu sync.Mutex
+	taskLocks  map[string]*sync.Mutex
 
 	sseMu      sync.Mutex
 	sseClients map[chan []byte]struct{}
 }
 
 func NewAppServer(store *Store, client *DuomiClient) *AppServer {
+	logger := store.getLogger()
+	if logger == nil && store != nil {
+		if l, err := NewAppLogger(store.LogsDir()); err == nil {
+			logger = l
+			store.SetLogger(l)
+		}
+	}
+	return NewAppServerWithLogger(store, client, logger)
+}
+
+func NewAppServerWithLogger(store *Store, client *DuomiClient, logger *AppLogger) *AppServer {
+	if logger != nil {
+		if store != nil {
+			store.SetLogger(logger)
+		}
+		if client != nil {
+			client.SetLogger(logger)
+		}
+	}
+	var thumbs *ThumbnailCache
+	if store != nil {
+		thumbs = NewThumbnailCache(store.ImagesDir(), store.ThumbsDir(), logger)
+	}
 	s := &AppServer{
 		store:       store,
 		client:      client,
+		logger:      logger,
+		thumbs:      thumbs,
 		polling:     make(map[string]bool),
 		cancelFuncs: make(map[string]context.CancelFunc),
+		taskLocks:   make(map[string]*sync.Mutex),
 		sseClients:  make(map[chan []byte]struct{}),
 	}
 	s.ResumePendingTasks()
 	return s
 }
 
+func (s *AppServer) getLogger() *AppLogger {
+	if s.logger != nil {
+		return s.logger
+	}
+	if s.store != nil {
+		return s.store.getLogger()
+	}
+	return nil
+}
+
+func (s *AppServer) getThumbs() *ThumbnailCache {
+	if s.thumbs != nil {
+		return s.thumbs
+	}
+	if s.store != nil {
+		s.thumbs = NewThumbnailCache(s.store.ImagesDir(), s.store.ThumbsDir(), s.getLogger())
+	}
+	return s.thumbs
+}
+
+func (s *AppServer) lockTaskSync(taskID string) func() {
+	s.taskLockMu.Lock()
+	if s.taskLocks == nil {
+		s.taskLocks = make(map[string]*sync.Mutex)
+	}
+	mu, ok := s.taskLocks[taskID]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.taskLocks[taskID] = mu
+	}
+	s.taskLockMu.Unlock()
+
+	mu.Lock()
+	return func() {
+		mu.Unlock()
+	}
+}
+
 func (s *AppServer) broadcastSSE(eventType string, payload any) {
+	// Always slim TaskRecord payloads before broadcasting so SSE stays tiny & fast
+	if rec, ok := payload.(*TaskRecord); ok && rec != nil {
+		payload = SlimTaskRecord(rec)
+	}
+
 	s.sseMu.Lock()
 	defer s.sseMu.Unlock()
 	if len(s.sseClients) == 0 {
@@ -76,10 +154,20 @@ func (s *AppServer) broadcastSSE(eventType string, payload any) {
 
 // ResumePendingTasks restarts background polling for recent unfinished tasks.
 func (s *AppServer) ResumePendingTasks() {
+	if s.store == nil {
+		return
+	}
 	now := time.Now().Unix()
+	resumed := 0
 	for _, rec := range s.store.ListRecords() {
 		if (rec.State == "pending" || rec.State == "running") && now-rec.CreateTime < 1800 {
 			s.StartPolling(rec.ID)
+			resumed++
+		}
+	}
+	if resumed > 0 {
+		if l := s.getLogger(); l != nil {
+			l.Info("poll", "已恢复未完成任务的后台轮询", map[string]any{"resumed_count": resumed})
 		}
 	}
 }
@@ -102,12 +190,17 @@ func (s *AppServer) StartPolling(taskID string) {
 	s.cancelFuncs[taskID] = cancel
 	s.pollingMu.Unlock()
 
-	go func() {
+	go func(id string) {
 		defer func() {
+			if rv := recover(); rv != nil {
+				if l := s.getLogger(); l != nil {
+					l.Error("poll", fmt.Sprintf("轮询协程发生 panic: %v", rv), map[string]any{"task_id": id}, string(debug.Stack()))
+				}
+			}
 			cancel()
 			s.pollingMu.Lock()
-			delete(s.polling, taskID)
-			delete(s.cancelFuncs, taskID)
+			delete(s.polling, id)
+			delete(s.cancelFuncs, id)
 			s.pollingMu.Unlock()
 		}()
 
@@ -121,7 +214,16 @@ func (s *AppServer) StartPolling(taskID string) {
 			timeout = 300 * time.Second
 		}
 
+		if l := s.getLogger(); l != nil {
+			l.Debug("poll", "启动任务后台轮询", map[string]any{
+				"task_id":    id,
+				"interval_s": int(interval.Seconds()),
+				"timeout_s":  int(timeout.Seconds()),
+			})
+		}
+
 		deadline := time.Now().Add(timeout)
+		consecutiveErrs := 0
 		for {
 			select {
 			case <-pollCtx.Done():
@@ -130,7 +232,7 @@ func (s *AppServer) StartPolling(taskID string) {
 			}
 
 			reqCtx, reqCancel := context.WithTimeout(pollCtx, 45*time.Second)
-			rec, done, _ := s.SyncTaskOnce(reqCtx, taskID, cfg.AutoDownload)
+			rec, done, syncErr := s.syncTaskOnceInternal(reqCtx, id, cfg.AutoDownload, false, &consecutiveErrs)
 			reqCancel()
 
 			if pollCtx.Err() != nil {
@@ -139,24 +241,44 @@ func (s *AppServer) StartPolling(taskID string) {
 			if done {
 				return
 			}
+			// If record was deleted by user while polling, stop polling immediately
+			if rec == nil && syncErr == nil {
+				return
+			}
 			if time.Now().After(deadline) {
-				if rec != nil && (rec.State == "pending" || rec.State == "running") {
-					rec.State = "timeout"
-					rec.ErrorMsg = fmt.Sprintf("轮询超时 (%ds)，可点击“刷新状态”继续查询", int(timeout.Seconds()))
-					rec.UpdateTime = time.Now().Unix()
-					_ = s.store.UpsertRecord(rec)
-					s.broadcastSSE("record_updated", rec)
+				updated, exists, changed := s.store.UpdateRecordFromSync(id, false, cfg.DefaultModel, func(r *TaskRecord) bool {
+					if r.State != "pending" && r.State != "running" {
+						return false
+					}
+					r.State = "timeout"
+					r.ErrorMsg = fmt.Sprintf("轮询超时 (%ds)，可点击“刷新状态”继续查询", int(timeout.Seconds()))
+					r.UpdateTime = time.Now().Unix()
+					return true
+				})
+				if exists && changed && updated != nil {
+					if l := s.getLogger(); l != nil {
+						l.Warn("poll", "任务轮询超时", map[string]any{"task_id": id, "timeout_s": int(timeout.Seconds())})
+					}
+					s.broadcastSSE("record_updated", updated)
 				}
 				return
+			}
+
+			sleepDur := interval
+			if consecutiveErrs >= 3 {
+				sleepDur = interval * 2
+				if sleepDur > 15*time.Second {
+					sleepDur = 15 * time.Second
+				}
 			}
 
 			select {
 			case <-pollCtx.Done():
 				return
-			case <-time.After(interval):
+			case <-time.After(sleepDur):
 			}
 		}
-	}()
+	}(taskID)
 }
 
 // CancelPolling stops active background polling for a task and marks it canceled if still pending/running.
@@ -173,16 +295,21 @@ func (s *AppServer) CancelPolling(taskID string) (*TaskRecord, error) {
 	}
 	s.pollingMu.Unlock()
 
-	rec, ok := s.store.GetRecord(taskID)
-	if !ok {
+	rec, exists, changed := s.store.UpdateRecordFromSync(taskID, false, "", func(r *TaskRecord) bool {
+		if r.State != "pending" && r.State != "running" {
+			return false
+		}
+		r.State = "canceled"
+		r.ErrorMsg = "已手动停止本地轮询（稍后仍可点击“刷新状态”重新同步远端结果）"
+		r.UpdateTime = time.Now().Unix()
+		return true
+	})
+	if !exists {
 		return nil, fmt.Errorf("未找到任务: %s", taskID)
 	}
-	if rec.State == "pending" || rec.State == "running" {
-		rec.State = "canceled"
-		rec.ErrorMsg = "已手动停止本地轮询（稍后仍可点击“刷新状态”重新同步远端结果）"
-		rec.UpdateTime = time.Now().Unix()
-		if err := s.store.UpsertRecord(rec); err != nil {
-			return nil, err
+	if changed {
+		if l := s.getLogger(); l != nil {
+			l.Info("poll", "已手动停止任务本地轮询", map[string]any{"task_id": taskID})
 		}
 		s.broadcastSSE("record_updated", rec)
 	}
@@ -191,62 +318,73 @@ func (s *AppServer) CancelPolling(taskID string) (*TaskRecord, error) {
 
 // SyncTaskOnce queries DuomiAPI for a single task, updates the local record, downloads images if succeeded, and emits SSE.
 func (s *AppServer) SyncTaskOnce(ctx context.Context, taskID string, downloadImages bool) (*TaskRecord, bool, error) {
+	return s.syncTaskOnceInternal(ctx, taskID, downloadImages, true, nil)
+}
+
+func (s *AppServer) syncTaskOnceInternal(ctx context.Context, taskID string, downloadImages bool, allowCreate bool, consecutiveErrs *int) (*TaskRecord, bool, error) {
+	unlock := s.lockTaskSync(taskID)
+	defer unlock()
+
+	logger := s.getLogger()
 	cfg := s.store.GetConfig()
-	rec, exists := s.store.GetRecord(taskID)
-	if !exists {
-		rec = &TaskRecord{
-			ID:         taskID,
-			Model:      cfg.DefaultModel,
-			Prompt:     "（通过任务 ID 查询导入）",
-			State:      "pending",
-			CreateTime: time.Now().Unix(),
-			UpdateTime: time.Now().Unix(),
-		}
+
+	existing, exists := s.store.GetRecord(taskID)
+	if !exists && !allowCreate {
+		return nil, true, nil
 	}
 
 	resp, rawStr, err := s.client.GetTask(ctx, cfg.BaseURL, cfg.APIKey, taskID)
 	if err != nil {
 		if ctx.Err() != nil {
-			return rec, false, ctx.Err()
+			return existing, false, ctx.Err()
 		}
-		rec.UpdateTime = time.Now().Unix()
-		rec.ErrorMsg = err.Error()
-		_ = s.store.UpsertRecord(rec)
-		s.broadcastSSE("record_updated", rec)
-		return rec, false, err
+		if consecutiveErrs != nil {
+			*consecutiveErrs++
+			// Tolerate single transient blip without spamming SSE / polluting card error state
+			if *consecutiveErrs < 2 {
+				return existing, false, err
+			}
+		}
+		updated, stillExists, changed := s.store.UpdateRecordFromSync(taskID, allowCreate, cfg.DefaultModel, func(r *TaskRecord) bool {
+			if r.ErrorMsg == err.Error() {
+				return false
+			}
+			r.UpdateTime = time.Now().Unix()
+			r.ErrorMsg = err.Error()
+			return true
+		})
+		if stillExists && changed && updated != nil {
+			s.broadcastSSE("record_updated", updated)
+		}
+		// Stop polling permanently on auth error rather than hammering DuomiAPI
+		if strings.Contains(err.Error(), "HTTP 401") || strings.Contains(err.Error(), "HTTP 403") {
+			return updated, true, err
+		}
+		return updated, false, err
 	}
 
-	state := strings.ToLower(strings.TrimSpace(resp.State))
+	if consecutiveErrs != nil {
+		*consecutiveErrs = 0
+	}
+
+	state := normalizeDuomiTaskState(resp.State)
 	if state == "" {
 		state = "pending"
 	}
-	rec.State = state
-	rec.Progress = resp.Progress
-	if resp.Data.Description != "" {
-		rec.Description = resp.Data.Description
-	}
-	if resp.CreateTime > 0 && rec.CreateTime == 0 {
-		rec.CreateTime = resp.CreateTime
-	}
-	nowUnix := time.Now().Unix()
-	rec.UpdateTime = nowUnix
-	if rec.CreateTime > 0 && nowUnix >= rec.CreateTime {
-		rec.DurationMs = (nowUnix - rec.CreateTime) * 1000
-	}
-	rec.RawResponse = rawStr
 
-	switch state {
-	case "succeeded":
-		rec.Progress = 100
-		rec.ErrorMsg = ""
+	// If succeeded, perform image downloads OUTSIDE store mutex to prevent blocking other readers/writers
+	var downloadedImages []SavedImage
+	downloadedNewFile := false
+	if state == "succeeded" {
 		existingMap := make(map[string]SavedImage)
-		for _, img := range rec.Images {
-			if img.RemoteURL != "" {
-				existingMap[img.RemoteURL] = img
+		if existing != nil {
+			for _, img := range existing.Images {
+				if img.RemoteURL != "" {
+					existingMap[img.RemoteURL] = img
+				}
 			}
 		}
 
-		var updatedImages []SavedImage
 		for idx, item := range resp.Data.Images {
 			saved := SavedImage{
 				RemoteURL: item.URL,
@@ -267,6 +405,7 @@ func (s *AppServer) SyncTaskOnce(ctx context.Context, taskID string, downloadIma
 					localName, dlErr := s.client.DownloadImage(ctx, item.URL, s.store.ImagesDir(), taskID, idx, item.FileName)
 					if dlErr == nil {
 						saved.LocalFile = localName
+						downloadedNewFile = true
 					} else {
 						log.Printf("[WARN] 下载任务 %s 图片失败: %v", taskID, dlErr)
 					}
@@ -274,45 +413,147 @@ func (s *AppServer) SyncTaskOnce(ctx context.Context, taskID string, downloadIma
 					localName, b64Err := SaveBase64Image(item.B64JSON, s.store.ImagesDir(), taskID, idx)
 					if b64Err == nil {
 						saved.LocalFile = localName
+						downloadedNewFile = true
 					}
 				}
 			}
 
-			if saved.LocalFile != "" && (saved.SizeBytes == 0 || saved.Width == 0) {
-				w, h, sz := InspectImageFileMetadata(filepath.Join(s.store.ImagesDir(), filepath.Base(saved.LocalFile)))
-				saved.Width = w
-				saved.Height = h
-				saved.SizeBytes = sz
+			if saved.LocalFile != "" {
+				if saved.SizeBytes == 0 || saved.Width == 0 {
+					w, h, sz := InspectImageFileMetadata(filepath.Join(s.store.ImagesDir(), filepath.Base(saved.LocalFile)))
+					saved.Width = w
+					saved.Height = h
+					saved.SizeBytes = sz
+				}
+				if tc := s.getThumbs(); tc != nil {
+					tc.PrewarmAsync(filepath.Base(saved.LocalFile))
+				}
 			}
-			updatedImages = append(updatedImages, saved)
+			downloadedImages = append(downloadedImages, saved)
 		}
-		rec.Images = updatedImages
-		_ = s.store.UpsertRecord(rec)
-		s.broadcastSSE("record_updated", rec)
-		s.broadcastSSE("stats_updated", s.store.DiskStats())
-		return rec, true, nil
-
-	case "error", "failed":
-		errMsg := resp.Message
-		if errMsg == "" {
-			errMsg = resp.Reason
+		if downloadedNewFile {
+			s.store.InvalidateDiskStats()
 		}
-		if errMsg == "" && resp.Data.Description != "" {
-			errMsg = resp.Data.Description
-		}
-		if errMsg == "" {
-			errMsg = "生成失败，请查看原始响应详情"
-		}
-		rec.ErrorMsg = errMsg
-		_ = s.store.UpsertRecord(rec)
-		s.broadcastSSE("record_updated", rec)
-		return rec, true, nil
-
-	default:
-		_ = s.store.UpsertRecord(rec)
-		s.broadcastSSE("record_updated", rec)
-		return rec, false, nil
 	}
+
+	nowUnix := time.Now().Unix()
+	var terminal bool
+
+	updated, stillExists, changed := s.store.UpdateRecordFromSync(taskID, allowCreate, cfg.DefaultModel, func(r *TaskRecord) bool {
+		prevState := r.State
+		prevProgress := r.Progress
+		prevErr := r.ErrorMsg
+		prevDesc := r.Description
+		prevImgCount := len(r.Images)
+
+		if resp.CreateTime > 0 && r.CreateTime == 0 {
+			r.CreateTime = resp.CreateTime
+		}
+
+		r.State = state
+		r.Progress = resp.Progress
+		if resp.Data.Description != "" {
+			r.Description = resp.Data.Description
+		}
+		if r.CreateTime > 0 && nowUnix >= r.CreateTime {
+			r.DurationMs = (nowUnix - r.CreateTime) * 1000
+		}
+
+		switch state {
+		case "succeeded":
+			terminal = true
+			r.Progress = 100
+			r.ErrorMsg = ""
+			r.Images = downloadedImages
+			r.RawResponse = rawStr
+			r.UpdateTime = nowUnix
+			return true
+
+		case "error", "failed":
+			terminal = true
+			errMsg := resp.Message
+			if errMsg == "" {
+				errMsg = resp.Reason
+			}
+			if errMsg == "" && resp.Data.Description != "" {
+				errMsg = resp.Data.Description
+			}
+			if errMsg == "" {
+				errMsg = "生成失败，请查看原始响应详情"
+			}
+			r.ErrorMsg = errMsg
+			r.RawResponse = rawStr
+			r.UpdateTime = nowUnix
+			return true
+
+		default:
+			// Clear transient poll error notice once upstream responds cleanly again
+			r.ErrorMsg = ""
+			meaningfulChange := prevState != r.State ||
+				prevProgress != r.Progress ||
+				prevErr != r.ErrorMsg ||
+				prevDesc != r.Description ||
+				prevImgCount != len(r.Images)
+			if meaningfulChange {
+				r.RawResponse = rawStr
+				r.UpdateTime = nowUnix
+			}
+			return meaningfulChange
+		}
+	})
+
+	if !stillExists {
+		return nil, true, nil
+	}
+
+	if changed && updated != nil {
+		if logger != nil {
+			switch updated.State {
+			case "succeeded":
+				logger.Info("poll", "任务生成完成", map[string]any{
+					"task_id":     taskID,
+					"image_count": len(updated.Images),
+					"duration_ms": updated.DurationMs,
+				})
+			case "error", "failed":
+				logger.Warn("poll", "任务远端执行失败", map[string]any{
+					"task_id": taskID,
+					"state":   updated.State,
+					"error":   updated.ErrorMsg,
+				})
+			default:
+				logger.Debug("poll", "任务状态推进", map[string]any{
+					"task_id":  taskID,
+					"state":    updated.State,
+					"progress": updated.Progress,
+				})
+			}
+		}
+		s.broadcastSSE("record_updated", updated)
+		if updated.State == "succeeded" {
+			s.broadcastSSE("stats_updated", s.store.DiskStats())
+		}
+	}
+
+	return updated, terminal, nil
+}
+
+func (s *AppServer) recoverMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rv := recover(); rv != nil {
+				stack := string(debug.Stack())
+				if l := s.getLogger(); l != nil {
+					l.Error("server", fmt.Sprintf("HTTP 处理发生未捕获异常: %v", rv), map[string]any{
+						"method": r.Method,
+						"path":   r.URL.Path,
+					}, stack)
+				}
+				writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("服务内部异常: %v", rv))
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *AppServer) Handler() http.Handler {
@@ -324,6 +565,7 @@ func (s *AppServer) Handler() http.Handler {
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/config/test", s.handleTestConfig)
 	mux.HandleFunc("/api/records", s.handleRecords)
+	mux.HandleFunc("/api/records/detail", s.handleRecordDetail)
 	mux.HandleFunc("/api/records/star", s.handleStarRecord)
 	mux.HandleFunc("/api/records/organize", s.handleOrganizeRecords)
 	mux.HandleFunc("/api/records/cancel", s.handleCancelRecord)
@@ -336,7 +578,14 @@ func (s *AppServer) Handler() http.Handler {
 	mux.HandleFunc("/api/generate", s.handleGenerate)
 	mux.HandleFunc("/api/tasks/query", s.handleQueryTask)
 
-	// Serve locally saved images & cached reference previews from duomi_data/images/
+	// Portable diagnostic logging routes
+	mux.HandleFunc("/api/logs", s.handleLogs)
+	mux.HandleFunc("/api/logs/download", s.handleDownloadLogs)
+	mux.HandleFunc("/api/logs/client", s.handleClientLog)
+	mux.HandleFunc("/api/logs/clear", s.handleClearLogs)
+
+	// Serve locally cached thumbnails from duomi_data/thumbs/ and full originals from duomi_data/images/
+	mux.HandleFunc("/thumbs/", s.handleServeThumb)
 	mux.HandleFunc("/images/", s.handleServeImage)
 
 	// Serve embedded web frontend
@@ -347,7 +596,7 @@ func (s *AppServer) Handler() http.Handler {
 	fileServer := http.FileServer(http.FS(webSub))
 	mux.Handle("/", fileServer)
 
-	return mux
+	return s.recoverMiddleware(mux)
 }
 
 func (s *AppServer) handleSSE(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +611,7 @@ func (s *AppServer) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	ch := make(chan []byte, 32)
+	ch := make(chan []byte, 48)
 	s.sseMu.Lock()
 	if s.sseClients == nil {
 		s.sseClients = make(map[chan []byte]struct{})
@@ -410,9 +659,11 @@ func (s *AppServer) handleInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := s.store.GetConfig()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":           "v3.2.2",
+		"version":           AppVersion,
 		"data_dir":          s.store.BaseDir(),
 		"images_dir":        s.store.ImagesDir(),
+		"thumbs_dir":        s.store.ThumbsDir(),
+		"logs_dir":          s.store.LogsDir(),
 		"has_key":           strings.TrimSpace(cfg.APIKey) != "",
 		"disk_stats":        s.store.DiskStats(),
 		"ratio_presets":     GetRatioPresets(),
@@ -482,7 +733,18 @@ func (s *AppServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "保存配置失败: "+err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, s.store.GetConfig())
+		saved := s.store.GetConfig()
+		if l := s.getLogger(); l != nil {
+			l.RegisterSecrets(saved.APIKey, saved.CustomUploadAuthHeader)
+			l.Info("server", "已更新配置", map[string]any{
+				"base_url":             saved.BaseURL,
+				"ref_image_mode":       saved.RefImageMode,
+				"image_host_provider":  saved.ImageHostProvider,
+				"auto_compat_fallback": saved.AutoCompatFallback,
+				"has_api_key":          strings.TrimSpace(saved.APIKey) != "",
+			})
+		}
+		writeJSON(w, http.StatusOK, saved)
 
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "Method Not Allowed")
@@ -504,6 +766,9 @@ func (s *AppServer) handleTestConfig(w http.ResponseWriter, r *http.Request) {
 	if key == "" {
 		key = cfg.APIKey
 	}
+	if l := s.getLogger(); l != nil && key != "" {
+		l.RegisterSecrets(key)
+	}
 	baseURL := strings.TrimSpace(body.BaseURL)
 	if baseURL == "" {
 		baseURL = cfg.BaseURL
@@ -517,11 +782,40 @@ func (s *AppServer) handleTestConfig(w http.ResponseWriter, r *http.Request) {
 func (s *AppServer) handleRecords(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		records := s.store.ListRecords()
-		writeJSON(w, http.StatusOK, map[string]any{
-			"records":    records,
-			"disk_stats": s.store.DiskStats(),
+		q := r.URL.Query()
+		limit, _ := strconv.Atoi(strings.TrimSpace(q.Get("limit")))
+		offset, _ := strconv.Atoi(strings.TrimSpace(q.Get("offset")))
+		if limit < 0 {
+			limit = 0
+		}
+		if limit > 500 {
+			limit = 500
+		}
+		includeRaw := q.Get("include_raw") == "1" || q.Get("include_raw") == "true"
+		includeStats := q.Get("include_stats") != "0" && q.Get("include_stats") != "false"
+
+		result := s.store.QueryRecords(RecordQueryOptions{
+			Limit:      limit,
+			Offset:     offset,
+			Status:     q.Get("status"),
+			ProjectID:  q.Get("project_id"),
+			Model:      q.Get("model"),
+			Query:      q.Get("q"),
+			IncludeRaw: includeRaw,
 		})
+
+		resp := map[string]any{
+			"records":         result.Records,
+			"total":           result.Total,
+			"has_more":        result.HasMore,
+			"next_offset":     result.NextOffset,
+			"counts":          result.Counts,
+			"distinct_models": result.DistinctModels,
+		}
+		if includeStats {
+			resp["disk_stats"] = s.store.DiskStats()
+		}
+		writeJSON(w, http.StatusOK, resp)
 
 	case http.MethodDelete:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -535,16 +829,39 @@ func (s *AppServer) handleRecords(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusInternalServerError, "删除记录失败: "+err.Error())
 			return
 		}
+		if l := s.getLogger(); l != nil {
+			l.Info("server", "删除任务记录", map[string]any{"task_id": id, "delete_files": delFiles})
+		}
 		s.broadcastSSE("records_deleted", map[string]any{"ids": []string{id}})
-		s.broadcastSSE("stats_updated", s.store.DiskStats())
+		stats := s.store.DiskStats()
+		s.broadcastSSE("stats_updated", stats)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"deleted":    id,
-			"disk_stats": s.store.DiskStats(),
+			"disk_stats": stats,
 		})
 
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "Method Not Allowed")
 	}
+}
+
+// handleRecordDetail returns the full TaskRecord including raw_response on demand (for Lightbox inspection).
+func (s *AppServer) handleRecordDetail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "缺少任务 id 参数")
+		return
+	}
+	rec, ok := s.store.GetRecord(id)
+	if !ok {
+		writeJSONError(w, http.StatusNotFound, "未找到任务记录")
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
 }
 
 func (s *AppServer) handleStarRecord(w http.ResponseWriter, r *http.Request) {
@@ -565,8 +882,9 @@ func (s *AppServer) handleStarRecord(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	s.broadcastSSE("record_updated", rec)
-	writeJSON(w, http.StatusOK, rec)
+	slim := SlimTaskRecord(rec)
+	s.broadcastSSE("record_updated", slim)
+	writeJSON(w, http.StatusOK, slim)
 }
 
 func (s *AppServer) handleOrganizeRecords(w http.ResponseWriter, r *http.Request) {
@@ -590,12 +908,15 @@ func (s *AppServer) handleOrganizeRecords(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	slimmed := make([]*TaskRecord, 0, len(updated))
 	for _, rec := range updated {
-		s.broadcastSSE("record_updated", rec)
+		sr := SlimTaskRecord(rec)
+		slimmed = append(slimmed, sr)
+		s.broadcastSSE("record_updated", sr)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"updated_count": len(updated),
-		"records":       updated,
+		"updated_count": len(slimmed),
+		"records":       slimmed,
 	})
 }
 
@@ -610,6 +931,9 @@ func (s *AppServer) handleCleanRefCache(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	stats := s.store.DiskStats()
+	if l := s.getLogger(); l != nil {
+		l.Info("storage", "已清理无引用参考图缓存", map[string]any{"removed_count": removed, "freed_bytes": freed})
+	}
 	s.broadcastSSE("stats_updated", stats)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"removed_count": removed,
@@ -635,7 +959,7 @@ func (s *AppServer) handleCancelRecord(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, rec)
+	writeJSON(w, http.StatusOK, SlimTaskRecord(rec))
 }
 
 func (s *AppServer) handleBatchDeleteRecords(w http.ResponseWriter, r *http.Request) {
@@ -659,14 +983,15 @@ func (s *AppServer) handleBatchDeleteRecords(w http.ResponseWriter, r *http.Requ
 			writeJSONError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		stats := s.store.DiskStats()
 		if len(removedIDs) > 0 {
 			s.broadcastSSE("records_deleted", map[string]any{"ids": removedIDs})
-			s.broadcastSSE("stats_updated", s.store.DiskStats())
+			s.broadcastSSE("stats_updated", stats)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"deleted_count": len(removedIDs),
 			"ids":           removedIDs,
-			"disk_stats":    s.store.DiskStats(),
+			"disk_stats":    stats,
 		})
 		return
 	}
@@ -679,13 +1004,14 @@ func (s *AppServer) handleBatchDeleteRecords(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	stats := s.store.DiskStats()
 	if count > 0 {
 		s.broadcastSSE("records_deleted", map[string]any{"ids": body.IDs})
-		s.broadcastSSE("stats_updated", s.store.DiskStats())
+		s.broadcastSSE("stats_updated", stats)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"deleted_count": count,
-		"disk_stats":    s.store.DiskStats(),
+		"disk_stats":    stats,
 	})
 }
 
@@ -693,7 +1019,6 @@ func (s *AppServer) handleBatchDeleteRecords(w http.ResponseWriter, r *http.Requ
 // - "upload" (default): saves a deduplicated copy in duomi_data/images/refs/ AND uploads lossless original bytes to image host -> returns https:// URL
 // - "compress_base64" (optional): saves local ref copy AND compresses to clean JPEG Base64 locally without touching any external image host
 // - "raw_base64" (optional): saves local ref copy AND returns raw original data:image/...;base64 without compression or external upload
-// It accepts either multipart/form-data (file upload) or application/json (re-converting an existing local_ref / gallery local_file / data_uri).
 func (s *AppServer) handleUploadRef(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
@@ -818,6 +1143,9 @@ func (s *AppServer) handleUploadRef(w http.ResponseWriter, r *http.Request) {
 		savedRef, saveErr := s.store.SaveRefImageBytes(rawBytes, ext)
 		if saveErr == nil {
 			existingLocalRef = savedRef
+			if tc := s.getThumbs(); tc != nil {
+				tc.PrewarmAsync(existingLocalRef)
+			}
 			s.broadcastSSE("stats_updated", s.store.DiskStats())
 		}
 	}
@@ -842,15 +1170,15 @@ func (s *AppServer) handleUploadRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"mode":          "compress_base64",
-			"value":         dataURI,
-			"local_ref":     existingLocalRef,
-			"preview_url":   previewURL,
-			"size_bytes":    outBytes,
-			"orig_bytes":    len(rawBytes),
-			"width":         outW,
-			"height":        outH,
-			"label":         fmt.Sprintf("压缩 Base64 · %dKB", maxInt(1, outBytes/1024)),
+			"mode":        "compress_base64",
+			"value":       dataURI,
+			"local_ref":   existingLocalRef,
+			"preview_url": previewURL,
+			"size_bytes":  outBytes,
+			"orig_bytes":  len(rawBytes),
+			"width":       outW,
+			"height":      outH,
+			"label":       fmt.Sprintf("压缩 Base64 · %dKB", maxInt(1, outBytes/1024)),
 		})
 		return
 
@@ -870,7 +1198,7 @@ func (s *AppServer) handleUploadRef(w http.ResponseWriter, r *http.Request) {
 		return
 
 	default: // "upload" (default: lossless upload to image host)
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 		defer cancel()
 		pubURL, providerName, err := s.client.UploadBytesToImageHost(ctx, rawBytes, ext, hostOpts)
 		if err != nil {
@@ -933,10 +1261,14 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger := s.getLogger()
 	r.Body = http.MaxBytesReader(w, r.Body, 48<<20)
 
 	var req generateAPIRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if logger != nil {
+			logger.Warn("server", "解析 /api/generate 请求体失败", map[string]any{"error": err.Error()})
+		}
 		writeJSONError(w, http.StatusBadRequest, "请求格式错误: "+err.Error())
 		return
 	}
@@ -954,6 +1286,28 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "未配置 API Key，请先在设置中填写多米 API 密钥")
 		return
 	}
+	if logger != nil {
+		logger.RegisterSecrets(apiKey)
+	}
+
+	promptText := strings.TrimSpace(req.Prompt)
+	if promptText == "" {
+		writeJSONError(w, http.StatusBadRequest, "请输入画面描述词 (Prompt)")
+		return
+	}
+	modelID := strings.TrimSpace(req.Model)
+	if modelID == "" {
+		modelID = cfg.DefaultModel
+	}
+	if modelID == "" {
+		modelID = "gpt-image-2.6-flare"
+	}
+	sizeStr := strings.TrimSpace(req.Size)
+	qualityStr := strings.TrimSpace(req.Quality)
+	if qualityStr == "default" {
+		qualityStr = ""
+	}
+	bgStr := strings.TrimSpace(req.Background)
 
 	oversea := cfg.Oversea
 	if req.Oversea != nil {
@@ -968,6 +1322,7 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		refMode = cfg.RefImageMode
 	}
 	projectID := strings.TrimSpace(req.ProjectID)
+	hostOpts := ImageHostOptionsFromConfig(cfg)
 
 	var cleanedImages []string
 	var previews []string
@@ -976,17 +1331,46 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if len(req.RefItems) > 0 {
 		for _, item := range req.RefItems {
 			val := strings.TrimSpace(item.Value)
-			if val == "" {
-				continue
-			}
-			cleanedImages = append(cleanedImages, val)
+			localRef := strings.TrimSpace(item.LocalRef)
 			sr := SavedRefImage{
-				LocalRef:  strings.TrimSpace(item.LocalRef),
+				LocalRef:  localRef,
 				RemoteURL: strings.TrimSpace(item.RemoteURL),
 				Mode:      strings.TrimSpace(item.Mode),
 				Provider:  strings.TrimSpace(item.Provider),
 				Label:     strings.TrimSpace(item.Label),
 			}
+			// If value was lost/empty but local_ref exists on disk, recover it cleanly on server
+			if val == "" && localRef != "" {
+				if fullRef, safeErr := resolveSafeImagePath(s.store.ImagesDir(), localRef); safeErr == nil {
+					if rawBytes, readErr := os.ReadFile(fullRef); readErr == nil && len(rawBytes) > 0 {
+						ext := filepath.Ext(fullRef)
+						switch refMode {
+						case "compress_base64":
+							if uri, _, _, _, cErr := CompressImageBytesToBase64(rawBytes, cfg.CompressMaxDim, cfg.CompressQuality); cErr == nil {
+								val = uri
+								sr.Mode = "compress_base64"
+							}
+						case "raw_base64":
+							val = EncodeBytesToDataURI(rawBytes, ext)
+							sr.Mode = "raw_base64"
+						default:
+							upCtx, upCancel := context.WithTimeout(r.Context(), 45*time.Second)
+							pubURL, prov, upErr := s.client.UploadBytesToImageHost(upCtx, rawBytes, ext, hostOpts)
+							upCancel()
+							if upErr == nil && pubURL != "" {
+								val = pubURL
+								sr.RemoteURL = pubURL
+								sr.Provider = prov
+								sr.Mode = "upload"
+							}
+						}
+					}
+				}
+			}
+			if val == "" {
+				continue
+			}
+			cleanedImages = append(cleanedImages, val)
 			if sr.RemoteURL == "" && (strings.HasPrefix(val, "http://") || strings.HasPrefix(val, "https://")) {
 				sr.RemoteURL = val
 			}
@@ -1035,22 +1419,25 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		batchID = fmt.Sprintf("batch_%d", time.Now().UnixNano())
 	}
 
-	createReq := CreateImageRequest{
-		Model:                 req.Model,
-		Prompt:                req.Prompt,
-		Size:                  req.Size,
-		Image:                 cleanedImages,
-		Quality:               req.Quality,
-		Background:            req.Background,
-		N:                     1,
-		Oversea:               oversea,
-		CallbackURL:           req.CallbackURL,
-		RefMode:               refMode,
-		HostOpts:              ImageHostOptionsFromConfig(cfg),
-		DisableCompatFallback: !compatFallback,
+	// Immutable snapshot of tags so concurrent slots never mutate shared backing array
+	tagsSnapshot := append([]string(nil), req.Tags...)
+
+	if logger != nil {
+		logger.Info("server", "收到生图请求 /api/generate", map[string]any{
+			"model":        modelID,
+			"size":         sizeStr,
+			"quality":      qualityStr,
+			"background":   bgStr,
+			"batch_count":  batchCount,
+			"batch_id":     batchID,
+			"ref_mode":     refMode,
+			"ref_count":    len(cleanedImages),
+			"prompt_chars": len([]rune(promptText)),
+			"prompt_head":  truncateUTF8Bytes(promptText, 120),
+		})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 180*time.Second)
 	defer cancel()
 
 	type slotResult struct {
@@ -1065,10 +1452,37 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(slot int) {
 			defer wg.Done()
+			defer func() {
+				if rv := recover(); rv != nil {
+					if logger != nil {
+						logger.Error("server", fmt.Sprintf("并发提交通道 #%d 异常: %v", slot+1, rv), nil, string(debug.Stack()))
+					}
+					results[slot] = slotResult{err: fmt.Errorf("提交任务内部异常: %v", rv)}
+				}
+			}()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 
-			res, err := s.client.CreateTaskDetailed(ctx, cfg.BaseURL, apiKey, createReq)
+			// Build an isolated per-slot request copy so concurrent goroutines share zero slices or structs
+			slotImages := append([]string(nil), cleanedImages...)
+			slotCreateReq := CreateImageRequest{
+				Model:                 modelID,
+				Prompt:                promptText,
+				Size:                  sizeStr,
+				Image:                 slotImages,
+				Quality:               qualityStr,
+				Background:            bgStr,
+				N:                     1,
+				Oversea:               oversea,
+				CallbackURL:           req.CallbackURL,
+				RefMode:               refMode,
+				HostOpts:              hostOpts,
+				DisableCompatFallback: !compatFallback,
+			}
+
+			slotCtx, slotCancel := context.WithTimeout(ctx, 65*time.Second)
+			res, err := s.client.CreateTaskDetailed(slotCtx, cfg.BaseURL, apiKey, slotCreateReq)
+			slotCancel()
 			if err != nil {
 				results[slot] = slotResult{err: err}
 				return
@@ -1077,25 +1491,34 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 			now := time.Now().Unix()
 			actualSize := res.ActualSize
 			if actualSize == "" {
-				actualSize = createReq.Size
+				actualSize = slotCreateReq.Size
 			}
+			actualModel := res.ActualModel
+			if actualModel == "" {
+				actualModel = slotCreateReq.Model
+			}
+
+			slotPreviews := append([]string(nil), previews...)
+			slotRefItems := append([]SavedRefImage(nil), savedRefs...)
+			slotTags := append([]string(nil), tagsSnapshot...)
+
 			rec := &TaskRecord{
 				ID:          res.TaskID,
 				BatchID:     batchID,
 				ProjectID:   projectID,
-				Tags:        req.Tags,
-				Model:       createReq.Model,
-				Prompt:      createReq.Prompt,
+				Tags:        slotTags,
+				Model:       actualModel,
+				Prompt:      slotCreateReq.Prompt,
 				Size:        actualSize,
-				Quality:     createReq.Quality,
-				Background:  createReq.Background,
+				Quality:     slotCreateReq.Quality,
+				Background:  slotCreateReq.Background,
 				N:           1,
-				Oversea:     createReq.Oversea,
-				CallbackURL: createReq.CallbackURL,
+				Oversea:     slotCreateReq.Oversea,
+				CallbackURL: slotCreateReq.CallbackURL,
 				RefMode:     refMode,
-				RefCount:    len(cleanedImages),
-				RefPreviews: previews,
-				RefItems:    savedRefs,
+				RefCount:    len(slotImages),
+				RefPreviews: slotPreviews,
+				RefItems:    slotRefItems,
 				State:       "pending",
 				Progress:    0,
 				WarningMsg:  res.WarningMsg,
@@ -1103,13 +1526,52 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 				UpdateTime:  now,
 				RawResponse: res.RawResponse,
 			}
+
+			// Handle rare synchronous response with inline images gracefully
+			if len(res.InlineImages) > 0 {
+				var savedImgs []SavedImage
+				for iIdx, item := range res.InlineImages {
+					saved := SavedImage{RemoteURL: item.URL, FileName: item.FileName}
+					if cfg.AutoDownload {
+						dlCtx, dlCancel := context.WithTimeout(context.Background(), 60*time.Second)
+						if item.URL != "" {
+							if localName, dlErr := s.client.DownloadImage(dlCtx, item.URL, s.store.ImagesDir(), res.TaskID, iIdx, item.FileName); dlErr == nil {
+								saved.LocalFile = localName
+							}
+						} else if item.B64JSON != "" {
+							if localName, b64Err := SaveBase64Image(item.B64JSON, s.store.ImagesDir(), res.TaskID, iIdx); b64Err == nil {
+								saved.LocalFile = localName
+							}
+						}
+						dlCancel()
+					}
+					if saved.LocalFile != "" {
+						w, h, sz := InspectImageFileMetadata(filepath.Join(s.store.ImagesDir(), filepath.Base(saved.LocalFile)))
+						saved.Width, saved.Height, saved.SizeBytes = w, h, sz
+						if tc := s.getThumbs(); tc != nil {
+							tc.PrewarmAsync(filepath.Base(saved.LocalFile))
+						}
+					}
+					savedImgs = append(savedImgs, saved)
+				}
+				rec.State = "succeeded"
+				rec.Progress = 100
+				rec.Images = savedImgs
+				s.store.InvalidateDiskStats()
+			}
+
 			if saveErr := s.store.UpsertRecord(rec); saveErr != nil {
 				results[slot] = slotResult{err: fmt.Errorf("保存任务记录失败: %w", saveErr)}
 				return
 			}
-			s.broadcastSSE("record_updated", rec)
-			s.StartPolling(res.TaskID)
-			results[slot] = slotResult{rec: rec}
+			slim := SlimTaskRecord(rec)
+			s.broadcastSSE("record_updated", slim)
+			if rec.State != "succeeded" {
+				s.StartPolling(res.TaskID)
+			} else {
+				s.broadcastSSE("stats_updated", s.store.DiskStats())
+			}
+			results[slot] = slotResult{rec: slim}
 		}(idx)
 	}
 	wg.Wait()
@@ -1128,6 +1590,14 @@ func (s *AppServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		errMsg := "创建任务失败"
 		if lastErr != nil {
 			errMsg = lastErr.Error()
+		}
+		if logger != nil {
+			logger.Error("server", "批量生图提交全部失败", map[string]any{
+				"model": modelID,
+				"size":  sizeStr,
+				"n":     batchCount,
+				"error": errMsg,
+			}, "")
 		}
 		writeJSONError(w, http.StatusBadGateway, errMsg)
 		return
@@ -1181,7 +1651,7 @@ func (s *AppServer) handleQueryTask(w http.ResponseWriter, r *http.Request) {
 	if !done {
 		s.StartPolling(taskID)
 	}
-	writeJSON(w, http.StatusOK, rec)
+	writeJSON(w, http.StatusOK, SlimTaskRecord(rec))
 }
 
 func (s *AppServer) handleDownloadRecord(w http.ResponseWriter, r *http.Request) {
@@ -1229,13 +1699,18 @@ func (s *AppServer) handleDownloadRecord(w http.ResponseWriter, r *http.Request)
 			rec.Images[i].Width = iw
 			rec.Images[i].Height = ih
 			rec.Images[i].SizeBytes = sz
+			if tc := s.getThumbs(); tc != nil {
+				tc.PrewarmAsync(filepath.Base(rec.Images[i].LocalFile))
+			}
 		}
 	}
 	rec.UpdateTime = time.Now().Unix()
 	_ = s.store.UpsertRecord(rec)
-	s.broadcastSSE("record_updated", rec)
+	s.store.InvalidateDiskStats()
+	slim := SlimTaskRecord(rec)
+	s.broadcastSSE("record_updated", slim)
 	s.broadcastSSE("stats_updated", s.store.DiskStats())
-	writeJSON(w, http.StatusOK, rec)
+	writeJSON(w, http.StatusOK, slim)
 }
 
 func (s *AppServer) handleExportZip(w http.ResponseWriter, r *http.Request) {
@@ -1330,15 +1805,26 @@ func (s *AppServer) handleOpenFolder(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		TargetFile string `json:"target_file"` // optional filename inside images/
+		TargetDir  string `json:"target_dir"`  // optional: "images" | "logs" | "thumbs" | "data"
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
 	targetDir := s.store.ImagesDir()
+	switch strings.ToLower(strings.TrimSpace(body.TargetDir)) {
+	case "logs":
+		targetDir = s.store.LogsDir()
+	case "thumbs":
+		targetDir = s.store.ThumbsDir()
+	case "data", "root":
+		targetDir = s.store.BaseDir()
+	}
+
 	fullTarget := targetDir
 	if strings.TrimSpace(body.TargetFile) != "" {
 		if p, err := resolveSafeImagePath(s.store.ImagesDir(), body.TargetFile); err == nil {
 			if _, statErr := os.Stat(p); statErr == nil {
 				fullTarget = p
+				targetDir = s.store.ImagesDir()
 			}
 		}
 	}
@@ -1367,7 +1853,11 @@ func (s *AppServer) handleOpenFolder(w http.ResponseWriter, r *http.Request) {
 			cmd = exec.Command("open", targetDir)
 		}
 	default:
-		cmd = exec.Command("xdg-open", filepath.Dir(fullTarget))
+		openDir := fullTarget
+		if fullTarget != targetDir {
+			openDir = filepath.Dir(fullTarget)
+		}
+		cmd = exec.Command("xdg-open", openDir)
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -1383,6 +1873,141 @@ func (s *AppServer) handleOpenFolder(w http.ResponseWriter, r *http.Request) {
 		"path":    fullTarget,
 		"message": "已在系统资源管理器中打开目录",
 	})
+}
+
+func (s *AppServer) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		return
+	}
+	l := s.getLogger()
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(strings.TrimSpace(q.Get("limit")))
+	if limit <= 0 || limit > 1200 {
+		limit = 300
+	}
+	level := q.Get("level")
+	source := q.Get("source")
+	search := q.Get("q")
+
+	var entries []LogEntry
+	var files []LogFileInfo
+	logsDir := ""
+	if l != nil {
+		entries = l.Query(limit, level, source, search)
+		files = l.ListFiles()
+		logsDir = l.LogsDir()
+	}
+	if entries == nil {
+		entries = []LogEntry{}
+	}
+	if files == nil {
+		files = []LogFileInfo{}
+	}
+
+	cfg := s.store.GetConfig()
+	header := fmt.Sprintf(
+		"=== DuomiAPI Image Studio %s Diagnostic Logs ===\nTime: %s\nPlatform: %s/%s | Go: %s\nBaseURL: %s | RefMode: %s | ImageHost: %s | AutoCompat: %v | HasKey: %v (%s)\nDataDir: %s | LogsDir: %s\nRecords: %d\n================================================\n",
+		AppVersion,
+		time.Now().Format(time.RFC3339),
+		runtime.GOOS, runtime.GOARCH, runtime.Version(),
+		cfg.BaseURL, cfg.RefImageMode, cfg.ImageHostProvider, cfg.AutoCompatFallback,
+		strings.TrimSpace(cfg.APIKey) != "", MaskSecret(cfg.APIKey),
+		s.store.BaseDir(), logsDir,
+		s.store.QueryRecords(RecordQueryOptions{Limit: 1}).Counts.All,
+	)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":    AppVersion,
+		"platform":   runtime.GOOS + "/" + runtime.GOARCH,
+		"logs_dir":   logsDir,
+		"entries":    entries,
+		"files":      files,
+		"plain_text": header + FormatLogEntriesPlainText(entries),
+	})
+}
+
+func (s *AppServer) handleDownloadLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 GET")
+		return
+	}
+	l := s.getLogger()
+	if l == nil {
+		writeJSONError(w, http.StatusNotFound, "日志系统未初始化")
+		return
+	}
+	fileName := strings.TrimSpace(r.URL.Query().Get("file"))
+	if fileName != "" {
+		data, err := l.ReadLogFile(fileName)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, "读取日志文件失败: "+err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(fileName)))
+		_, _ = w.Write(data)
+		return
+	}
+
+	entries := l.Query(1000, "", "", "")
+	cfg := s.store.GetConfig()
+	header := fmt.Sprintf(
+		"=== DuomiAPI Image Studio %s Diagnostic Export ===\nTime: %s | Platform: %s/%s\nBaseURL: %s | RefMode: %s | ImageHost: %s | HasKey: %v (%s)\n===================================================\n",
+		AppVersion,
+		time.Now().Format(time.RFC3339),
+		runtime.GOOS, runtime.GOARCH,
+		cfg.BaseURL, cfg.RefImageMode, cfg.ImageHostProvider,
+		strings.TrimSpace(cfg.APIKey) != "", MaskSecret(cfg.APIKey),
+	)
+	outName := fmt.Sprintf("duomi-studio-logs-%s.log", time.Now().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", outName))
+	_, _ = w.Write([]byte(header + FormatLogEntriesPlainText(entries)))
+}
+
+func (s *AppServer) handleClientLog(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+	var body struct {
+		Level   string         `json:"level"`
+		Source  string         `json:"source"`
+		Message string         `json:"message"`
+		Fields  map[string]any `json:"fields"`
+		Stack   string         `json:"stack"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "无效的日志请求")
+		return
+	}
+	msg := strings.TrimSpace(body.Message)
+	if msg == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	src := strings.TrimSpace(body.Source)
+	if src == "" {
+		src = "frontend"
+	}
+	if l := s.getLogger(); l != nil {
+		l.Log(body.Level, src, msg, body.Fields, body.Stack)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *AppServer) handleClearLogs(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "仅支持 POST")
+		return
+	}
+	if l := s.getLogger(); l != nil {
+		l.ClearRing()
+		l.Info("server", "用户清空了当前日志视图缓存（磁盘历史日志文件保持完整）", nil)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func resolveSafeImagePath(imagesDir string, relPath string) (string, error) {
@@ -1402,6 +2027,23 @@ func resolveSafeImagePath(imagesDir string, relPath string) (string, error) {
 	return full, nil
 }
 
+func (s *AppServer) handleServeThumb(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, "/thumbs/")
+	reqW, _ := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("w")))
+	tc := s.getThumbs()
+	if tc == nil {
+		http.NotFound(w, r)
+		return
+	}
+	servedPath, _, err := tc.EnsureThumbnail(rel, reqW)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	http.ServeFile(w, r, servedPath)
+}
+
 func (s *AppServer) handleServeImage(w http.ResponseWriter, r *http.Request) {
 	rel := strings.TrimPrefix(r.URL.Path, "/images/")
 	fullPath, err := resolveSafeImagePath(s.store.ImagesDir(), rel)
@@ -1411,6 +2053,8 @@ func (s *AppServer) handleServeImage(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("download") == "1" {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filepath.Base(fullPath)))
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
 	}
 	http.ServeFile(w, r, fullPath)
 }

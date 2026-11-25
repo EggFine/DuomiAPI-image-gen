@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -10,10 +11,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -66,6 +69,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "❌ 初始化数据目录失败: %v\n", err)
 		os.Exit(1)
 	}
+	defer store.Close()
+
+	appLogger, logErr := NewAppLogger(store.LogsDir())
+	if logErr == nil {
+		defer appLogger.Close()
+		store.SetLogger(appLogger)
+	}
 
 	cfg := store.GetConfig()
 	configUpdated := false
@@ -85,14 +95,28 @@ func main() {
 		}
 	}
 
+	if appLogger != nil {
+		appLogger.RegisterSecrets(cfg.APIKey, cfg.CustomUploadAuthHeader)
+	}
+
 	client := NewDuomiClient()
+	if appLogger != nil {
+		client.SetLogger(appLogger)
+	}
 
 	isCLIMode := strings.TrimSpace(*promptFlag) != "" ||
 		strings.TrimSpace(*promptFileFlag) != "" ||
 		strings.TrimSpace(*queryTaskFlag) != ""
 
 	if isCLIMode {
-		runCLI(store, client, cfg, cliOptions{
+		if appLogger != nil {
+			appLogger.Info("cli", "启动 CLI 生图模式", map[string]any{
+				"version": AppVersion,
+				"model":   *modelFlag,
+				"query":   *queryTaskFlag,
+			})
+		}
+		runCLI(store, client, appLogger, cfg, cliOptions{
 			prompt:     *promptFlag,
 			promptFile: *promptFileFlag,
 			model:      *modelFlag,
@@ -109,28 +133,45 @@ func main() {
 			submitOnly: *submitOnlyFlag,
 			queryID:    *queryTaskFlag,
 		})
+		_ = store.Flush()
 		return
 	}
 
 	// Web UI Mode
-	appServer := NewAppServer(store, client)
+	appServer := NewAppServerWithLogger(store, client, appLogger)
 	listener, actualAddr, err := listenAvailablePort(*hostFlag, *portFlag)
 	if err != nil {
 		log.Fatalf("❌ 启动本地服务失败: %v", err)
 	}
 
 	webURL := fmt.Sprintf("http://%s", actualAddr)
+	if appLogger != nil {
+		appLogger.Info("server", "启动 DuomiAPI Image Studio 本地服务", map[string]any{
+			"version":   AppVersion,
+			"url":       webURL,
+			"data_dir":  store.BaseDir(),
+			"logs_dir":  store.LogsDir(),
+			"platform":  runtime.GOOS + "/" + runtime.GOARCH,
+			"has_key":   strings.TrimSpace(cfg.APIKey) != "",
+			"base_url":  cfg.BaseURL,
+			"ref_mode":  cfg.RefImageMode,
+			"imghost":   cfg.ImageHostProvider,
+		})
+	}
+
 	fmt.Println("================================================================")
-	fmt.Println("  🎨 多米 API 图像创作工作台 v2.0 (单文件绿色便携版)")
+	fmt.Printf("  🎨 多米 API 图像创作工作台 %s (单文件绿色便携版)\n", AppVersion)
 	fmt.Println("================================================================")
 	fmt.Printf("  🌐 本地操作界面 : %s\n", webURL)
 	fmt.Printf("  📁 绿色数据目录 : %s\n", store.BaseDir())
 	fmt.Printf("  ⚙️ 配置文件路径 : %s\n", filepath.Join(store.BaseDir(), "config.json"))
 	fmt.Printf("  📜 历史记录文件 : %s\n", filepath.Join(store.BaseDir(), "records.json"))
 	fmt.Printf("  🖼️ 图片保存目录 : %s\n", store.ImagesDir())
+	fmt.Printf("  ⚡ 缩略图缓存   : %s\n", store.ThumbsDir())
+	fmt.Printf("  📋 运行日志目录 : %s\n", store.LogsDir())
 	fmt.Println("----------------------------------------------------------------")
 	fmt.Println("  提示: 纯绿色单文件运行，绝不写入注册表或系统目录。")
-	fmt.Println("  按 Ctrl+C 可停止并退出程序。")
+	fmt.Println("  按 Ctrl+C 可安全落盘并退出程序。")
 	fmt.Println("================================================================")
 
 	if !*noBrowserFlag {
@@ -140,7 +181,29 @@ func main() {
 		}()
 	}
 
-	if err := http.Serve(listener, appServer.Handler()); err != nil {
+	httpSrv := &http.Server{
+		Handler:           appServer.Handler(),
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+
+	sigCtx, stopSig := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSig()
+
+	go func() {
+		<-sigCtx.Done()
+		if appLogger != nil {
+			appLogger.Info("server", "收到退出信号，正在落盘 records.json 并优雅停止服务...", nil)
+		}
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = httpSrv.Shutdown(shutCtx)
+		cancel()
+		_ = store.Flush()
+	}()
+
+	if err := httpSrv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if appLogger != nil {
+			appLogger.Error("server", "HTTP 服务异常退出", map[string]any{"error": err.Error()}, "")
+		}
 		log.Fatalf("❌ 服务异常退出: %v", err)
 	}
 }
@@ -178,13 +241,13 @@ func normalizeCLIRefMode(m string, fallback string) string {
 	return "upload"
 }
 
-func runCLI(store *Store, client *DuomiClient, cfg AppConfig, opts cliOptions) {
+func runCLI(store *Store, client *DuomiClient, appLogger *AppLogger, cfg AppConfig, opts cliOptions) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		fmt.Fprintln(os.Stderr, "❌ 错误: 未提供 API Key。请通过 -key <密钥> 传入、设置环境变量 DUOMI_API_KEY，或在 duomi_data/config.json 中配置。")
 		os.Exit(1)
 	}
 
-	appServer := NewAppServer(store, client)
+	appServer := NewAppServerWithLogger(store, client, appLogger)
 
 	var taskIDs []string
 	if strings.TrimSpace(opts.queryID) != "" {
@@ -276,7 +339,7 @@ func runCLI(store *Store, client *DuomiClient, cfg AppConfig, opts cliOptions) {
 				})
 			default: // "upload" lossless to image host
 				fmt.Fprintf(os.Stderr, "☁️ 正在将本地参考图 (%s) 无损上传至图床...\n", filepath.Base(trimmed))
-				upCtx, upCancel := context.WithTimeout(context.Background(), 25*time.Second)
+				upCtx, upCancel := context.WithTimeout(context.Background(), 60*time.Second)
 				pubURL, provider, upErr := client.UploadBytesToImageHost(upCtx, rawData, ext, hostOpts)
 				upCancel()
 				if upErr != nil {
@@ -325,8 +388,10 @@ func runCLI(store *Store, client *DuomiClient, cfg AppConfig, opts cliOptions) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-				res, err := client.CreateTaskDetailed(ctx, cfg.BaseURL, cfg.APIKey, req)
+				slotReq := req
+				slotReq.Image = append([]string(nil), encodedImages...)
+				ctx, cancel := context.WithTimeout(context.Background(), 65*time.Second)
+				res, err := client.CreateTaskDetailed(ctx, cfg.BaseURL, cfg.APIKey, slotReq)
 				cancel()
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "❌ 创建任务失败: %v\n", err)
@@ -335,17 +400,17 @@ func runCLI(store *Store, client *DuomiClient, cfg AppConfig, opts cliOptions) {
 				now := time.Now().Unix()
 				rec := &TaskRecord{
 					ID:          res.TaskID,
-					Model:       req.Model,
-					Prompt:      req.Prompt,
+					Model:       slotReq.Model,
+					Prompt:      slotReq.Prompt,
 					Size:        res.ActualSize,
-					Quality:     req.Quality,
-					Background:  req.Background,
+					Quality:     slotReq.Quality,
+					Background:  slotReq.Background,
 					N:           1,
-					Oversea:     req.Oversea,
+					Oversea:     slotReq.Oversea,
 					RefMode:     refMode,
-					RefCount:    len(encodedImages),
-					RefPreviews: previews,
-					RefItems:    savedRefs,
+					RefCount:    len(slotReq.Image),
+					RefPreviews: append([]string(nil), previews...),
+					RefItems:    append([]SavedRefImage(nil), savedRefs...),
 					State:       "pending",
 					WarningMsg:  res.WarningMsg,
 					CreateTime:  now,

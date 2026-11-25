@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react"
+import React, { useMemo, useRef, useState } from "react"
 import {
   Archive,
   Copy,
@@ -6,9 +6,11 @@ import {
   FolderOpen,
   Loader2,
   RefreshCw,
+  ScrollText,
   StopCircle,
   Trash2,
 } from "lucide-react"
+import { LiveElapsedTimer } from "@/components/MasonryArtworkStream"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -39,6 +41,8 @@ interface AnalyticsQueueViewProps {
   onCancelPolling: (id: string) => void
   onClearFailed: () => void
   onOpenLocalFolder: () => void
+  onOpenLogs: () => void
+  onQuickCopyLogs: () => void
   onCopyText: (text: string, msg?: string) => void
   onToast: (msg: string, type?: "info" | "success" | "error") => void
 }
@@ -54,24 +58,15 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
   onCancelPolling,
   onClearFailed,
   onOpenLocalFolder,
+  onOpenLogs,
+  onQuickCopyLogs,
   onCopyText,
   onToast,
 }) => {
-  const [nowSec, setNowSec] = useState<number>(() =>
-    Math.floor(Date.now() / 1000)
-  )
   const [cleaningRefs, setCleaningRefs] = useState<boolean>(false)
 
   const rootRef = useRef<HTMLDivElement | null>(null)
   const storageTrackRef = useRef<HTMLDivElement | null>(null)
-
-  useEffect(() => {
-    const timer = setInterval(
-      () => setNowSec(Math.floor(Date.now() / 1000)),
-      1000
-    )
-    return () => clearInterval(timer)
-  }, [])
 
   const telemetry = useMemo(() => {
     const active = records.filter(
@@ -169,6 +164,8 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
   const totalBytes = Math.max(1, diskStats?.total_bytes || 1)
   const genBytes = diskStats?.generated_bytes || 0
   const refBytes = diskStats?.ref_cache_bytes || 0
+  const thumbBytes = diskStats?.thumbs_bytes || 0
+  const logsBytes = diskStats?.logs_bytes || 0
   const genPct = Math.min(100, Math.round((genBytes / totalBytes) * 100))
   const refPct = Math.min(
     100 - genPct,
@@ -234,20 +231,42 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
     >
       <div className="studio-container py-7 pb-28 space-y-7">
         {/* Minimalist Header */}
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <h1 className="text-2xl font-semibold tracking-[-0.025em] text-foreground">
             状态
           </h1>
 
-          <span className="inline-flex items-center gap-2 rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] px-3 py-1 text-xs font-medium text-muted-foreground">
-            <span
-              className={cn(
-                "h-1.5 w-1.5 rounded-full",
-                sseConnected ? "bg-emerald-500" : "bg-amber-500"
-              )}
-            />
-            <span>{sseConnected ? "实时已连接" : "轮询模式"}</span>
-          </span>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="rounded-full h-8 text-xs"
+              onClick={onOpenLogs}
+            >
+              <ScrollText className="h-3.5 w-3.5" />
+              运行日志
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="rounded-full h-8 text-xs"
+              onClick={onQuickCopyLogs}
+            >
+              <Copy className="h-3.5 w-3.5" />
+              复制诊断日志
+            </Button>
+            <span className="inline-flex items-center gap-2 rounded-full bg-foreground/[0.045] dark:bg-white/[0.06] px-3 py-1 text-xs font-medium text-muted-foreground">
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  sseConnected ? "bg-emerald-500" : "bg-amber-500"
+                )}
+              />
+              <span>{sseConnected ? "实时已连接" : "轮询模式"}</span>
+            </span>
+          </div>
         </div>
 
         {/* Top 4 Borderless Metric Surfaces */}
@@ -301,7 +320,7 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
           <section className="telemetry-stagger-card apple-surface rounded-3xl p-6 space-y-5">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-semibold text-foreground">
-                本地存储
+                本地便携存储
               </h2>
               <span className="font-mono text-xs text-muted-foreground tabular-nums">
                 {formatBytes(diskStats?.total_bytes)}
@@ -323,16 +342,26 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
                   />
                 </div>
               </div>
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1.5 tabular-nums">
-                  <span className="h-2 w-2 rounded-full bg-foreground/85" />
-                  作品原图 {diskStats?.generated_count || 0} 张 ·{" "}
+                  <span className="h-2 w-2 rounded-full bg-foreground/85 shrink-0" />
+                  原图 {diskStats?.generated_count || 0} 张 ·{" "}
                   {formatBytes(genBytes)}
                 </span>
                 <span className="inline-flex items-center gap-1.5 tabular-nums">
-                  <span className="h-2 w-2 rounded-full bg-foreground/30" />
-                  参考缓存 {diskStats?.ref_cache_count || 0} 张 ·{" "}
+                  <span className="h-2 w-2 rounded-full bg-foreground/30 shrink-0" />
+                  参考图 {diskStats?.ref_cache_count || 0} 张 ·{" "}
                   {formatBytes(refBytes)}
+                </span>
+                <span className="inline-flex items-center gap-1.5 tabular-nums">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500/70 shrink-0" />
+                  缩略图 {diskStats?.thumbs_count || 0} 个 ·{" "}
+                  {formatBytes(thumbBytes)}
+                </span>
+                <span className="inline-flex items-center gap-1.5 tabular-nums">
+                  <span className="h-2 w-2 rounded-full bg-sky-500/70 shrink-0" />
+                  日志 {diskStats?.logs_count || 0} 个 ·{" "}
+                  {formatBytes(logsBytes)}
                 </span>
               </div>
             </div>
@@ -463,62 +492,57 @@ export const AnalyticsQueueView: React.FC<AnalyticsQueueViewProps> = ({
 
           {telemetry.active.length > 0 && (
             <div className="space-y-2.5">
-              {telemetry.active.map((task) => {
-                const elapsed = Math.max(
-                  0,
-                  nowSec - (task.create_time || nowSec)
-                )
-                return (
-                  <div
-                    key={task.id}
-                    className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-foreground/[0.04] dark:bg-white/[0.05] p-4"
-                  >
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="warning">
-                          {formatStateLabel(task.state, task.progress)}
-                        </Badge>
-                        <span className="font-mono text-xs font-medium text-foreground">
-                          {task.model}
-                        </span>
-                        <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
-                          {task.size} · {formatDurationSeconds(elapsed)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {task.prompt}
-                      </p>
+              {telemetry.active.map((task) => (
+                <div
+                  key={task.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-2xl bg-foreground/[0.04] dark:bg-white/[0.05] p-4"
+                >
+                  <div className="space-y-1 min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="warning">
+                        {formatStateLabel(task.state, task.progress)}
+                      </Badge>
+                      <span className="font-mono text-xs font-medium text-foreground">
+                        {task.model}
+                      </span>
+                      <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                        {task.size} ·{" "}
+                        <LiveElapsedTimer createTime={task.create_time} />
+                      </span>
                     </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        disabled={Boolean(refreshingIds[task.id])}
-                        onClick={() => onRefreshSingle(task.id)}
-                      >
-                        <RefreshCw
-                          className={cn(
-                            "h-3.5 w-3.5",
-                            refreshingIds[task.id] && "animate-spin"
-                          )}
-                        />
-                        查询
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => onCancelPolling(task.id)}
-                      >
-                        <StopCircle className="h-3.5 w-3.5" />
-                        停止
-                      </Button>
-                    </div>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {task.prompt}
+                    </p>
                   </div>
-                )
-              })}
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      disabled={Boolean(refreshingIds[task.id])}
+                      onClick={() => onRefreshSingle(task.id)}
+                    >
+                      <RefreshCw
+                        className={cn(
+                          "h-3.5 w-3.5",
+                          refreshingIds[task.id] && "animate-spin"
+                        )}
+                      />
+                      查询
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onCancelPolling(task.id)}
+                    >
+                      <StopCircle className="h-3.5 w-3.5" />
+                      停止
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

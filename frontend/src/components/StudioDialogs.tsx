@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Loader2,
   Plus,
+  ScrollText,
   Search,
   Trash2,
   XCircle,
@@ -47,6 +48,8 @@ interface SettingsDialogProps {
   diskStats: DiskUsageStats | null
   onSaveConfig: (nextCfg: Partial<AppConfig>) => Promise<void>
   onOpenLocalFolder: () => void
+  onOpenLogs?: () => void
+  onOpenLogsFolder?: () => void
   onCopyText: (text: string, msg?: string) => void
 }
 
@@ -59,6 +62,8 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
   diskStats,
   onSaveConfig,
   onOpenLocalFolder,
+  onOpenLogs,
+  onOpenLogsFolder,
   onCopyText,
 }) => {
   const [tab, setTab] = useState<string>(initialTab)
@@ -462,22 +467,14 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
             <div className="rounded-2xl bg-foreground/[0.035] p-4 space-y-3.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-muted-foreground">
-                  本地数据目录
+                  本地便携数据目录
                 </span>
                 <span className="font-mono text-xs font-semibold tabular-nums text-foreground">
                   {formatBytes(diskStats?.total_bytes)}
                 </span>
               </div>
 
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-2xl bg-background/80 p-3">
-                  <div className="font-mono text-base font-semibold tabular-nums">
-                    {diskStats?.record_count ?? 0}
-                  </div>
-                  <div className="text-[11px] text-muted-foreground mt-0.5">
-                    记录
-                  </div>
-                </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
                 <div className="rounded-2xl bg-background/80 p-3">
                   <div className="font-mono text-base font-semibold tabular-nums">
                     {diskStats?.generated_count ?? 0}
@@ -492,6 +489,22 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
                     参考图
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-background/80 p-3">
+                  <div className="font-mono text-base font-semibold tabular-nums">
+                    {diskStats?.thumbs_count ?? 0}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                    缩略图
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-background/80 p-3">
+                  <div className="font-mono text-base font-semibold tabular-nums">
+                    {diskStats?.logs_count ?? 0}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">
+                    日志文件
                   </div>
                 </div>
               </div>
@@ -525,7 +538,34 @@ export const SettingsDialog: React.FC<SettingsDialogProps> = ({
               </div>
             </div>
 
-            <div className="flex justify-end">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5">
+                {onOpenLogs && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      onOpenChange(false)
+                      onOpenLogs()
+                    }}
+                  >
+                    <ScrollText className="h-3.5 w-3.5" />
+                    查看运行日志
+                  </Button>
+                )}
+                {onOpenLogsFolder && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={onOpenLogsFolder}
+                  >
+                    <FolderOpen className="h-3.5 w-3.5" />
+                    日志目录
+                  </Button>
+                )}
+              </div>
               <Button asChild variant="outline" size="sm">
                 <a href="/api/records/export-zip" download>
                   <Archive className="h-3.5 w-3.5" />
